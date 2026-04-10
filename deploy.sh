@@ -45,8 +45,9 @@ aws s3 cp app.py            s3://$BUCKET/app.py            --profile "$PROFILE" 
 aws s3 cp requirements.txt  s3://$BUCKET/requirements.txt  --profile "$PROFILE" --region "$REGION"
 aws s3 cp se_analysis.py    s3://$BUCKET/se_analysis.py    --profile "$PROFILE" --region "$REGION"
 aws s3 cp se_rankings.py    s3://$BUCKET/se_rankings.py    --profile "$PROFILE" --region "$REGION"
-aws s3 cp templates/index.html s3://$BUCKET/templates/index.html --profile "$PROFILE" --region "$REGION"
-aws s3 cp templates/login.html s3://$BUCKET/templates/login.html --profile "$PROFILE" --region "$REGION"
+aws s3 cp templates/index.html      s3://$BUCKET/templates/index.html      --profile "$PROFILE" --region "$REGION"
+aws s3 cp templates/login.html      s3://$BUCKET/templates/login.html      --profile "$PROFILE" --region "$REGION"
+aws s3 cp templates/se_profile.html s3://$BUCKET/templates/se_profile.html --profile "$PROFILE" --region "$REGION"
 echo "Upload complete."
 
 # ── 3. Generate pre-signed download URLs ────────────────────────────────────
@@ -54,18 +55,22 @@ APP_URL=$(aws s3 presign      s3://$BUCKET/app.py            --profile "$PROFILE
 REQS_URL=$(aws s3 presign     s3://$BUCKET/requirements.txt  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 ANALYSIS_URL=$(aws s3 presign s3://$BUCKET/se_analysis.py    --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 RANKINGS_URL=$(aws s3 presign s3://$BUCKET/se_rankings.py    --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-INDEX_URL=$(aws s3 presign    s3://$BUCKET/templates/index.html --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-LOGIN_URL=$(aws s3 presign    s3://$BUCKET/templates/login.html --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+INDEX_URL=$(aws s3 presign      s3://$BUCKET/templates/index.html      --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+LOGIN_URL=$(aws s3 presign      s3://$BUCKET/templates/login.html      --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+SE_PROFILE_URL=$(aws s3 presign s3://$BUCKET/templates/se_profile.html --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 
 # ── 4. Build boot script ─────────────────────────────────────────────────────
-cat > /tmp/userdata.sh << USERDATA
+USERDATA_FILE=$(mktemp /tmp/userdata.XXXXXX.sh)
+chmod 600 "$USERDATA_FILE"
+cat > "$USERDATA_FILE" << USERDATA
 #!/bin/bash
-set -e
-exec > /var/log/app-setup.log 2>&1
+set -ex
 
-yum update -y
+# Let AL2023 startup processes (dnf makecache etc.) settle
+sleep 20
+
 yum install -y python3 python3-pip nginx augeas-libs
-pip3 install --break-system-packages certbot certbot-nginx
+pip3 install certbot certbot-nginx
 
 mkdir -p /app/templates /app/outputs
 cd /app
@@ -74,10 +79,11 @@ curl -sL '${APP_URL}'      -o app.py
 curl -sL '${REQS_URL}'     -o requirements.txt
 curl -sL '${ANALYSIS_URL}' -o se_analysis.py
 curl -sL '${RANKINGS_URL}' -o se_rankings.py
-curl -sL '${INDEX_URL}'    -o templates/index.html
-curl -sL '${LOGIN_URL}'    -o templates/login.html
+curl -sL '${INDEX_URL}'      -o templates/index.html
+curl -sL '${LOGIN_URL}'      -o templates/login.html
+curl -sL '${SE_PROFILE_URL}' -o templates/se_profile.html
 
-pip3 install --break-system-packages -r requirements.txt
+pip3 install -r requirements.txt
 chown -R ec2-user:ec2-user /app
 
 cat > /etc/systemd/system/app.service << EOF
@@ -97,16 +103,40 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
+# Replace the full nginx.conf to avoid conflict with AL2023 default server block
+cat > /etc/nginx/nginx.conf << 'NGINXCONF'
+user nginx;
+worker_processes auto;
+server_tokens off;
+error_log /var/log/nginx/error.log;
+pid /run/nginx.pid;
+events { worker_connections 1024; }
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+    sendfile on;
+    keepalive_timeout 65;
+    include /etc/nginx/conf.d/*.conf;
+}
+NGINXCONF
+
 cat > /etc/nginx/conf.d/app.conf << EOF
 server {
     listen 80;
     server_name ${DOMAIN};
     client_max_body_size 20M;
+
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
     location / {
         proxy_pass         http://127.0.0.1:5000;
-        proxy_set_header   Host \$host;
-        proxy_set_header   X-Real-IP \$remote_addr;
-        proxy_set_header   X-Forwarded-Proto \$scheme;
+        proxy_set_header   Host \\\$host;
+        proxy_set_header   X-Real-IP \\\$remote_addr;
+        proxy_set_header   X-Forwarded-Proto \\\$scheme;
         proxy_read_timeout 120s;
     }
 }
@@ -145,7 +175,8 @@ INSTANCE_ID=$(aws ec2 run-instances \
   --security-group-ids "$SG_ID" \
   --key-name se-scorecard-key \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_NAME}]" \
-  --user-data file:///tmp/userdata.sh \
+  --metadata-options HttpTokens=required,HttpEndpoint=enabled \
+  --user-data "file://$USERDATA_FILE" \
   --query "Instances[0].InstanceId" --output text)
 
 echo "Launched: $INSTANCE_ID"
@@ -159,6 +190,8 @@ aws ec2 associate-address \
   --profile "$PROFILE" --region "$REGION" \
   --instance-id "$INSTANCE_ID" \
   --allocation-id "$EIP_ALLOC" > /dev/null
+
+rm -f "$USERDATA_FILE"
 
 echo ""
 echo "✓ Done. App will be ready in ~7 minutes at:"

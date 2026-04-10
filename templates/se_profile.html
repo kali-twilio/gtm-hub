@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SE Profile — SE Scorecard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>body { background: #0a0f1e; font-family: ui-sans-serif, system-ui, sans-serif; }</style>
+</head>
+<body class="text-gray-100 min-h-screen px-4 py-8">
+
+  <div class="max-w-2xl mx-auto">
+
+    <!-- Header -->
+    <div class="flex items-center justify-between mb-8">
+      <div>
+        <p class="text-xs text-blue-400 font-bold tracking-widest uppercase mb-1">DSR Sales Engineering</p>
+        <h1 class="text-2xl font-black text-white">My Stats</h1>
+      </div>
+      <div class="flex items-center gap-4">
+        <span class="text-xs text-gray-500">{{ user_email }}</span>
+        <a href="/" class="text-xs text-gray-500 hover:text-gray-300 transition-colors">← Back</a>
+      </div>
+    </div>
+
+    <!-- Name picker -->
+    <form method="get" action="/report/se" id="picker-form" class="mb-8">
+      <label class="block text-xs text-gray-400 uppercase tracking-widest mb-2">Select your name</label>
+      <select name="name" onchange="this.form.submit()"
+        class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm focus:outline-none focus:border-blue-500/50">
+        <option value="">— Choose —</option>
+        {% for s in ses %}
+        <option value="{{ s.name }}" {% if s.name == selected %}selected{% endif %}>
+          {{ s.name }}
+        </option>
+        {% endfor %}
+      </select>
+    </form>
+
+    {% if se %}
+
+    <!-- Profile card -->
+    {% set tier_colors = {
+      "Elite":   "text-amber-400 border-amber-400/40 bg-amber-400/10",
+      "Strong":  "text-blue-400 border-blue-400/40 bg-blue-400/10",
+      "Steady":  "text-emerald-400 border-emerald-400/40 bg-emerald-400/10",
+      "Develop": "text-red-400 border-red-400/40 bg-red-400/10"
+    } %}
+
+    <div class="bg-white/5 border border-white/10 rounded-2xl p-6 mb-4">
+
+      <!-- Name -->
+      <div class="flex items-start justify-between mb-5">
+        <div>
+          <h2 class="text-xl font-bold text-white mb-1">{{ se.name }}</h2>
+        </div>
+        <div class="text-right">
+          <div class="text-3xl font-black text-white">
+            ${% if se.total_icav >= 1000000 %}{{ "%.1f"|format(se.total_icav / 1000000) }}M{% else %}{{ "%.0f"|format(se.total_icav / 1000) }}K{% endif %}
+          </div>
+          <div class="text-xs text-gray-500 mt-0.5">total iACV</div>
+        </div>
+      </div>
+
+      <!-- Stats grid -->
+      <div class="grid grid-cols-2 gap-3 mb-5">
+
+        <!-- Activate -->
+        <div class="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
+          <div class="text-[10px] uppercase tracking-widest text-blue-400 font-semibold mb-2">Activate</div>
+          <div class="text-xl font-bold text-blue-300 mb-1">
+            ${% if se.act_icav >= 1000000 %}{{ "%.1f"|format(se.act_icav / 1000000) }}M{% else %}{{ "%.0f"|format(se.act_icav / 1000) }}K{% endif %}
+          </div>
+          <div class="text-xs text-gray-400 space-y-0.5">
+            <div>{{ se.act_wins }} wins</div>
+            <div>Avg ${{ "%.0f"|format(se.act_avg / 1000) }}K · Med ${{ "%.0f"|format(se.act_median / 1000) }}K</div>
+          </div>
+        </div>
+
+        <!-- Expansion -->
+        <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+          <div class="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold mb-2">
+            Expansion ·
+            {% if se.exp_growing %}<span class="text-emerald-300">Growing</span>
+            {% else %}<span class="text-gray-400">Retaining</span>{% endif %}
+          </div>
+          <div class="text-xl font-bold text-emerald-300 mb-1">
+            ${% if se.exp_icav >= 1000000 %}{{ "%.1f"|format(se.exp_icav / 1000000) }}M{% else %}{{ "%.0f"|format(se.exp_icav / 1000) }}K{% endif %}
+          </div>
+          <div class="text-xs text-gray-400 space-y-0.5">
+            <div>{{ se.exp_wins }} wins</div>
+            <div>Avg ${{ "%.0f"|format(se.exp_avg / 1000) }}K · Med ${{ "%.0f"|format(se.exp_median / 1000) }}K</div>
+          </div>
+        </div>
+
+        <!-- Owl / Hygiene -->
+        <div class="{% if se.owl_pct < 75 %}bg-red-500/10 border-red-500/20{% else %}bg-white/5 border-white/10{% endif %} border rounded-xl p-4">
+          <div class="text-[10px] uppercase tracking-widest text-gray-400 font-semibold mb-2">Owl %</div>
+          <div class="text-xl font-bold {% if se.owl_pct < 75 %}text-red-400{% else %}text-white{% endif %} mb-1">
+            {{ se.owl_pct }}%
+          </div>
+          <div class="text-xs text-gray-500">
+            {% if se.owl_pct < 75 %}Below 75% threshold{% else %}Hygiene on track{% endif %}
+          </div>
+        </div>
+
+        <!-- Pipeline -->
+        <div class="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4">
+          <div class="text-[10px] uppercase tracking-widest text-purple-400 font-semibold mb-2">Future Pipeline</div>
+          <div class="text-xl font-bold text-purple-300 mb-1">{{ se.future_emails }} emails</div>
+          <div class="text-xs text-gray-400">{{ se.future_pct }}% of activity is out-of-quarter</div>
+        </div>
+
+      </div>
+
+      <!-- Largest deal -->
+      {% if se.largest_deal_value > 0 %}
+      <div class="bg-white/5 border border-white/10 rounded-xl p-4 mb-5">
+        <div class="text-[10px] uppercase tracking-widest text-gray-400 font-semibold mb-2">Largest Deal</div>
+        <div class="flex items-start justify-between gap-3">
+          <div class="text-sm text-gray-300 truncate">{{ se.largest_deal }}</div>
+          <div class="text-sm font-bold text-white shrink-0">
+            ${% if se.largest_deal_value >= 1000000 %}{{ "%.1f"|format(se.largest_deal_value / 1000000) }}M{% else %}{{ "%.0f"|format(se.largest_deal_value / 1000) }}K{% endif %}
+          </div>
+        </div>
+        {% if se.largest_deal_dsr %}<div class="text-xs text-gray-500 mt-1">{{ se.largest_deal_dsr }}</div>{% endif %}
+      </div>
+      {% endif %}
+
+      <!-- Flags -->
+      {% if se.flags %}
+      <div>
+        <div class="text-[10px] uppercase tracking-widest text-gray-400 font-semibold mb-2">Insights</div>
+        <div class="space-y-2">
+          {% set flag_colors = {
+            "PIPELINE":  "bg-blue-500/10 border-blue-500/30 text-blue-300",
+            "EXPANSION": "bg-emerald-500/10 border-emerald-500/30 text-emerald-300",
+            "HYGIENE":   "bg-red-500/10 border-red-500/30 text-red-300",
+            "ACTIVATE":  "bg-orange-500/10 border-orange-500/30 text-orange-300",
+            "RISK":      "bg-rose-500/10 border-rose-500/30 text-rose-300",
+            "MOTION":    "bg-purple-500/10 border-purple-500/30 text-purple-300",
+            "STRENGTH":  "bg-cyan-500/10 border-cyan-500/30 text-cyan-300"
+          } %}
+          {% for flag in se.flags %}
+          {% set cat = flag[0] %}
+          {% set msg = flag[1] %}
+          {% set cls = flag_colors.get(cat, "bg-white/5 border-white/10 text-gray-300") %}
+          <div class="rounded-lg border {{ cls }} px-4 py-3 flex gap-3 items-start">
+            <span class="text-[10px] font-bold uppercase tracking-widest shrink-0 w-20 mt-0.5">{{ cat }}</span>
+            <span class="text-sm">{{ msg }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+      {% endif %}
+
+    </div>
+
+    {% elif selected %}
+    <div class="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-sm text-red-300">
+      SE "{{ selected }}" not found in the report data.
+    </div>
+    {% endif %}
+
+  </div>
+</body>
+</html>

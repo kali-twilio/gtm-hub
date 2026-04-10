@@ -824,6 +824,20 @@ def generate_html(ranked, ses, output_path="se_report.html"):
         f.write(html)
     print(f"Report written to {output_path}")
 
+    # Save raw SE data so the individual SE profile page can read it
+    import json
+    json_path = Path(output_path).parent / "se_data.json"
+    payload = []
+    for i, se in enumerate(ranked, 1):
+        entry = dict(se)
+        entry["rank"] = i
+        entry["tier"] = tier(i, total)
+        entry["flags"] = collect_se_flags(se, ranked)
+        payload.append(entry)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(payload, f)
+    print(f"SE data written to {json_path}")
+
 
 # ---------------------------------------------------------------------------
 # Main

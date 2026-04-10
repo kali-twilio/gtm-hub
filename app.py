@@ -29,7 +29,7 @@ import se_rankings
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(32)
-app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1, x_host=1)  # trust nginx HTTPS headers
+app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)  # trust nginx X-Forwarded-Proto only
 
 # Secure session cookies — HTTPS only in production, relaxed locally
 _local_dev = os.environ.get("LOCAL_DEV") == "1"
@@ -85,6 +85,10 @@ def auth():
     flow = build_flow()
     auth_url, state = flow.authorization_url(prompt="select_account")
     session["oauth_state"] = state
+    try:
+        session["code_verifier"] = flow.code_verifier
+    except Exception:
+        pass
     return redirect(auth_url)
 
 @app.route("/oauth2callback")
@@ -93,6 +97,9 @@ def oauth2callback():
         return redirect(url_for("login", error="Invalid auth state. Please try again."))
     try:
         flow = build_flow()
+        cv = session.pop("code_verifier", None)
+        if cv:
+            flow.code_verifier = cv
         flow.fetch_token(authorization_response=request.url)
         resp = http.get(
             "https://www.googleapis.com/oauth2/v1/userinfo",
@@ -103,8 +110,8 @@ def oauth2callback():
         if not email.endswith(f"@{ALLOWED_DOMAIN}"):
             return redirect(url_for("login", error=f"Access restricted to @{ALLOWED_DOMAIN} accounts."))
         session["user_email"] = email
-    except Exception as e:
-        return redirect(url_for("login", error=f"Sign-in failed: {e}"))
+    except Exception:
+        return redirect(url_for("login", error="Sign-in failed. Please try again."))
     return redirect(url_for("index"))
 
 @app.route("/logout")
@@ -152,6 +159,11 @@ def get_csv_path():
             f.save(tmp.name)
             return tmp.name
 
+    # Fall back to last-used CSV if available
+    last = OUTPUT_DIR / "last_data.csv"
+    if last.exists():
+        return str(last)
+
     raise ValueError("Please paste a Google Sheets URL or upload a CSV file.")
 
 
@@ -161,44 +173,57 @@ def get_csv_path():
 def index():
     if not authenticated():
         return redirect(url_for("login"))
+    import json
+    email = session.get("user_email", "")
+    first_name = email.split("@")[0].split(".")[0].title()
+    se_match = False
+    data_path = OUTPUT_DIR / "se_data.json"
+    if data_path.exists():
+        ses = json.loads(data_path.read_text(encoding="utf-8"))
+        se_match = any(s["name"].split()[0].lower() == first_name.lower() for s in ses)
     return render_template(
         "index.html",
         error=request.args.get("error"),
-        user_email=session.get("user_email"),
+        user_email=email,
         report_exists=(OUTPUT_DIR / "se_report.html").exists(),
         rankings_exists=(OUTPUT_DIR / "se_rankings.html").exists(),
+        se_match=se_match,
     )
+
 
 @app.route("/generate", methods=["POST"])
 def generate():
     if not authenticated():
         return redirect(url_for("login"))
-    report_type = request.form.get("report_type")
-
     try:
         csv_path = get_csv_path()
     except ValueError as e:
         return redirect(url_for("index", error=str(e)))
 
     try:
-        if report_type == "analysis":
-            ses    = se_analysis.load_ses(csv_path)
-            ranked = se_analysis.rank_ses(ses)
-            se_analysis.generate_html(ranked, ses,
-                                      output_path=str(OUTPUT_DIR / "se_report.html"))
-        elif report_type == "rankings":
-            ses_r    = se_rankings.load(csv_path)
-            ranked_r = se_rankings.rank(ses_r)
-            html     = se_rankings.generate(ranked_r)
-            (OUTPUT_DIR / "se_rankings.html").write_text(html, encoding="utf-8")
+        import shutil
+        # Always regenerate everything
+        ses    = se_analysis.load_ses(csv_path)
+        ranked = se_analysis.rank_ses(ses)
+        se_analysis.generate_html(ranked, ses, output_path=str(OUTPUT_DIR / "se_report.html"))
+
+        ses_r    = se_rankings.load(csv_path)
+        ranked_r = se_rankings.rank(ses_r)
+        html     = se_rankings.generate(ranked_r)
+        (OUTPUT_DIR / "se_rankings.html").write_text(html, encoding="utf-8")
+
+        # Save as default for future runs
+        last = OUTPUT_DIR / "last_data.csv"
+        if csv_path != str(last):
+            shutil.copy2(csv_path, last)
     except Exception as e:
         return redirect(url_for("index", error=f"Failed to generate report: {e}"))
     finally:
-        Path(csv_path).unlink(missing_ok=True)
+        last = str(OUTPUT_DIR / "last_data.csv")
+        if csv_path != last:
+            Path(csv_path).unlink(missing_ok=True)
 
-    if report_type == "rankings":
-        return redirect(url_for("view_report", name="se_rankings"))
-    return redirect(url_for("view_report", name="se_report"))
+    return redirect(url_for("index"))
 
 @app.route("/report/<name>")
 def view_report(name):
@@ -210,7 +235,38 @@ def view_report(name):
     if not path.exists():
         return redirect(url_for("index",
                                 error="No report found. Paste a sheet URL or upload a CSV."))
-    return send_file(path)
+    back_btn = (
+        '<div style="position:fixed;top:14px;left:16px;z-index:9999">'
+        '<a href="/" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);'
+        'color:#d1d5db;text-decoration:none;padding:7px 14px;border-radius:8px;'
+        'font-size:12px;font-family:ui-sans-serif,system-ui,sans-serif">← Back</a></div>'
+    )
+    content = path.read_text(encoding="utf-8")
+    content = re.sub(r'(<body[^>]*>)', r'\1' + back_btn, content, count=1)
+    return content
+
+
+@app.route("/report/se")
+def se_profile():
+    if not authenticated():
+        return redirect(url_for("login"))
+    import json
+    data_path = OUTPUT_DIR / "se_data.json"
+    if not data_path.exists():
+        return redirect(url_for("index",
+                                error="No analysis report found. Generate the SE Analysis report first."))
+    ses = json.loads(data_path.read_text(encoding="utf-8"))
+    # Try to pre-select SE based on logged-in email (first name match)
+    email = session.get("user_email", "")
+    first_name = email.split("@")[0].split(".")[0].title()
+    selected = request.args.get("name", "")
+    if not selected:
+        matches = [se["name"] for se in ses if se["name"].split()[0].lower() == first_name.lower()]
+        selected = matches[0] if matches else ""
+    se = next((s for s in ses if s["name"] == selected), None)
+    return render_template("se_profile.html",
+                           ses=ses, selected=selected, se=se,
+                           user_email=email)
 
 
 if __name__ == "__main__":
