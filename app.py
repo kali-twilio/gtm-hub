@@ -73,11 +73,6 @@ def build_flow():
 def authenticated():
     return bool(session.get("user_email"))
 
-def match_email(email):
-    """Returns the email used for SE matching. SIMULATE_EMAIL overrides in LOCAL_DEV."""
-    if _local_dev:
-        return os.environ.get("SIMULATE_EMAIL", email)
-    return email
 
 
 def email_to_se_name(email, ses):
@@ -183,7 +178,7 @@ def oauth2callback():
     if data_path.exists():
         import json as _json
         ses = _json.loads(data_path.read_text(encoding="utf-8"))
-        if email_to_se_name(match_email(email), ses):
+        if email_to_se_name(email, ses):
             return redirect(url_for("se_profile"))
     return redirect(url_for("index"))
 
@@ -252,7 +247,7 @@ def index():
     has_data = data_path.exists()
     if has_data:
         ses = json.loads(data_path.read_text(encoding="utf-8"))
-        if email_to_se_name(match_email(email), ses):
+        if email_to_se_name(email, ses):
             return redirect(url_for("se_profile"))
     return render_template(
         "index.html",
@@ -305,7 +300,7 @@ def view_report(name):
     _dp = OUTPUT_DIR / "se_data.json"
     if _dp.exists():
         _ses = _j.loads(_dp.read_text(encoding="utf-8"))
-        if email_to_se_name(match_email(session.get("user_email", "")), _ses):
+        if email_to_se_name(session.get("user_email", ""), _ses):
             return redirect(url_for("se_profile"))
     if name not in ("se_report", "se_rankings"):
         return "Not found", 404
@@ -336,7 +331,7 @@ def se_profile():
                                 error="No analysis report found. Generate the SE Analysis report first."))
     ses = json.loads(data_path.read_text(encoding="utf-8"))
     email = session.get("user_email", "")
-    own_name = email_to_se_name(match_email(email), ses)
+    own_name = email_to_se_name(email, ses)
     selected = request.args.get("name", "") or own_name or ""
     se = next((s for s in ses if s["name"] == selected), None)
     return render_template("se_profile.html",
