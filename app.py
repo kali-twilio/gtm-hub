@@ -72,6 +72,55 @@ def authenticated():
     return bool(session.get("user_email"))
 
 
+def email_to_se_name(email, ses):
+    """
+    Best-effort match of a Twilio email to an SE's full name.
+
+    Handles two common email formats:
+      first.last@  →  kali.jones   matches "Kali Jones"
+      flast@       →  ybabenko     matches "Yuriy Babenko"
+                      cchin        matches "Connor Chin"
+
+    For the initial+last format, tries every split point (1 char, 2 chars, …)
+    and returns the first SE whose last name equals the suffix and whose
+    first name starts with the prefix.
+    """
+    local = email.split("@")[0].lower()
+
+    def names(se):
+        parts = se["name"].lower().split()
+        return (parts[0] if parts else ""), (parts[-1] if len(parts) > 1 else "")
+
+    if "." in local:
+        # first.last or first.middle.last — use first and last segments
+        parts = local.split(".")
+        first_part, last_part = parts[0], parts[-1]
+        # prefer full first+last match, fall back to first name only
+        for se in ses:
+            fn, ln = names(se)
+            if fn == first_part and ln == last_part:
+                return se["name"]
+        for se in ses:
+            fn, _ = names(se)
+            if fn == first_part:
+                return se["name"]
+    else:
+        # try every split: treat local[:n] as name prefix, local[n:] as last name
+        for split in range(1, len(local)):
+            prefix, suffix = local[:split], local[split:]
+            for se in ses:
+                fn, ln = names(se)
+                if ln == suffix and fn.startswith(prefix):
+                    return se["name"]
+        # last resort: whole local part as first name
+        for se in ses:
+            fn, _ = names(se)
+            if fn == local:
+                return se["name"]
+
+    return None
+
+
 # ── Auth routes ───────────────────────────────────────────────────────────────
 
 @app.route("/login")
@@ -175,12 +224,11 @@ def index():
         return redirect(url_for("login"))
     import json
     email = session.get("user_email", "")
-    first_name = email.split("@")[0].split(".")[0].title()
     se_match = False
     data_path = OUTPUT_DIR / "se_data.json"
     if data_path.exists():
         ses = json.loads(data_path.read_text(encoding="utf-8"))
-        se_match = any(s["name"].split()[0].lower() == first_name.lower() for s in ses)
+        se_match = email_to_se_name(email, ses) is not None
     return render_template(
         "index.html",
         error=request.args.get("error"),
@@ -258,11 +306,9 @@ def se_profile():
     ses = json.loads(data_path.read_text(encoding="utf-8"))
     # Try to pre-select SE based on logged-in email (first name match)
     email = session.get("user_email", "")
-    first_name = email.split("@")[0].split(".")[0].title()
     selected = request.args.get("name", "")
     if not selected:
-        matches = [se["name"] for se in ses if se["name"].split()[0].lower() == first_name.lower()]
-        selected = matches[0] if matches else ""
+        selected = email_to_se_name(email, ses) or ""
     se = next((s for s in ses if s["name"] == selected), None)
     return render_template("se_profile.html",
                            ses=ses, selected=selected, se=se,
