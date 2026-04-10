@@ -33,6 +33,8 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)  # trust nginx X-Forwarded-Prot
 
 # Secure session cookies — HTTPS only in production, relaxed locally
 _local_dev = os.environ.get("LOCAL_DEV") == "1"
+if _local_dev:
+    os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # allow HTTP OAuth on localhost
 app.config.update(
     SESSION_COOKIE_SECURE=not _local_dev,
     SESSION_COOKIE_HTTPONLY=True,
@@ -320,15 +322,14 @@ def se_profile():
         return redirect(url_for("index",
                                 error="No analysis report found. Generate the SE Analysis report first."))
     ses = json.loads(data_path.read_text(encoding="utf-8"))
-    # Try to pre-select SE based on logged-in email (first name match)
     email = session.get("user_email", "")
-    selected = request.args.get("name", "")
-    if not selected:
-        selected = email_to_se_name(email, ses) or ""
+    own_name = email_to_se_name(email, ses)
+    selected = request.args.get("name", "") or own_name or ""
     se = next((s for s in ses if s["name"] == selected), None)
     return render_template("se_profile.html",
                            ses=ses, selected=selected, se=se,
-                           user_email=email)
+                           user_email=email,
+                           is_own_profile=bool(own_name))
 
 
 if __name__ == "__main__":
