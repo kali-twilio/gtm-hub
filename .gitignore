@@ -17,3 +17,6 @@ __pycache__/
 
 # Temp files
 /tmp/
+
+# Deployment secrets — copy deploy.env.example to deploy.env and fill in values
+deploy.env

@@ -6,14 +6,14 @@
 set -e
 cd "$(dirname "$0")"  # always run from the script's directory
 
-PROFILE="290549574947_Standard_PowerUser"
-REGION="us-west-2"
-BUCKET="se-scorecard-deploy-1775761654"
-SG_ID="sg-009ff23d837b491dc"
-TAG_NAME="se-team-dev-twilio"
-EIP_ALLOC="eipalloc-0b1f06fb219e5ea52"  # permanent IP: 44.230.217.150
-DOMAIN="se-scorecard.duckdns.org"
-CERTBOT_EMAIL="kali@twilio.com"
+# ── Load config ───────────────────────────────────────────────────────────────
+if [ ! -f deploy.env ]; then
+  echo "ERROR: deploy.env not found."
+  echo "Copy deploy.env.example to deploy.env and fill in your values."
+  exit 1
+fi
+source deploy.env
+
 EXPIRES=7200  # pre-signed URL TTL in seconds (2 hours)
 
 # ── 1. Terminate any running instances with this tag ─────────────────────────
@@ -65,7 +65,7 @@ exec > /var/log/app-setup.log 2>&1
 
 yum update -y
 yum install -y python3 python3-pip nginx augeas-libs
-pip3 install certbot certbot-nginx
+pip3 install --break-system-packages certbot certbot-nginx
 
 mkdir -p /app/templates /app/outputs
 cd /app
@@ -77,16 +77,19 @@ curl -sL '${RANKINGS_URL}' -o se_rankings.py
 curl -sL '${INDEX_URL}'    -o templates/index.html
 curl -sL '${LOGIN_URL}'    -o templates/login.html
 
-pip3 install -r requirements.txt
+pip3 install --break-system-packages -r requirements.txt
 chown -R ec2-user:ec2-user /app
 
-cat > /etc/systemd/system/app.service << 'EOF'
+cat > /etc/systemd/system/app.service << EOF
 [Unit]
 Description=SE Scorecard
 After=network.target
 [Service]
 User=ec2-user
 WorkingDirectory=/app
+Environment="GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}"
+Environment="GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}"
+Environment="SECRET_KEY=$(openssl rand -hex 32)"
 ExecStart=/usr/local/bin/gunicorn -b 127.0.0.1:5000 -w 2 --timeout 120 app:app
 Restart=always
 RestartSec=5
@@ -103,6 +106,7 @@ server {
         proxy_pass         http://127.0.0.1:5000;
         proxy_set_header   Host \$host;
         proxy_set_header   X-Real-IP \$remote_addr;
+        proxy_set_header   X-Forwarded-Proto \$scheme;
         proxy_read_timeout 120s;
     }
 }
@@ -139,6 +143,7 @@ INSTANCE_ID=$(aws ec2 run-instances \
   --image-id "$AMI_ID" \
   --instance-type t3.micro \
   --security-group-ids "$SG_ID" \
+  --key-name se-scorecard-key \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_NAME}]" \
   --user-data file:///tmp/userdata.sh \
   --query "Instances[0].InstanceId" --output text)
@@ -149,11 +154,6 @@ aws ec2 wait instance-running \
   --profile "$PROFILE" --region "$REGION" \
   --instance-ids "$INSTANCE_ID"
 
-PUBLIC_IP=$(aws ec2 describe-instances \
-  --profile "$PROFILE" --region "$REGION" \
-  --instance-ids "$INSTANCE_ID" \
-  --query "Reservations[0].Instances[0].PublicIpAddress" --output text)
-
 # ── 6. Associate Elastic IP ──────────────────────────────────────────────────
 aws ec2 associate-address \
   --profile "$PROFILE" --region "$REGION" \
@@ -161,5 +161,5 @@ aws ec2 associate-address \
   --allocation-id "$EIP_ALLOC" > /dev/null
 
 echo ""
-echo "✓ Done. App will be ready in ~5 minutes at:"
-echo "  https://se-scorecard.duckdns.org"
+echo "✓ Done. App will be ready in ~7 minutes at:"
+echo "  https://$DOMAIN"

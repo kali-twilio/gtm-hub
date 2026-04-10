@@ -15,7 +15,7 @@ Outside world   →                           → connection timeout
 
 | What | How |
 |------|-----|
-| Network access | Security group restricts port 80 to Twilio's Zscaler IP range only |
+| Network access | Security group restricts port 80 to Zscaler's egress range (`136.226.0.0/16`) |
 | No credentials in code | AWS SSO is used — no access keys or secrets in any file |
 | No open SSH | Port 22 is not opened. The instance configures itself at boot |
 | App not directly exposed | nginx sits in front of your app — the app never binds to a public port |
@@ -94,7 +94,7 @@ aws ec2 authorize-security-group-ingress \
   --profile my-app \
   --group-id $SG_ID \
   --ip-permissions \
-    "IpProtocol=tcp,FromPort=80,ToPort=80,IpRanges=[{CidrIp=170.85.0.0/16,Description=Twilio Zscaler}]"
+    "IpProtocol=tcp,FromPort=80,ToPort=80,IpRanges=[{CidrIp=136.226.0.0/16,Description=Zscaler egress}]"
 
 echo "Security Group ID: $SG_ID"
 ```
