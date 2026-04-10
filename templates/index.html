@@ -169,6 +169,11 @@ zone.addEventListener('drop', e => {
   }
 });
 
+// Remove ?error= from URL so hitting back doesn't re-show it
+if (window.location.search.includes('error')) {
+  history.replaceState(null, '', window.location.pathname);
+}
+
 // Show loading state on submit
 document.getElementById('upload-form').addEventListener('submit', function() {
   icon.textContent = '⏳';
