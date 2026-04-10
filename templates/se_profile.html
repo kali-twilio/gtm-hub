@@ -72,7 +72,7 @@
       <div class="grid grid-cols-2 gap-3 mb-5">
 
         <!-- Activate -->
-        <div class="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4">
+        <div class="bg-blue-500/10 border border-blue-500/20 rounded-xl p-4 min-h-[7.5rem]">
           <div class="text-[10px] uppercase tracking-widest text-blue-400 font-semibold mb-2">Activate</div>
           <div class="text-xl font-bold text-blue-300 mb-1">
             ${% if se.act_icav >= 1000000 %}{{ "%.1f"|format(se.act_icav / 1000000) }}M{% else %}{{ "%.0f"|format(se.act_icav / 1000) }}K{% endif %}
@@ -84,7 +84,7 @@
         </div>
 
         <!-- Expansion -->
-        <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4">
+        <div class="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 min-h-[7.5rem]">
           <div class="text-[10px] uppercase tracking-widest text-emerald-400 font-semibold mb-2">
             Expansion ·
             {% if se.exp_growing %}<span class="text-emerald-300">Growing</span>
@@ -100,7 +100,7 @@
         </div>
 
         <!-- Owl / Hygiene -->
-        <div class="{% if se.owl_pct < 75 %}bg-red-500/10 border-red-500/20{% else %}bg-white/5 border-white/10{% endif %} border rounded-xl p-4">
+        <div class="{% if se.owl_pct < 75 %}bg-red-500/10 border-red-500/20{% else %}bg-white/5 border-white/10{% endif %} border rounded-xl p-4 min-h-[7.5rem]">
           <div class="text-[10px] uppercase tracking-widest text-gray-400 font-semibold mb-2">Owl %</div>
           <div class="text-xl font-bold {% if se.owl_pct < 75 %}text-red-400{% else %}text-white{% endif %} mb-1">
             {{ se.owl_pct }}%
@@ -111,7 +111,7 @@
         </div>
 
         <!-- Pipeline -->
-        <div class="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4">
+        <div class="bg-purple-500/10 border border-purple-500/20 rounded-xl p-4 min-h-[7.5rem]">
           <div class="text-[10px] uppercase tracking-widest text-purple-400 font-semibold mb-2">Future Pipeline</div>
           <div class="text-xl font-bold text-purple-300 mb-1">{{ se.future_emails }} emails</div>
           <div class="text-xs text-gray-400">{{ se.future_pct }}% of activity is out-of-quarter</div>
