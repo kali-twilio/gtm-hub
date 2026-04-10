@@ -170,6 +170,13 @@ def oauth2callback():
         session["user_email"] = email
     except Exception:
         return redirect(url_for("login", error="Sign-in failed. Please try again."))
+    # Send matched SEs straight to their own stats page
+    data_path = OUTPUT_DIR / "se_data.json"
+    if data_path.exists():
+        import json as _json
+        ses = _json.loads(data_path.read_text(encoding="utf-8"))
+        if email_to_se_name(email, ses):
+            return redirect(url_for("se_profile"))
     return redirect(url_for("index"))
 
 @app.route("/logout")
@@ -233,17 +240,17 @@ def index():
         return redirect(url_for("login"))
     import json
     email = session.get("user_email", "")
-    se_match = False
     data_path = OUTPUT_DIR / "se_data.json"
-    if data_path.exists():
+    has_data = data_path.exists()
+    se_match = False
+    if has_data:
         ses = json.loads(data_path.read_text(encoding="utf-8"))
         se_match = email_to_se_name(email, ses) is not None
     return render_template(
         "index.html",
         error=request.args.get("error"),
         user_email=email,
-        report_exists=(OUTPUT_DIR / "se_report.html").exists(),
-        rankings_exists=(OUTPUT_DIR / "se_rankings.html").exists(),
+        has_data=has_data,
         se_match=se_match,
     )
 

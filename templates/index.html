@@ -37,6 +37,7 @@
   </div>
   {% endif %}
 
+  {% if has_data %}
   <!-- Primary actions -->
   <div class="w-full max-w-lg grid grid-cols-3 gap-4 mb-10">
 
@@ -69,8 +70,12 @@
     <span class="text-xs text-gray-600 uppercase tracking-widest">Update data</span>
     <div class="flex-1 border-t border-white/10"></div>
   </div>
+  {% endif %}
 
-  <!-- Upload card (secondary) -->
+  <!-- Upload card -->
+  {% if not has_data %}
+  <p class="text-sm text-gray-500 mb-6">Load a scorecard to get started.</p>
+  {% endif %}
   <div class="w-full max-w-lg bg-white/5 border border-white/10 rounded-2xl p-6">
     <form id="upload-form" action="/generate" method="POST" enctype="multipart/form-data">
 
