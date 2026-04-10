@@ -250,16 +250,15 @@ def index():
     email = session.get("user_email", "")
     data_path = OUTPUT_DIR / "se_data.json"
     has_data = data_path.exists()
-    se_match = False
     if has_data:
         ses = json.loads(data_path.read_text(encoding="utf-8"))
-        se_match = email_to_se_name(match_email(email), ses) is not None
+        if email_to_se_name(match_email(email), ses):
+            return redirect(url_for("se_profile"))
     return render_template(
         "index.html",
         error=request.args.get("error"),
         user_email=email,
         has_data=has_data,
-        se_match=se_match,
     )
 
 
@@ -301,6 +300,13 @@ def generate():
 def view_report(name):
     if not authenticated():
         return redirect(url_for("login"))
+    # SE users can't access the full reports — send them to their own stats
+    import json as _j
+    _dp = OUTPUT_DIR / "se_data.json"
+    if _dp.exists():
+        _ses = _j.loads(_dp.read_text(encoding="utf-8"))
+        if email_to_se_name(match_email(session.get("user_email", "")), _ses):
+            return redirect(url_for("se_profile"))
     if name not in ("se_report", "se_rankings"):
         return "Not found", 404
     path = OUTPUT_DIR / f"{name}.html"
