@@ -17,13 +17,16 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from flask import Flask, request, render_template, send_file, redirect, url_for
+from flask import Flask, request, render_template, send_file, redirect, url_for, session
 
 sys.path.insert(0, str(Path(__file__).parent))
 import se_analysis
 import se_rankings
 
 app = Flask(__name__)
+app.secret_key = os.environ.get("SECRET_KEY", "se-scorecard-secret")
+
+PASSWORD = "SE"
 
 BASE       = Path(__file__).parent
 OUTPUT_DIR = BASE / "outputs"
@@ -73,8 +76,24 @@ def get_csv_path():
     raise ValueError("Please paste a Google Sheets URL or upload a CSV file.")
 
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        if request.form.get("password") == PASSWORD:
+            session["auth"] = True
+            return redirect(url_for("index"))
+        return render_template("login.html", error="Incorrect password.")
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
 @app.route("/")
 def index():
+    if not session.get("auth"):
+        return redirect(url_for("login"))
     return render_template(
         "index.html",
         error=request.args.get("error"),
@@ -85,6 +104,8 @@ def index():
 
 @app.route("/generate", methods=["POST"])
 def generate():
+    if not session.get("auth"):
+        return redirect(url_for("login"))
     report_type = request.form.get("report_type")
 
     try:
@@ -115,6 +136,8 @@ def generate():
 
 @app.route("/report/<name>")
 def view_report(name):
+    if not session.get("auth"):
+        return redirect(url_for("login"))
     if name not in ("se_report", "se_rankings"):
         return "Not found", 404
     path = OUTPUT_DIR / f"{name}.html"
