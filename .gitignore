@@ -1,0 +1,19 @@
+# Generated reports
+outputs/
+
+# CSV data files (contain employee data — never commit)
+*.csv
+
+# Claude session data
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# macOS
+.DS_Store
+
+# Temp files
+/tmp/

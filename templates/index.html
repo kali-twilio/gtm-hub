@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SE Scorecard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  body { background: #0a0f1e; font-family: ui-sans-serif, system-ui, sans-serif; }
+
+  .drop-zone {
+    border: 2px dashed rgba(255,255,255,.15);
+    transition: border-color .2s, background .2s;
+  }
+  .drop-zone.drag-over {
+    border-color: #3B82F6;
+    background: rgba(59,130,246,.07);
+  }
+  .drop-zone.has-file {
+    border-color: rgba(16,185,129,.5);
+    background: rgba(16,185,129,.05);
+  }
+</style>
+</head>
+<body class="text-gray-100 min-h-screen flex flex-col items-center justify-center px-4 py-16">
+
+  <!-- Header -->
+  <div class="text-center mb-10">
+    <p class="text-xs text-blue-400 font-bold tracking-widest uppercase mb-3">DSR Sales Engineering</p>
+    <h1 class="text-4xl font-black text-white tracking-tight mb-2">SE Scorecard</h1>
+    <p class="text-gray-500 text-sm">Paste a Google Sheets URL or upload a CSV to generate reports.</p>
+  </div>
+
+
+<!-- Error banner -->
+  {% if error %}
+  <div class="w-full max-w-lg mb-6 bg-red-500/10 border border-red-500/30 rounded-xl px-5 py-3 text-sm text-red-300 flex items-center gap-3">
+    <span class="text-red-400 font-bold shrink-0">Error</span>
+    {{ error }}
+  </div>
+  {% endif %}
+
+  <!-- Upload card -->
+  <div class="w-full max-w-lg bg-white/5 border border-white/10 rounded-2xl p-8">
+
+    <form id="upload-form" action="/generate" method="POST" enctype="multipart/form-data">
+
+      <!-- Google Sheets URL -->
+      <div class="mb-4">
+        <label class="block text-xs text-gray-400 uppercase tracking-widest mb-2">Google Sheets URL</label>
+        <input
+          id="sheet-url"
+          type="url"
+          name="sheet_url"
+          placeholder="https://docs.google.com/spreadsheets/d/…"
+          class="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-3 text-white text-sm placeholder-gray-600 focus:outline-none focus:border-blue-500 transition-colors"
+        >
+        <p class="text-[11px] text-gray-600 mt-1.5">Sheet must be shared as "Anyone with the link can view"</p>
+      </div>
+
+      <!-- OR divider -->
+      <div class="flex items-center gap-3 mb-4">
+        <div class="flex-1 border-t border-white/10"></div>
+        <span class="text-xs text-gray-600 uppercase tracking-widest">or</span>
+        <div class="flex-1 border-t border-white/10"></div>
+      </div>
+
+      <!-- Drop zone -->
+      <div id="drop-zone" class="drop-zone rounded-xl p-8 text-center cursor-pointer mb-6" onclick="document.getElementById('csv-input').click()">
+        <input id="csv-input" type="file" name="csv_file" accept=".csv" class="hidden">
+        <div id="drop-icon" class="text-3xl mb-2">📂</div>
+        <div id="drop-label" class="text-sm text-gray-400">
+          Drag &amp; drop your CSV here, or <span class="text-blue-400 font-medium">click to browse</span>
+        </div>
+        <div id="file-name" class="hidden mt-3 text-sm font-medium text-emerald-400"></div>
+      </div>
+
+      <!-- Buttons -->
+      <div class="grid grid-cols-2 gap-3">
+        <button name="report_type" value="analysis"
+          class="py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm transition-colors">
+          Full Report
+        </button>
+        <button name="report_type" value="rankings"
+          class="py-3 rounded-xl bg-blue-600 hover:bg-blue-500 text-white font-semibold text-sm transition-colors">
+          Power Rankings
+        </button>
+      </div>
+
+    </form>
+
+  </div>
+
+  <!-- View existing reports -->
+  {% if report_exists or rankings_exists %}
+  <div class="w-full max-w-lg mt-6">
+    <p class="text-xs text-gray-600 uppercase tracking-widest text-center mb-3">Last generated</p>
+    <div class="grid grid-cols-2 gap-3">
+      {% if report_exists %}
+      <a href="/report/se_report" target="_blank"
+        class="flex items-center justify-center gap-2 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm text-gray-300 font-medium transition-colors">
+        📊 Full Report
+      </a>
+      {% else %}
+      <div class="py-3 rounded-xl bg-white/3 border border-white/5 text-sm text-gray-600 text-center">📊 Full Report</div>
+      {% endif %}
+
+      {% if rankings_exists %}
+      <a href="/report/se_rankings" target="_blank"
+        class="flex items-center justify-center gap-2 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm text-gray-300 font-medium transition-colors">
+        🏆 Power Rankings
+      </a>
+      {% else %}
+      <div class="py-3 rounded-xl bg-white/3 border border-white/5 text-sm text-gray-600 text-center">🏆 Power Rankings</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- How it works -->
+  <div class="w-full max-w-lg mt-10 grid grid-cols-3 gap-4 text-center">
+    <div class="bg-white/3 rounded-xl p-4 border border-white/5">
+      <div class="text-2xl mb-2">📤</div>
+      <div class="text-xs text-gray-400 font-medium">Upload CSV</div>
+      <div class="text-[11px] text-gray-600 mt-1">DSR SE Scorecard export</div>
+    </div>
+    <div class="bg-white/3 rounded-xl p-4 border border-white/5">
+      <div class="text-2xl mb-2">⚙️</div>
+      <div class="text-xs text-gray-400 font-medium">Auto-analysed</div>
+      <div class="text-[11px] text-gray-600 mt-1">Rankings, flags &amp; trends</div>
+    </div>
+    <div class="bg-white/3 rounded-xl p-4 border border-white/5">
+      <div class="text-2xl mb-2">📈</div>
+      <div class="text-xs text-gray-400 font-medium">View reports</div>
+      <div class="text-[11px] text-gray-600 mt-1">Full report + ESPN rankings</div>
+    </div>
+  </div>
+
+<script>
+const input    = document.getElementById('csv-input');
+const zone     = document.getElementById('drop-zone');
+const label    = document.getElementById('drop-label');
+const fileNameEl = document.getElementById('file-name');
+const icon     = document.getElementById('drop-icon');
+
+function setFile(name) {
+  zone.classList.add('has-file');
+  icon.textContent = '✅';
+  label.classList.add('hidden');
+  fileNameEl.textContent = name;
+  fileNameEl.classList.remove('hidden');
+}
+
+input.addEventListener('change', () => {
+  if (input.files[0]) setFile(input.files[0].name);
+});
+
+zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
+zone.addEventListener('dragleave', ()  => zone.classList.remove('drag-over'));
+zone.addEventListener('drop', e => {
+  e.preventDefault();
+  zone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file && file.name.endsWith('.csv')) {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    setFile(file.name);
+  }
+});
+
+// Show loading state on submit
+document.getElementById('upload-form').addEventListener('submit', function() {
+  icon.textContent = '⏳';
+  fileNameEl.textContent = 'Generating…';
+});
+</script>
+
+</body>
+</html>
