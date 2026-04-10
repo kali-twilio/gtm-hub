@@ -137,9 +137,7 @@ def email_to_se_name(email, ses):
 
 @app.route("/login")
 def login():
-    if authenticated():
-        return redirect(url_for("index"))
-    return render_template("login.html", error=request.args.get("error"))
+    return redirect(url_for("index"))
 
 @app.route("/auth")
 def auth():
@@ -155,7 +153,7 @@ def auth():
 @app.route("/oauth2callback")
 def oauth2callback():
     if request.args.get("state") != session.pop("oauth_state", None):
-        return redirect(url_for("login", error="Invalid auth state. Please try again."))
+        return redirect(url_for("index", error="Invalid auth state. Please try again."))
     try:
         flow = build_flow()
         cv = session.pop("code_verifier", None)
@@ -169,23 +167,16 @@ def oauth2callback():
         )
         email = resp.json().get("email", "")
         if not email.endswith(f"@{ALLOWED_DOMAIN}"):
-            return redirect(url_for("login", error=f"Access restricted to @{ALLOWED_DOMAIN} accounts."))
+            return redirect(url_for("index", error=f"Access restricted to @{ALLOWED_DOMAIN} accounts."))
         session["user_email"] = email
     except Exception:
-        return redirect(url_for("login", error="Sign-in failed. Please try again."))
-    # Send matched SEs straight to their own stats page
-    data_path = OUTPUT_DIR / "se_data.json"
-    if data_path.exists():
-        import json as _json
-        ses = _json.loads(data_path.read_text(encoding="utf-8"))
-        if email_to_se_name(email, ses):
-            return redirect(url_for("se_profile"))
+        return redirect(url_for("index", error="Sign-in failed. Please try again."))
     return redirect(url_for("index"))
 
 @app.route("/logout")
 def logout():
     session.clear()
-    return redirect(url_for("login"))
+    return redirect(url_for("index"))
 
 
 # ── CSV resolution ────────────────────────────────────────────────────────────
@@ -239,28 +230,33 @@ def get_csv_path():
 
 @app.route("/")
 def index():
-    if not authenticated():
-        return redirect(url_for("login"))
     import json
     email = session.get("user_email", "")
+
+    if not authenticated():
+        return render_template("login.html", error=request.args.get("error"))
+
     data_path = OUTPUT_DIR / "se_data.json"
     has_data = data_path.exists()
     if has_data:
         ses = json.loads(data_path.read_text(encoding="utf-8"))
-        if email_to_se_name(email, ses):
-            return redirect(url_for("se_profile"))
-    return render_template(
-        "index.html",
-        error=request.args.get("error"),
-        user_email=email,
-        has_data=has_data,
-    )
+        own_name = email_to_se_name(email, ses)
+        if own_name:
+            se = next((s for s in ses if s["name"] == own_name), None)
+            return render_template("se_profile.html",
+                                   ses=ses, selected=own_name, se=se,
+                                   user_email=email, is_own_profile=True)
+
+    return render_template("index.html",
+                           error=request.args.get("error"),
+                           user_email=email,
+                           has_data=has_data)
 
 
 @app.route("/generate", methods=["POST"])
 def generate():
     if not authenticated():
-        return redirect(url_for("login"))
+        return redirect(url_for("index"))
     try:
         csv_path = get_csv_path()
     except ValueError as e:
@@ -294,7 +290,7 @@ def generate():
 @app.route("/report/<name>")
 def view_report(name):
     if not authenticated():
-        return redirect(url_for("login"))
+        return redirect(url_for("index"))
     # SE users can't access the full reports — send them to their own stats
     import json as _j
     _dp = OUTPUT_DIR / "se_data.json"
@@ -323,7 +319,7 @@ def view_report(name):
 @app.route("/report/se")
 def se_profile():
     if not authenticated():
-        return redirect(url_for("login"))
+        return redirect(url_for("index"))
     import json
     data_path = OUTPUT_DIR / "se_data.json"
     if not data_path.exists():
@@ -332,7 +328,9 @@ def se_profile():
     ses = json.loads(data_path.read_text(encoding="utf-8"))
     email = session.get("user_email", "")
     own_name = email_to_se_name(email, ses)
-    selected = request.args.get("name", "") or own_name or ""
+    if own_name:
+        return redirect(url_for("index"))  # SE users belong at /
+    selected = request.args.get("name", "")
     se = next((s for s in ses if s["name"] == selected), None)
     return render_template("se_profile.html",
                            ses=ses, selected=selected, se=se,
