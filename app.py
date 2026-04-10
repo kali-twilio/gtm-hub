@@ -304,15 +304,20 @@ def view_report(name):
     if not path.exists():
         return redirect(url_for("index",
                                 error="No report found. Paste a sheet URL or upload a CSV."))
+    nav_script = (
+        '<script>function nav(url){'
+        'fetch(url).then(r=>r.text()).then(html=>'
+        '{document.open();document.write(html);document.close();});}'
+        '</script>'
+    )
     back_btn = (
         '<div style="position:fixed;top:14px;left:16px;z-index:9999">'
-        '<a href="/" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);'
+        '<a onclick="nav(\'/\')" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);'
         'color:#d1d5db;text-decoration:none;padding:7px 14px;border-radius:8px;'
-        'font-size:12px;font-family:ui-sans-serif,system-ui,sans-serif">← Back</a></div>'
+        'font-size:12px;font-family:ui-sans-serif,system-ui,sans-serif;cursor:pointer">← Back</a></div>'
     )
     content = path.read_text(encoding="utf-8")
-    inject = back_btn + '<script>history.replaceState(null,"","/")</script>'
-    content = re.sub(r'(<body[^>]*>)', r'\1' + inject, content, count=1)
+    content = re.sub(r'(<body[^>]*>)', r'\1' + nav_script + back_btn, content, count=1)
     return content
 
 

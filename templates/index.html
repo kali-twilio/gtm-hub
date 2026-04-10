@@ -42,22 +42,22 @@
   <div class="w-full max-w-lg grid grid-cols-3 gap-4 mb-10">
 
     <!-- Full Report -->
-    <a href="/report/se_report"
-      class="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 font-semibold transition-colors">
+    <a onclick="nav('/report/se_report')"
+      class="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/40 text-blue-300 font-semibold transition-colors cursor-pointer">
       <span class="text-2xl">📊</span>
       <span class="text-sm">Full Report</span>
     </a>
 
     <!-- Power Rankings -->
-    <a href="/report/se_rankings"
-      class="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-semibold transition-colors">
+    <a onclick="nav('/report/se_rankings')"
+      class="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-300 font-semibold transition-colors cursor-pointer">
       <span class="text-2xl">🏆</span>
       <span class="text-sm">Power Rankings</span>
     </a>
 
     <!-- My Stats -->
-    <a href="/report/se"
-      class="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-semibold transition-colors">
+    <a onclick="nav('/report/se')"
+      class="flex flex-col items-center justify-center gap-2 py-6 rounded-2xl bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 font-semibold transition-colors cursor-pointer">
       <span class="text-2xl">👤</span>
       <span class="text-sm">My Stats</span>
     </a>
@@ -116,6 +116,12 @@
   </div>
 
 <script>
+function nav(url) {
+  fetch(url).then(r => r.text()).then(html => {
+    document.open(); document.write(html); document.close();
+  });
+}
+
 const input      = document.getElementById('csv-input');
 const zone       = document.getElementById('drop-zone');
 const label      = document.getElementById('drop-label');
