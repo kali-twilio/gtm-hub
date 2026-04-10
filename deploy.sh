@@ -107,13 +107,13 @@ EOF
 cat > /etc/nginx/nginx.conf << 'NGINXCONF'
 user nginx;
 worker_processes auto;
-server_tokens off;
 error_log /var/log/nginx/error.log;
 pid /run/nginx.pid;
 events { worker_connections 1024; }
 http {
     include       /etc/nginx/mime.types;
     default_type  application/octet-stream;
+    server_tokens off;
     sendfile on;
     keepalive_timeout 65;
     include /etc/nginx/conf.d/*.conf;
