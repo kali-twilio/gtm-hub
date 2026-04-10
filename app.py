@@ -73,6 +73,12 @@ def build_flow():
 def authenticated():
     return bool(session.get("user_email"))
 
+def match_email(email):
+    """Returns the email used for SE matching. SIMULATE_EMAIL overrides in LOCAL_DEV."""
+    if _local_dev:
+        return os.environ.get("SIMULATE_EMAIL", email)
+    return email
+
 
 def email_to_se_name(email, ses):
     """
@@ -177,7 +183,7 @@ def oauth2callback():
     if data_path.exists():
         import json as _json
         ses = _json.loads(data_path.read_text(encoding="utf-8"))
-        if email_to_se_name(email, ses):
+        if email_to_se_name(match_email(email), ses):
             return redirect(url_for("se_profile"))
     return redirect(url_for("index"))
 
@@ -247,7 +253,7 @@ def index():
     se_match = False
     if has_data:
         ses = json.loads(data_path.read_text(encoding="utf-8"))
-        se_match = email_to_se_name(email, ses) is not None
+        se_match = email_to_se_name(match_email(email), ses) is not None
     return render_template(
         "index.html",
         error=request.args.get("error"),
@@ -323,7 +329,7 @@ def se_profile():
                                 error="No analysis report found. Generate the SE Analysis report first."))
     ses = json.loads(data_path.read_text(encoding="utf-8"))
     email = session.get("user_email", "")
-    own_name = email_to_se_name(email, ses)
+    own_name = email_to_se_name(match_email(email), ses)
     selected = request.args.get("name", "") or own_name or ""
     se = next((s for s in ses if s["name"] == selected), None)
     return render_template("se_profile.html",
