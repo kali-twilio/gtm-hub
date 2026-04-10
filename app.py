@@ -320,7 +320,8 @@ def view_report(name):
         'font-size:12px;font-family:ui-sans-serif,system-ui,sans-serif">← Back</a></div>'
     )
     content = path.read_text(encoding="utf-8")
-    content = re.sub(r'(<body[^>]*>)', r'\1' + back_btn, content, count=1)
+    inject = back_btn + '<script>history.replaceState(null,"","/")</script>'
+    content = re.sub(r'(<body[^>]*>)', r'\1' + inject, content, count=1)
     return content
 
 
