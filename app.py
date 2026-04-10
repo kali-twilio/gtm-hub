@@ -306,8 +306,14 @@ def view_report(name):
                                 error="No report found. Paste a sheet URL or upload a CSV."))
     nav_script = (
         '<script>function nav(url){'
-        'fetch(url).then(r=>r.text()).then(html=>'
-        '{document.open();document.write(html);document.close();});}'
+        'fetch(url).then(r=>r.text()).then(html=>{'
+        'const d=new DOMParser().parseFromString(html,"text/html");'
+        'document.head.innerHTML=d.head.innerHTML;'
+        'document.body.innerHTML=d.body.innerHTML;'
+        'document.querySelectorAll("script").forEach(s=>{'
+        'const n=document.createElement("script");'
+        'if(s.src)n.src=s.src;else n.textContent=s.textContent;'
+        's.replaceWith(n);});});}'
         '</script>'
     )
     back_btn = (
