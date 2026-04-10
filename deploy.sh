@@ -12,6 +12,8 @@ BUCKET="se-scorecard-deploy-1775761654"
 SG_ID="sg-009ff23d837b491dc"
 TAG_NAME="se-team-dev-twilio"
 EIP_ALLOC="eipalloc-0b1f06fb219e5ea52"  # permanent IP: 44.230.217.150
+DOMAIN="se-scorecard.duckdns.org"
+CERTBOT_EMAIL="kali@twilio.com"
 EXPIRES=7200  # pre-signed URL TTL in seconds (2 hours)
 
 # ── 1. Terminate any running instances with this tag ─────────────────────────
@@ -62,7 +64,8 @@ set -e
 exec > /var/log/app-setup.log 2>&1
 
 yum update -y
-yum install -y python3 python3-pip nginx
+yum install -y python3 python3-pip nginx augeas-libs
+pip3 install certbot certbot-nginx
 
 mkdir -p /app/templates /app/outputs
 cd /app
@@ -91,9 +94,10 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-cat > /etc/nginx/conf.d/app.conf << 'EOF'
+cat > /etc/nginx/conf.d/app.conf << EOF
 server {
     listen 80;
+    server_name ${DOMAIN};
     client_max_body_size 20M;
     location / {
         proxy_pass         http://127.0.0.1:5000;
@@ -108,6 +112,16 @@ rm -f /etc/nginx/conf.d/default.conf
 systemctl daemon-reload
 systemctl enable app nginx
 systemctl start app nginx
+
+# Get SSL cert and auto-configure nginx for HTTPS
+certbot --nginx -d ${DOMAIN} \
+  --non-interactive --agree-tos \
+  -m ${CERTBOT_EMAIL} \
+  --redirect
+
+# Auto-renew certs (Let's Encrypt certs expire every 90 days)
+echo "0 0,12 * * * root certbot renew --quiet" >> /etc/crontab
+
 echo "SETUP COMPLETE"
 USERDATA
 
@@ -147,5 +161,5 @@ aws ec2 associate-address \
   --allocation-id "$EIP_ALLOC" > /dev/null
 
 echo ""
-echo "✓ Done. App will be ready in ~3 minutes at:"
-echo "  http://44.230.217.150"
+echo "✓ Done. App will be ready in ~5 minutes at:"
+echo "  https://se-scorecard.duckdns.org"
