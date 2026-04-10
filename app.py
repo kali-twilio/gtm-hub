@@ -76,43 +76,52 @@ def email_to_se_name(email, ses):
     """
     Best-effort match of a Twilio email to an SE's full name.
 
-    Handles two common email formats:
-      first.last@  →  kali.jones   matches "Kali Jones"
-      flast@       →  ybabenko     matches "Yuriy Babenko"
-                      cchin        matches "Connor Chin"
-
-    For the initial+last format, tries every split point (1 char, 2 chars, …)
-    and returns the first SE whose last name equals the suffix and whose
-    first name starts with the prefix.
+    Handles common Twilio email patterns:
+      first.last@  → kali.jones    matches "Kali Jones"
+      flast@       → ybabenko      matches "Yuriy Babenko"
+                     cchin         matches "Connor Chin"
+                     bbennettday   matches "Ben Bennett-Day"  (hyphens stripped)
+                     jichang       matches "CJ Chang"         (unique last name fallback)
     """
     local = email.split("@")[0].lower()
+
+    def norm(s):
+        # strip punctuation so bennett-day == bennettday
+        return re.sub(r'[^a-z0-9]', '', s)
 
     def names(se):
         parts = se["name"].lower().split()
         return (parts[0] if parts else ""), (parts[-1] if len(parts) > 1 else "")
 
     if "." in local:
-        # first.last or first.middle.last — use first and last segments
         parts = local.split(".")
         first_part, last_part = parts[0], parts[-1]
-        # prefer full first+last match, fall back to first name only
         for se in ses:
             fn, ln = names(se)
-            if fn == first_part and ln == last_part:
+            if fn == first_part and norm(ln) == norm(last_part):
                 return se["name"]
         for se in ses:
             fn, _ = names(se)
             if fn == first_part:
                 return se["name"]
     else:
-        # try every split: treat local[:n] as name prefix, local[n:] as last name
+        # Pass 1: prefix matches start of first name AND normalized last name matches
         for split in range(1, len(local)):
             prefix, suffix = local[:split], local[split:]
             for se in ses:
                 fn, ln = names(se)
-                if ln == suffix and fn.startswith(prefix):
+                if norm(ln) == norm(suffix) and fn.startswith(prefix):
                     return se["name"]
-        # last resort: whole local part as first name
+
+        # Pass 2: last-name-only fallback when the last name is unique in the dataset
+        # (handles jichang → "CJ Chang" where display name doesn't match email prefix)
+        for split in range(1, len(local)):
+            suffix = local[split:]
+            matches = [se for se in ses if norm(names(se)[1]) == norm(suffix)]
+            if len(matches) == 1:
+                return matches[0]["name"]
+
+        # Pass 3: whole local part as first name
         for se in ses:
             fn, _ = names(se)
             if fn == local:
