@@ -4,6 +4,7 @@
 # Terminates any existing instance, uploads latest code, and launches a fresh one.
 
 set -e
+cd "$(dirname "$0")"  # always run from the script's directory
 
 PROFILE="290549574947_Standard_PowerUser"
 REGION="us-west-2"
