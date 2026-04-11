@@ -131,6 +131,15 @@ def security_headers(response):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self'; "
+        "img-src 'self' data:; "
+        "frame-ancestors 'none'"
+    )
     if not _local_dev:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     return response
@@ -278,7 +287,12 @@ def api_ses():
     data_path = OUTPUT_DIR / "se_data.json"
     if not data_path.exists():
         return jsonify([]), 404
-    return jsonify(json.loads(data_path.read_text(encoding="utf-8")))
+    ses = json.loads(data_path.read_text(encoding="utf-8"))
+    # SE users only get their own record
+    se_name = email_to_se_name(session.get("user_email", ""), ses)
+    if se_name:
+        ses = [s for s in ses if s["name"] == se_name]
+    return jsonify(ses)
 
 @app.route("/api/data/report")
 def api_report():
@@ -332,6 +346,11 @@ def api_report():
 def api_rankings():
     if not authenticated():
         return jsonify({}), 401
+    data_path = OUTPUT_DIR / "se_data.json"
+    if data_path.exists():
+        ses = json.loads(data_path.read_text(encoding="utf-8"))
+        if email_to_se_name(session.get("user_email", ""), ses):
+            return jsonify({"error": "Access denied"}), 403
     data_path = OUTPUT_DIR / "se_data.json"
     if not data_path.exists():
         return jsonify({}), 404

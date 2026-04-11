@@ -350,6 +350,9 @@ def save_data(ranked, output_dir):
         entry["flags"] = collect_se_flags(se, ranked)
         entry["roast"] = get_roast(se, ranked)
         payload.append(entry)
+    # Write to a temp file then atomically replace to avoid partial reads
     json_path = Path(output_dir) / "se_data.json"
-    with open(json_path, "w", encoding="utf-8") as f:
+    tmp_path  = json_path.with_suffix(".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(payload, f)
+    tmp_path.replace(json_path)
