@@ -61,13 +61,16 @@ echo "Uploading files to S3..."
 aws s3 cp app.py           s3://$BUCKET/app.py           --profile "$PROFILE" --region "$REGION"
 aws s3 cp requirements.txt s3://$BUCKET/requirements.txt --profile "$PROFILE" --region "$REGION"
 aws s3 cp se_analysis.py   s3://$BUCKET/se_analysis.py   --profile "$PROFILE" --region "$REGION"
-aws s3 sync frontend/build/ s3://$BUCKET/frontend/        --profile "$PROFILE" --region "$REGION" --delete
+tar -czf /tmp/frontend.tar.gz -C frontend/build .
+aws s3 cp /tmp/frontend.tar.gz s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION"
+rm /tmp/frontend.tar.gz
 echo "Upload complete."
 
 # ── 3. Generate pre-signed download URLs ────────────────────────────────────
-APP_URL=$(aws s3 presign      s3://$BUCKET/app.py           --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-REQS_URL=$(aws s3 presign     s3://$BUCKET/requirements.txt --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-ANALYSIS_URL=$(aws s3 presign s3://$BUCKET/se_analysis.py   --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+APP_URL=$(aws s3 presign        s3://$BUCKET/app.py            --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+REQS_URL=$(aws s3 presign       s3://$BUCKET/requirements.txt  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+ANALYSIS_URL=$(aws s3 presign   s3://$BUCKET/se_analysis.py    --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+FRONTEND_URL_S3=$(aws s3 presign s3://$BUCKET/frontend.tar.gz  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 
 # ── 4. Build boot script ─────────────────────────────────────────────────────
 USERDATA_FILE=$(mktemp /tmp/userdata.XXXXXX.sh)
@@ -91,8 +94,10 @@ curl -sL '${ANALYSIS_URL}' -o se_analysis.py
 
 pip3 install -r requirements.txt
 
-# Download built frontend static files
-aws s3 sync s3://${BUCKET}/frontend/ /var/www/scorecard/ --region ${REGION}
+# Download and extract frontend static files
+curl -sL '${FRONTEND_URL_S3}' -o /tmp/frontend.tar.gz
+tar -xzf /tmp/frontend.tar.gz -C /var/www/scorecard
+rm /tmp/frontend.tar.gz
 
 chown -R ec2-user:ec2-user /app
 chown -R nginx:nginx /var/www/scorecard
@@ -145,7 +150,7 @@ server {
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
     # API and auth routes → Flask
-    location ~ ^/(api|auth|oauth2callback|logout)/ {
+    location ~ ^/(api|auth|oauth2callback|logout|simulate) {
         proxy_pass         http://127.0.0.1:5000;
         proxy_set_header   Host \\\$host;
         proxy_set_header   X-Real-IP \\\$remote_addr;
