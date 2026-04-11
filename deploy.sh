@@ -14,9 +14,26 @@ if [ ! -f deploy.env ]; then
 fi
 source deploy.env
 
+# Validate required vars
+for var in PROFILE REGION BUCKET SG_ID TAG_NAME EIP_ALLOC DOMAIN CERTBOT_EMAIL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL; do
+  if [ -z "${!var}" ]; then
+    echo "ERROR: $var is not set in deploy.env"
+    exit 1
+  fi
+done
+
 EXPIRES=7200  # pre-signed URL TTL in seconds (2 hours)
 
+# ── 0. Build SvelteKit frontend ───────────────────────────────────────────────
+echo "Building frontend..."
+cd frontend
+npm ci --silent
+npm run build
+cd ..
+echo "Frontend built."
+
 # ── 1. Terminate any running instances with this tag ─────────────────────────
+echo ""
 echo "Checking for running instances..."
 OLD_IDS=$(aws ec2 describe-instances \
   --profile "$PROFILE" --region "$REGION" \
@@ -41,23 +58,16 @@ fi
 # ── 2. Upload app files to S3 ────────────────────────────────────────────────
 echo ""
 echo "Uploading files to S3..."
-aws s3 cp app.py            s3://$BUCKET/app.py            --profile "$PROFILE" --region "$REGION"
-aws s3 cp requirements.txt  s3://$BUCKET/requirements.txt  --profile "$PROFILE" --region "$REGION"
-aws s3 cp se_analysis.py    s3://$BUCKET/se_analysis.py    --profile "$PROFILE" --region "$REGION"
-aws s3 cp se_rankings.py    s3://$BUCKET/se_rankings.py    --profile "$PROFILE" --region "$REGION"
-aws s3 cp templates/index.html      s3://$BUCKET/templates/index.html      --profile "$PROFILE" --region "$REGION"
-aws s3 cp templates/login.html      s3://$BUCKET/templates/login.html      --profile "$PROFILE" --region "$REGION"
-aws s3 cp templates/se_profile.html s3://$BUCKET/templates/se_profile.html --profile "$PROFILE" --region "$REGION"
+aws s3 cp app.py           s3://$BUCKET/app.py           --profile "$PROFILE" --region "$REGION"
+aws s3 cp requirements.txt s3://$BUCKET/requirements.txt --profile "$PROFILE" --region "$REGION"
+aws s3 cp se_analysis.py   s3://$BUCKET/se_analysis.py   --profile "$PROFILE" --region "$REGION"
+aws s3 sync frontend/build/ s3://$BUCKET/frontend/        --profile "$PROFILE" --region "$REGION" --delete
 echo "Upload complete."
 
 # ── 3. Generate pre-signed download URLs ────────────────────────────────────
-APP_URL=$(aws s3 presign      s3://$BUCKET/app.py            --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-REQS_URL=$(aws s3 presign     s3://$BUCKET/requirements.txt  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-ANALYSIS_URL=$(aws s3 presign s3://$BUCKET/se_analysis.py    --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-RANKINGS_URL=$(aws s3 presign s3://$BUCKET/se_rankings.py    --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-INDEX_URL=$(aws s3 presign      s3://$BUCKET/templates/index.html      --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-LOGIN_URL=$(aws s3 presign      s3://$BUCKET/templates/login.html      --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-SE_PROFILE_URL=$(aws s3 presign s3://$BUCKET/templates/se_profile.html --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+APP_URL=$(aws s3 presign      s3://$BUCKET/app.py           --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+REQS_URL=$(aws s3 presign     s3://$BUCKET/requirements.txt --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+ANALYSIS_URL=$(aws s3 presign s3://$BUCKET/se_analysis.py   --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 
 # ── 4. Build boot script ─────────────────────────────────────────────────────
 USERDATA_FILE=$(mktemp /tmp/userdata.XXXXXX.sh)
@@ -72,30 +82,32 @@ sleep 20
 yum install -y python3 python3-pip nginx augeas-libs
 pip3 install certbot certbot-nginx
 
-mkdir -p /app/templates /app/outputs
+mkdir -p /app/outputs /var/www/scorecard
 cd /app
 
 curl -sL '${APP_URL}'      -o app.py
 curl -sL '${REQS_URL}'     -o requirements.txt
 curl -sL '${ANALYSIS_URL}' -o se_analysis.py
-curl -sL '${RANKINGS_URL}' -o se_rankings.py
-curl -sL '${INDEX_URL}'      -o templates/index.html
-curl -sL '${LOGIN_URL}'      -o templates/login.html
-curl -sL '${SE_PROFILE_URL}' -o templates/se_profile.html
 
 pip3 install -r requirements.txt
+
+# Download built frontend static files
+aws s3 sync s3://${BUCKET}/frontend/ /var/www/scorecard/ --region ${REGION}
+
 chown -R ec2-user:ec2-user /app
+chown -R nginx:nginx /var/www/scorecard
 
 cat > /etc/systemd/system/app.service << EOF
 [Unit]
-Description=SE Scorecard
+Description=SE Scorecard API
 After=network.target
 [Service]
 User=ec2-user
 WorkingDirectory=/app
 Environment="GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}"
 Environment="GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}"
-Environment="SECRET_KEY=$(openssl rand -hex 32)"
+Environment="SECRET_KEY=${SECRET_KEY}"
+Environment="FRONTEND_URL=https://${DOMAIN}"
 ExecStart=/usr/local/bin/gunicorn -b 127.0.0.1:5000 -w 2 --timeout 120 app:app
 Restart=always
 RestartSec=5
@@ -124,7 +136,7 @@ cat > /etc/nginx/conf.d/app.conf << EOF
 server {
     listen 80;
     server_name ${DOMAIN};
-    client_max_body_size 20M;
+    client_max_body_size 10M;
 
     add_header X-Content-Type-Options "nosniff" always;
     add_header X-Frame-Options "SAMEORIGIN" always;
@@ -132,12 +144,19 @@ server {
     add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
-    location / {
+    # API and auth routes → Flask
+    location ~ ^/(api|auth|oauth2callback|logout)/ {
         proxy_pass         http://127.0.0.1:5000;
         proxy_set_header   Host \\\$host;
         proxy_set_header   X-Real-IP \\\$remote_addr;
         proxy_set_header   X-Forwarded-Proto \\\$scheme;
         proxy_read_timeout 120s;
+    }
+
+    # Everything else → SvelteKit static build
+    location / {
+        root /var/www/scorecard;
+        try_files \\\$uri \\\$uri.html \\\$uri/ =404;
     }
 }
 EOF
