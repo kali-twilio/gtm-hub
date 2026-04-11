@@ -31,6 +31,11 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(32)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_proto=1)  # trust nginx X-Forwarded-Proto only
 
+@app.after_request
+def no_cache(response):
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
 # Secure session cookies — HTTPS only in production, relaxed locally
 _local_dev = os.environ.get("LOCAL_DEV") == "1"
 if _local_dev:
@@ -134,6 +139,15 @@ def email_to_se_name(email, ses):
 
 
 # ── Auth routes ───────────────────────────────────────────────────────────────
+
+@app.route("/simulate")
+def simulate():
+    if not _local_dev:
+        return "Not available", 404
+    email = request.args.get("email", "")
+    if email:
+        session["user_email"] = email
+    return redirect(url_for("index"))
 
 @app.route("/login")
 def login():
@@ -316,13 +330,35 @@ def view_report(name):
         's.replaceWith(n);});});}'
         '</script>'
     )
+    p5_style = (
+        '<link rel="preconnect" href="https://fonts.googleapis.com">'
+        '<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap" rel="stylesheet">'
+        '<style>'
+        'html,body{font-family:"Rajdhani",ui-sans-serif,system-ui,sans-serif!important;background:#0d0005!important;'
+        'background-image:radial-gradient(circle,rgba(232,0,61,0.14) 1px,transparent 1px)!important;'
+        'background-size:22px 22px!important;}'
+        'h1,h2,h3,h4,h5,h6{font-style:italic!important;text-transform:uppercase!important;letter-spacing:0.04em!important;}'
+        '.p5-bar-top{position:fixed;top:0;left:0;right:0;height:4px;background:#E8003D;z-index:9998;box-shadow:0 0 12px #E8003D}'
+        '.p5-bar-bot{position:fixed;bottom:0;left:0;right:0;height:4px;background:#E8003D;z-index:9998;box-shadow:0 0 12px #E8003D}'
+        '.p5-corner{position:fixed;width:22px;height:22px;z-index:9998;border-color:#E8003D!important;border-style:solid}'
+        '</style>'
+    )
     back_btn = (
+        '<div class="p5-bar-top"></div>'
+        '<div class="p5-bar-bot"></div>'
+        '<div class="p5-corner" style="top:16px;left:16px;border-width:3px 0 0 3px"></div>'
+        '<div class="p5-corner" style="top:16px;right:16px;border-width:3px 3px 0 0"></div>'
+        '<div class="p5-corner" style="bottom:16px;left:16px;border-width:0 0 3px 3px"></div>'
+        '<div class="p5-corner" style="bottom:16px;right:16px;border-width:0 3px 3px 0"></div>'
         '<div style="position:fixed;top:14px;left:16px;z-index:9999">'
-        '<a onclick="nav(\'/\')" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.15);'
-        'color:#d1d5db;text-decoration:none;padding:7px 14px;border-radius:8px;'
-        'font-size:12px;font-family:ui-sans-serif,system-ui,sans-serif;cursor:pointer">← Back</a></div>'
+        '<a onclick="nav(\'/\')" style="background:rgba(232,0,61,0.15);border:1px solid rgba(232,0,61,0.4);'
+        'color:white;text-decoration:none;padding:8px 18px;'
+        'font-size:13px;font-weight:700;font-style:italic;font-family:Rajdhani,ui-sans-serif,system-ui,sans-serif;'
+        'text-transform:uppercase;letter-spacing:0.1em;cursor:pointer;'
+        'clip-path:polygon(8px 0%,100% 0%,calc(100% - 8px) 100%,0% 100%);display:inline-block">◀ Back</a></div>'
     )
     content = path.read_text(encoding="utf-8")
+    content = re.sub(r'(</head>)', p5_style + r'\1', content, count=1)
     content = re.sub(r'(<body[^>]*>)', r'\1' + nav_script + back_btn, content, count=1)
     return content
 
