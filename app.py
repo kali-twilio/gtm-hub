@@ -239,7 +239,9 @@ def api_generate():
             csv_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}"
             try:
                 with urllib.request.urlopen(csv_url, timeout=15) as resp:
-                    data = resp.read()
+                    data = resp.read(10 * 1024 * 1024 + 1)
+                if len(data) > 10 * 1024 * 1024:
+                    return jsonify({"ok": False, "error": "Sheet is too large (max 10 MB)"}), 400
             except urllib.error.HTTPError as e:
                 if e.code in (401, 403):
                     return jsonify({"ok": False, "error": "Sheet is private — share as 'Anyone with the link can view'"}), 400
