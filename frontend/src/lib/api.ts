@@ -1,3 +1,18 @@
+export interface AppManifest {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  path: string;
+  status: 'live' | 'coming_soon';
+}
+
+export async function getApps(): Promise<AppManifest[]> {
+  const r = await fetch('/api/apps');
+  if (!r.ok) return [];
+  return r.json();
+}
+
 export async function getMe() {
   const r = await fetch('/api/me');
   if (!r.ok) return null;

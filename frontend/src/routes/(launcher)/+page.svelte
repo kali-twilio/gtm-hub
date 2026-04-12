@@ -1,5 +1,13 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { user, authReady } from '$lib/stores';
+  import { getApps, type AppManifest } from '$lib/api';
+
+  let apps: AppManifest[] = $state([]);
+
+  onMount(async () => {
+    apps = await getApps();
+  });
 </script>
 
 <!--
@@ -211,37 +219,23 @@
 
   <!-- App grid -->
   <div class="app-grid">
-
-    <!-- SE Scorecard — live -->
-    <a href="/scorecard" class="app-card active" style="color:inherit">
-      <div class="card-icon">📊</div>
-      <div class="card-name">SE Scorecard</div>
-      <div class="card-desc">Analytics for the Self Service SE team.</div>
-      <div class="card-open">Open <span>→</span></div>
-    </a>
-
-    <!-- Placeholder apps — other teams could build these -->
-    <div class="app-card disabled">
-      <div class="card-icon">📈</div>
-      <div class="card-name">Pipeline Tracker</div>
-      <div class="card-desc">Opportunity pipeline visibility and forecasting across the team.</div>
-      <div class="card-soon">Coming Soon</div>
-    </div>
-
-    <div class="app-card disabled">
-      <div class="card-icon">🎯</div>
-      <div class="card-name">Win / Loss Analysis</div>
-      <div class="card-desc">Competitive win/loss trends broken down by segment and region.</div>
-      <div class="card-soon">Coming Soon</div>
-    </div>
-
-    <div class="app-card disabled">
-      <div class="card-icon">🤝</div>
-      <div class="card-name">Account Health</div>
-      <div class="card-desc">Customer health scores and proactive renewal risk alerts.</div>
-      <div class="card-soon">Coming Soon</div>
-    </div>
-
+    {#each apps as app}
+      {#if app.status === 'live'}
+        <a href={app.path} class="app-card active" style="color:inherit">
+          <div class="card-icon">{app.icon}</div>
+          <div class="card-name">{app.name}</div>
+          <div class="card-desc">{app.description}</div>
+          <div class="card-open">Open <span>→</span></div>
+        </a>
+      {:else}
+        <div class="app-card disabled">
+          <div class="card-icon">{app.icon}</div>
+          <div class="card-name">{app.name}</div>
+          <div class="card-desc">{app.description}</div>
+          <div class="card-soon">Coming Soon</div>
+        </div>
+      {/if}
+    {/each}
   </div>
 </div>
 

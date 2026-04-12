@@ -1,0 +1,8 @@
+{
+  "id": "accounthealth",
+  "name": "Account Health",
+  "description": "Customer health scores and proactive renewal risk alerts.",
+  "icon": "🤝",
+  "path": "/accounthealth",
+  "status": "coming_soon"
+}

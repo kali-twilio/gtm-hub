@@ -66,8 +66,11 @@ def email_to_se_name(email: str, ses: list) -> str | None:
     return None
 
 
-def get_se_info(email: str) -> dict:
-    """Return SE metadata for /api/me. Called by the platform layer."""
+def enrich_me(email: str) -> dict:
+    """
+    Platform hook — called by /api/me to add scorecard-specific user data.
+    Any app can expose this function to contribute fields to the /api/me response.
+    """
     data_path = OUTPUT_DIR / "se_data.json"
     has_data = data_path.exists()
     se_name = None

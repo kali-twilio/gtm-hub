@@ -2,23 +2,29 @@
 """
 GTM Hub — Platform API
 ----------------------
-Handles auth (Google OAuth) and the /api/me endpoint.
-App-specific routes are registered as Blueprints from apps/.
+Handles auth (Google OAuth), /api/me, and /api/apps.
+App blueprints are auto-discovered from apps/ — no manual registration needed.
+
+To add a new app:
+  1. Create backend/apps/<name>/manifest.json
+  2. Create backend/apps/<name>/routes.py with a Blueprint named <name>_bp
+  3. Optionally expose enrich_me(email) -> dict to add fields to /api/me
 
 Usage:
-  python app.py                                    # dev
-  gunicorn -b 0.0.0.0:5001 -w 2 app:app           # production
+  python app.py                          # dev
+  gunicorn -b 0.0.0.0:5001 -w 2 app:app # production
 """
 
 import os
+import json
 import logging
+import importlib
+from pathlib import Path
 
 from flask import Flask, request, jsonify, redirect, url_for, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 from google_auth_oauthlib.flow import Flow
 import requests as http
-
-from apps.scorecard.routes import scorecard_bp, get_se_info
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -55,9 +61,25 @@ SCOPES               = ["openid", "https://www.googleapis.com/auth/userinfo.emai
 if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
     raise RuntimeError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set.")
 
-# ── Register app blueprints ───────────────────────────────────────────────────
+APPS_DIR = Path(__file__).parent / "apps"
 
-app.register_blueprint(scorecard_bp)
+# ── Auto-discover app blueprints ──────────────────────────────────────────────
+# Convention: apps/<name>/routes.py must expose a Blueprint named <name>_bp.
+# Convention: apps/<name>/routes.py may expose enrich_me(email) -> dict
+#             to contribute fields to the /api/me response.
+
+_me_enrichers: list = []
+
+for _app_dir in sorted(APPS_DIR.iterdir()):
+    if not _app_dir.is_dir() or not (_app_dir / "routes.py").exists():
+        continue
+    _mod = importlib.import_module(f"apps.{_app_dir.name}.routes")
+    _bp  = getattr(_mod, f"{_app_dir.name}_bp", None)
+    if _bp:
+        app.register_blueprint(_bp)
+        log.info("Registered blueprint: %s", _app_dir.name)
+    if hasattr(_mod, "enrich_me"):
+        _me_enrichers.append(_mod.enrich_me)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -149,7 +171,21 @@ def api_me():
     email = session.get("user_email", "")
     if not email:
         return jsonify({"email": None}), 200
-    return jsonify({"email": email, **get_se_info(email)})
+    data: dict = {"email": email}
+    for enrich in _me_enrichers:
+        data.update(enrich(email))
+    return jsonify(data)
+
+@app.route("/api/apps")
+def api_apps():
+    """Returns all registered app manifests, ordered by status (live first)."""
+    manifests = []
+    for app_dir in sorted(APPS_DIR.iterdir()):
+        manifest_path = app_dir / "manifest.json"
+        if app_dir.is_dir() and manifest_path.exists():
+            manifests.append(json.loads(manifest_path.read_text(encoding="utf-8")))
+    manifests.sort(key=lambda m: (m.get("status") != "live", m.get("name", "")))
+    return jsonify(manifests)
 
 
 if __name__ == "__main__":
