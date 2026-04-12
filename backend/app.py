@@ -63,6 +63,9 @@ if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
 
 APPS_DIR = Path(__file__).parent / "apps"
 
+# Routes the platform exposes publicly (no login required)
+_PUBLIC_ROUTES = {"/auth", "/oauth2callback", "/logout", "/simulate", "/api/me", "/api/apps"}
+
 # ── Auto-discover app blueprints ──────────────────────────────────────────────
 # Convention: apps/<name>/routes.py must expose a Blueprint named <name>_bp.
 # Convention: apps/<name>/routes.py may expose enrich_me(email) -> dict
@@ -94,6 +97,18 @@ def build_flow():
         scopes=SCOPES,
         redirect_uri=url_for("oauth2callback", _external=True),
     )
+
+@app.before_request
+def enforce_auth():
+    """
+    Platform-level auth gate. All /api/* routes require a valid session
+    unless explicitly listed in _PUBLIC_ROUTES. App builders never need
+    to implement their own auth checks.
+    """
+    if request.path in _PUBLIC_ROUTES:
+        return
+    if request.path.startswith("/api/") and not session.get("user_email"):
+        return jsonify({"error": "Unauthorized"}), 401
 
 @app.after_request
 def security_headers(response):

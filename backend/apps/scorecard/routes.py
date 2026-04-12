@@ -20,10 +20,6 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 ALLOWED = {".csv"}
 
 
-def _authenticated():
-    return bool(session.get("user_email"))
-
-
 def email_to_se_name(email: str, ses: list) -> str | None:
     """Match a @twilio.com email to an SE name in the dataset."""
     local = email.split("@")[0].lower()
@@ -89,8 +85,6 @@ def _load_ses():
 
 @scorecard_bp.route("/api/generate", methods=["POST"])
 def api_generate():
-    if not _authenticated():
-        return jsonify({"ok": False, "error": "Not authenticated"}), 401
 
     sheet_url = request.form.get("sheet_url", "").strip()
     f = request.files.get("csv_file")
@@ -152,8 +146,6 @@ def api_generate():
 
 @scorecard_bp.route("/api/data/ses")
 def api_ses():
-    if not _authenticated():
-        return jsonify([]), 401
     ses = _load_ses()
     if ses is None:
         return jsonify([]), 404
@@ -166,8 +158,6 @@ def api_ses():
 
 @scorecard_bp.route("/api/data/report")
 def api_report():
-    if not _authenticated():
-        return jsonify({}), 401
     ses_list = _load_ses()
     if ses_list is None:
         return jsonify({}), 404
@@ -202,8 +192,6 @@ def api_report():
 
 @scorecard_bp.route("/api/data/rankings")
 def api_rankings():
-    if not _authenticated():
-        return jsonify({}), 401
     ses_list = _load_ses()
     if ses_list is None:
         return jsonify({}), 404
