@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { user, authReady } from '$lib/stores';
   import { getApps, type AppManifest } from '$lib/api';
 
   let apps: AppManifest[] = $state([]);
 
-  onMount(async () => {
-    apps = await getApps();
+  $effect(() => {
+    if ($authReady && $user) {
+      getApps().then(a => { apps = a; });
+    }
   });
 </script>
 
