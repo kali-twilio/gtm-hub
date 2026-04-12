@@ -58,9 +58,9 @@ fi
 # ── 2. Upload app files to S3 ────────────────────────────────────────────────
 echo ""
 echo "Uploading files to S3..."
-aws s3 cp app.py           s3://$BUCKET/app.py           --profile "$PROFILE" --region "$REGION"
-aws s3 cp requirements.txt s3://$BUCKET/requirements.txt --profile "$PROFILE" --region "$REGION"
-aws s3 cp se_analysis.py   s3://$BUCKET/se_analysis.py   --profile "$PROFILE" --region "$REGION"
+aws s3 cp backend/app.py           s3://$BUCKET/app.py           --profile "$PROFILE" --region "$REGION"
+aws s3 cp backend/requirements.txt s3://$BUCKET/requirements.txt --profile "$PROFILE" --region "$REGION"
+aws s3 cp backend/se_analysis.py   s3://$BUCKET/se_analysis.py   --profile "$PROFILE" --region "$REGION"
 tar -czf /tmp/frontend.tar.gz -C frontend/build .
 aws s3 cp /tmp/frontend.tar.gz s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION"
 rm /tmp/frontend.tar.gz
