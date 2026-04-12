@@ -4,23 +4,62 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap');
 
+/* ── P5 (default) ────────────────────────────────────────────────────────── */
 :root {
   --red: #E8003D;
+  --red-rgb: 232, 0, 61;
   --dark: #0d0005;
   --panel: #180009;
   --yellow: #FFD600;
+  --text: #ffffff;
+  --text-muted: rgba(255,255,255,0.4);
+  --text-faint: rgba(255,255,255,0.2);
+  --border: rgba(232,0,61,0.2);
+  --act-color: #4da6ff;
+  --act-glow: #7dc4ff;
+  --act-rgb: 77,166,255;
+  --exp-color: #00e87a;
+  --exp-glow: #4dffa0;
+  --exp-rgb: 0,232,122;
+  --font: 'Rajdhani', ui-sans-serif, system-ui, sans-serif;
+}
+
+/* ── Twilio overrides ────────────────────────────────────────────────────── */
+[data-theme="twilio"] {
+  --red: #F22F46;
+  --red-rgb: 242, 47, 70;
+  --dark: #F4F4F6;
+  --panel: #FFFFFF;
+  --yellow: #F22F46;
+  --text: #0D122B;
+  --text-muted: rgba(13,18,43,0.55);
+  --text-faint: rgba(13,18,43,0.35);
+  --border: rgba(242,47,70,0.15);
+  --act-color: #006EFF;
+  --act-glow: #006EFF;
+  --act-rgb: 0,110,255;
+  --exp-color: #178742;
+  --exp-glow: #178742;
+  --exp-rgb: 23,135,66;
+  --font: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
 * { box-sizing: border-box; }
 
 body {
   background: var(--dark);
-  font-family: 'Rajdhani', ui-sans-serif, system-ui, sans-serif;
-  background-image: radial-gradient(circle, rgba(232,0,61,0.14) 1px, transparent 1px);
-  background-size: 22px 22px;
-  color: white;
+  font-family: var(--font);
+  color: var(--text);
   min-height: 100vh;
 }
+
+/* P5 dot grid */
+body:not([data-theme="twilio"]) {
+  background-image: radial-gradient(circle, rgba(var(--red-rgb),0.14) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+/* ── Shared component classes ────────────────────────────────────────────── */
 
 .p5-badge {
   display: inline-block;
@@ -35,12 +74,28 @@ body {
   clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
 }
 
+[data-theme="twilio"] .p5-badge {
+  font-style: normal;
+  clip-path: none;
+  border-radius: 4px;
+  padding: 3px 10px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
 .p5-panel {
   background: var(--panel);
-  border: 1px solid rgba(232,0,61,0.2);
+  border: 1px solid var(--border);
   border-left: 4px solid var(--red);
   position: relative;
   overflow: hidden;
+}
+
+[data-theme="twilio"] .p5-panel {
+  border: 1px solid rgba(13,18,43,0.1);
+  border-left: none;
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(13,18,43,0.08), 0 4px 16px rgba(13,18,43,0.06);
 }
 
 .p5-panel::before {
@@ -53,6 +108,10 @@ body {
   z-index: 1;
 }
 
+[data-theme="twilio"] .p5-panel::before {
+  display: none;
+}
+
 .p5-menu-btn {
   display: flex;
   align-items: center;
@@ -60,9 +119,9 @@ body {
   width: 100%;
   padding: 14px 20px;
   background: var(--panel);
-  border: 1px solid rgba(232,0,61,0.2);
+  border: 1px solid var(--border);
   border-left: 4px solid var(--red);
-  color: white;
+  color: var(--text);
   cursor: pointer;
   transition: all 0.15s;
   position: relative;
@@ -72,9 +131,23 @@ body {
   font-family: inherit;
 }
 
+[data-theme="twilio"] .p5-menu-btn {
+  border-left: none;
+  border-radius: 10px;
+  clip-path: none;
+  border: 1px solid rgba(13,18,43,0.1);
+  box-shadow: 0 1px 4px rgba(13,18,43,0.06);
+}
+
 .p5-menu-btn:hover {
   transform: translateX(6px);
   border-left-color: var(--yellow);
+}
+
+[data-theme="twilio"] .p5-menu-btn:hover {
+  transform: none;
+  box-shadow: 0 4px 16px rgba(242,47,70,0.14);
+  border-color: rgba(242,47,70,0.3);
 }
 
 .p5-btn {
@@ -91,17 +164,24 @@ body {
   cursor: pointer;
   clip-path: polygon(8px 0%, 100% 0%, calc(100% - 8px) 100%, 0% 100%);
   transition: filter 0.15s;
-  box-shadow: 0 0 20px rgba(232,0,61,0.3);
+  box-shadow: 0 0 20px rgba(var(--red-rgb),0.3);
   display: inline-block;
   text-decoration: none;
 }
 
-.p5-btn:hover { filter: brightness(1.2); }
+[data-theme="twilio"] .p5-btn {
+  clip-path: none;
+  border-radius: 6px;
+  font-style: normal;
+  box-shadow: none;
+}
+
+.p5-btn:hover { filter: brightness(1.12); }
 
 .p5-back-btn {
-  background: rgba(232,0,61,0.15);
-  border: 1px solid rgba(232,0,61,0.4);
-  color: white;
+  background: rgba(var(--red-rgb),0.15);
+  border: 1px solid rgba(var(--red-rgb),0.4);
+  color: var(--text);
   padding: 8px 18px;
   font-size: 13px;
   font-weight: 700;
@@ -116,16 +196,28 @@ body {
   display: inline-block;
 }
 
+[data-theme="twilio"] .p5-back-btn {
+  clip-path: none;
+  border-radius: 6px;
+  font-style: normal;
+  background: rgba(242,47,70,0.07);
+}
+
 .p5-back-btn:hover {
-  background: rgba(232,0,61,0.3);
+  background: rgba(var(--red-rgb),0.3);
   transform: translateX(-3px);
+}
+
+[data-theme="twilio"] .p5-back-btn:hover {
+  transform: none;
+  background: rgba(242,47,70,0.14);
 }
 
 input, select {
   background: var(--panel);
-  border: 1px solid rgba(232,0,61,0.2);
+  border: 1px solid var(--border);
   border-bottom: 2px solid var(--red);
-  color: white;
+  color: var(--text);
   padding: 10px 14px;
   font-family: inherit;
   font-size: 14px;
@@ -134,8 +226,51 @@ input, select {
   width: 100%;
 }
 
-input::placeholder { color: rgba(255,255,255,0.2); }
+[data-theme="twilio"] input,
+[data-theme="twilio"] select {
+  border: 1px solid rgba(13,18,43,0.2);
+  border-bottom: 2px solid var(--red);
+  border-radius: 6px;
+}
+
+input::placeholder { color: var(--text-faint); }
 input:focus { border-bottom-color: var(--yellow); }
 
 select { appearance: none; -webkit-appearance: none; cursor: pointer; }
-select option { background: #1a0008; }
+select option { background: var(--panel); color: var(--text); }
+
+/* ── Theme toggle button ─────────────────────────────────────────────────── */
+.theme-toggle {
+  position: fixed;
+  top: 26px;
+  right: 48px;
+  z-index: 200;
+  background: rgba(var(--red-rgb), 0.15);
+  border: 1px solid rgba(var(--red-rgb), 0.4);
+  color: var(--text);
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  clip-path: polygon(6px 0%, 100% 0%, calc(100% - 6px) 100%, 0% 100%);
+  transition: all 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+[data-theme="twilio"] .theme-toggle {
+  clip-path: none;
+  border-radius: 6px;
+  font-style: normal;
+  background: rgba(242,47,70,0.07);
+  top: 14px;
+  right: 16px;
+}
+
+.theme-toggle:hover {
+  background: rgba(var(--red-rgb), 0.3);
+}
