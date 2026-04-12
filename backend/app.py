@@ -16,10 +16,13 @@ Usage:
 """
 
 import os
+import sys
 import json
 import logging
 import importlib
+import inspect
 from pathlib import Path
+from flask import Blueprint
 
 from flask import Flask, request, jsonify, redirect, url_for, session
 from werkzeug.middleware.proxy_fix import ProxyFix
@@ -63,13 +66,15 @@ if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
 
 APPS_DIR = Path(__file__).parent / "apps"
 
+# Add backend root to path so apps/ is importable without __init__.py files
+sys.path.insert(0, str(Path(__file__).parent))
+
 # Routes the platform exposes publicly (no login required)
 _PUBLIC_ROUTES = {"/auth", "/oauth2callback", "/logout", "/simulate", "/api/me", "/api/apps"}
 
 # ── Auto-discover app blueprints ──────────────────────────────────────────────
-# Convention: apps/<name>/routes.py must expose a Blueprint named <name>_bp.
-# Convention: apps/<name>/routes.py may expose enrich_me(email) -> dict
-#             to contribute fields to the /api/me response.
+# Drop a routes.py in apps/<name>/ with any Blueprint and it registers itself.
+# Optionally expose enrich_me(email) -> dict to add fields to /api/me.
 
 _me_enrichers: list = []
 
@@ -77,10 +82,12 @@ for _app_dir in sorted(APPS_DIR.iterdir()):
     if not _app_dir.is_dir() or not (_app_dir / "routes.py").exists():
         continue
     _mod = importlib.import_module(f"apps.{_app_dir.name}.routes")
-    _bp  = getattr(_mod, f"{_app_dir.name}_bp", None)
-    if _bp:
+    # Find any Blueprint in the module — no naming convention required
+    _blueprints = [obj for _, obj in inspect.getmembers(_mod)
+                   if isinstance(obj, Blueprint)]
+    for _bp in _blueprints:
         app.register_blueprint(_bp)
-        log.info("Registered blueprint: %s", _app_dir.name)
+        log.info("Registered blueprint: %s (%s)", _app_dir.name, _bp.name)
     if hasattr(_mod, "enrich_me"):
         _me_enrichers.append(_mod.enrich_me)
 
