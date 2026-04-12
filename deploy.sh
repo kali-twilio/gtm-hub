@@ -58,18 +58,15 @@ fi
 # ── 2. Upload app files to S3 ────────────────────────────────────────────────
 echo ""
 echo "Uploading files to S3..."
-aws s3 cp backend/app.py           s3://$BUCKET/app.py           --profile "$PROFILE" --region "$REGION"
-aws s3 cp backend/requirements.txt s3://$BUCKET/requirements.txt --profile "$PROFILE" --region "$REGION"
-aws s3 cp backend/se_analysis.py   s3://$BUCKET/se_analysis.py   --profile "$PROFILE" --region "$REGION"
+tar -czf /tmp/backend.tar.gz  -C backend .
 tar -czf /tmp/frontend.tar.gz -C frontend/build .
+aws s3 cp /tmp/backend.tar.gz  s3://$BUCKET/backend.tar.gz  --profile "$PROFILE" --region "$REGION"
 aws s3 cp /tmp/frontend.tar.gz s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION"
-rm /tmp/frontend.tar.gz
+rm /tmp/backend.tar.gz /tmp/frontend.tar.gz
 echo "Upload complete."
 
 # ── 3. Generate pre-signed download URLs ────────────────────────────────────
-APP_URL=$(aws s3 presign        s3://$BUCKET/app.py            --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-REQS_URL=$(aws s3 presign       s3://$BUCKET/requirements.txt  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-ANALYSIS_URL=$(aws s3 presign   s3://$BUCKET/se_analysis.py    --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+BACKEND_URL_S3=$(aws s3 presign  s3://$BUCKET/backend.tar.gz   --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 FRONTEND_URL_S3=$(aws s3 presign s3://$BUCKET/frontend.tar.gz  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 
 # ── 4. Build boot script ─────────────────────────────────────────────────────
@@ -88,9 +85,9 @@ pip3 install certbot certbot-nginx
 mkdir -p /app/outputs /var/www/scorecard
 cd /app
 
-curl -sL '${APP_URL}'      -o app.py
-curl -sL '${REQS_URL}'     -o requirements.txt
-curl -sL '${ANALYSIS_URL}' -o se_analysis.py
+curl -sL '${BACKEND_URL_S3}' -o /tmp/backend.tar.gz
+tar -xzf /tmp/backend.tar.gz -C /app
+rm /tmp/backend.tar.gz
 
 pip3 install -r requirements.txt
 
