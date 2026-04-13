@@ -29,6 +29,21 @@ done
 EXPIRES=7200          # pre-signed URL TTL for app bundles (2 hours)
 SECRETS_EXPIRES=1800  # pre-signed URL TTL for secrets env file (30 minutes)
 
+# ── PRE-DEPLOY CHECKLIST ──────────────────────────────────────────────────────
+# Before deploying, run a security audit with Claude:
+#
+#   claude "Perform a security audit of this codebase before I deploy to
+#   production. Check for: authentication bypasses, input validation gaps,
+#   injection vulnerabilities (SOQL, command, path traversal), secrets in code
+#   or logs, CSRF weaknesses, insecure direct object references, unprotected
+#   endpoints, and any other OWASP Top 10 issues. Review backend/app.py,
+#   backend/apps/se_scorecard_v2/routes.py, backend/salesforce.py, and the
+#   frontend API layer. Report findings with severity (Critical/High/Medium/Low)
+#   and recommended fixes."
+#
+# Only proceed if there are no Critical or High findings.
+# ─────────────────────────────────────────────────────────────────────────────
+
 # ── 0. Build SvelteKit frontend ───────────────────────────────────────────────
 echo "Building frontend..."
 cd frontend

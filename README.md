@@ -220,6 +220,25 @@ Frontend: `http://localhost:5173` · Backend: `http://localhost:5001`. Vite prox
 
 ## Deploying
 
+### Before deploying — security audit
+
+Run a security audit with Claude before every production deploy:
+
+```
+claude "Perform a security audit of this codebase before I deploy to
+production. Check for: authentication bypasses, input validation gaps,
+injection vulnerabilities (SOQL, command, path traversal), secrets in code
+or logs, CSRF weaknesses, insecure direct object references, unprotected
+endpoints, and any other OWASP Top 10 issues. Review backend/app.py,
+backend/apps/se_scorecard_v2/routes.py, backend/salesforce.py, and the
+frontend API layer. Report findings with severity (Critical/High/Medium/Low)
+and recommended fixes."
+```
+
+Only proceed if there are no Critical or High findings.
+
+### Deploy
+
 ```bash
 bash deploy.sh
 ```
