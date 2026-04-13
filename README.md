@@ -9,102 +9,94 @@ Internal platform for Twilio Sales tools. Sign in with your `@twilio.com` Google
 ## What's here
 
 ```
-backend/                        Flask API (auth + app registry)
-├── app.py                      Platform: Google OAuth, /api/me, /api/apps
-├── salesforce.py               Shared Salesforce client (all apps can use this)
+backend/
+├── app.py                  Platform: Google OAuth, /api/me, /api/apps
+├── salesforce.py           Shared Salesforce client
 └── apps/
-    ├── _template/              Copy this to start a new app
-    ├── scorecard/              Original SE Scorecard (CSV upload)
-    └── se_scorecard_v2/        SE Scorecard V2 (live Salesforce data)
-        ├── manifest.json
-        ├── routes.py           API routes + team config + caching
-        └── sf_analysis.py      Metric computation, flags, ranking, roasts
+    ├── _template/          Copy this to start a new app
+    ├── scorecard/          SE Scorecard (CSV upload)
+    └── se_scorecard_v2/    SE Scorecard V2 (live Salesforce)
 
 frontend/
 └── src/
-    ├── lib/
-    │   ├── api.ts              Typed API helpers
-    │   ├── stores.ts           Svelte stores (user, theme, team/period selection)
-    │   └── colors.ts           Tier/flag color tokens (P5 + Twilio themes)
+    ├── lib/                Shared stores, API helpers, color tokens
     └── routes/
-        ├── (launcher)/         Login page + app grid
-        ├── (scorecard)/        Original SE Scorecard pages
+        ├── (launcher)/     Login page + app grid
+        ├── (scorecard)/    SE Scorecard pages
         └── (se-scorecard-v2)/  SE Scorecard V2 pages
-            └── se-scorecard-v2/
-                ├── +page.svelte        Team/period selector + summary
-                ├── me/                 Individual SE stats + flags + opp tables
-                ├── report/             Full team report
-                └── rankings/           Power rankings leaderboard
 
-deploy.sh                       One-command deploy to EC2
-deploy.env                      Secrets + config (gitignored)
+deploy.sh                   One-command deploy to EC2
+deploy.env                  Secrets + config (gitignored)
 ```
 
 ---
 
-## SE Scorecard V2
+## Security & Auth
 
-Live Salesforce data for all SE teams. No CSV uploads — data is queried directly and cached per team per period.
+### Authentication
 
-### Teams supported
+- **Google OAuth 2.0** — users sign in with Google. The platform validates the returned identity token against Google's userinfo endpoint.
+- **Domain restriction** — only `@twilio.com` accounts are accepted. Any other domain gets redirected with an error before a session is created.
+- **OAuth state parameter** — a random state token is generated per login attempt and validated on callback. Mismatches are rejected, preventing CSRF attacks on the OAuth flow.
+- **PKCE support** — code verifier is stored in session and passed on token exchange when supported by the flow.
+- **Session-only auth** — identity is stored in a server-side signed session cookie. No JWTs, no client-side tokens.
 
-| Key | Label | Motion | Subteams |
-|---|---|---|---|
-| `digital_sales` | Digital Sales | DSR (Activate / Expansion) | — |
-| `dorg` | DORG | AE (New Business / Strategic) | — |
-| `namer` | NAMER | AE | Retail, NB, ISV, HighTech, RegVerts, MarTech |
-| `emea` | EMEA | AE | North, DACH, South |
-| `apj` | APJ | AE | — |
-| `latam` | LATAM | AE | Brazil, ROL |
+### Session security
 
-### Periods
+| Setting | Value | Why |
+|---|---|---|
+| `SESSION_COOKIE_SECURE` | `True` in production | Cookie only sent over HTTPS |
+| `SESSION_COOKIE_HTTPONLY` | `True` | JavaScript cannot read the cookie |
+| `SESSION_COOKIE_SAMESITE` | `Lax` | Blocks cross-site request forgery |
+| `SECRET_KEY` | Required env var | Flask signs the session; crashes at startup if not set |
 
-Current-year quarters + last 3 full years. Current quarter refreshes every 10 minutes; historical periods cache for 1 week.
+In local dev (`LOCAL_DEV=1`), `SECURE` is relaxed and `OAUTHLIB_INSECURE_TRANSPORT` is set so HTTP works. This flag is never present in production.
 
-### Caching
+### Platform-level auth gate
 
-Cache files live in `backend/outputs/`. Delete them to force a fresh Salesforce fetch. File naming: `sf_se_data_<team>[_<subteam>]_<period>[_min<icav>].json`.
-
-### Salesforce queries (parallel)
-
-All 4 queries fire simultaneously via `ThreadPoolExecutor`:
-1. **Closed Won opps** — TW and non-TW, used for all SE metrics
-2. **Win rate** — Closed Won + Closed Lost counts per SE
-3. **Pipeline opps** — Open opps beyond period end (for email motion classification)
-4. **Email tasks** — SE email activity linked to opportunities
-
-Queries 1+2 are required; 3+4 are best-effort (failures skip email activity, don't block the response).
-
-### Adding a new team
-
-Edit `TEAMS` in `backend/apps/se_scorecard_v2/routes.py`:
+Every `/api/*` route is protected automatically in `app.py`:
 
 ```python
-"my_team": {
-    "label":              "My Team",
-    "description":        "Short description shown in the UI.",
-    "motion":             "ae",   # "ae" = New Business/Strategic, "dsr" = Activate/Expansion
-    "soql_filter":        "Technical_Lead__r.UserRole.Name = 'SE - My Team'",
-    "email_owner_filter": "Owner.UserRole.Name = 'SE - My Team'",
-    "criteria": [
-        {"label": "SE Tagged", "detail": "Technical Lead UserRole = 'SE - My Team'"},
-    ],
-    # Optional: subteams override soql_filter + email_owner_filter
-    "subteams": [
-        {"key": "my_team_sub", "label": "Sub", "soql_filter": "...", "email_owner_filter": "..."},
-    ],
-    # Optional: use a different SOQL filter for prior-year historical data
-    "historical_soql_filter": "...",
-},
+@app.before_request
+def enforce_auth():
+    if request.path.startswith("/api/") and not session.get("user_email"):
+        return jsonify({"error": "Unauthorized"}), 401
 ```
 
-No other files need to change.
+App builders never implement auth themselves — if a request reaches a blueprint route, the user is already authenticated.
+
+### Response security headers (every response)
+
+| Header | Value |
+|---|---|
+| `Cache-Control` | `no-store` — API responses never cached by browsers or proxies |
+| `X-Content-Type-Options` | `nosniff` — browsers don't sniff MIME types |
+| `X-Frame-Options` | `SAMEORIGIN` — prevents clickjacking in iframes |
+| `Referrer-Policy` | `strict-origin-when-cross-origin` |
+| `Content-Security-Policy` | `default-src 'self'` — scripts, styles, fonts, images, and connections scoped to origin only |
+| `frame-ancestors` | `none` — blocks this app from being embedded anywhere |
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains` (production only) — HSTS, forces HTTPS for 1 year |
+
+### Infrastructure security
+
+- **HTTPS only** — Let's Encrypt SSL cert provisioned automatically on deploy. Nginx redirects all HTTP to HTTPS.
+- **IMDSv2 required** — EC2 instance launched with `HttpTokens=required`. Blocks SSRF attacks that try to read instance metadata.
+- **Least privilege processes** — gunicorn runs as `ec2-user`, nginx as `nginx`. Neither runs as root.
+- **nginx server tokens off** — version number not exposed in response headers or error pages.
+- **Request size limit** — `client_max_body_size 10M` in nginx, `MAX_CONTENT_LENGTH = 10MB` in Flask. Prevents oversized upload attacks.
+- **Nginx security headers** — `Permissions-Policy: geolocation=(), microphone=(), camera=()` added at the proxy layer in addition to app-level headers.
+- **SSL auto-renewal** — certbot renew runs via cron at midnight and noon daily. Certs expire every 90 days; renewal is automatic.
+- **No SSH open** — the EC2 security group does not expose port 22. Access is via re-deploy only.
+
+### Simulate endpoint (local dev only)
+
+`/simulate?email=user@twilio.com` sets a session as that user without going through OAuth. Returns 404 in production (`LOCAL_DEV` is never set on the server).
 
 ---
 
 ## Adding a new app
 
-You need **3 files**. Platform files don't change.
+Three files. No platform files change.
 
 ### 1. `backend/apps/<yourapp>/manifest.json`
 
@@ -119,29 +111,27 @@ You need **3 files**. Platform files don't change.
 }
 ```
 
-Set `"status": "coming_soon"` to show the card as disabled. Prefix the directory with `_` to hide it from the launcher entirely.
+- `"status": "coming_soon"` — shows the card as disabled in the launcher
+- Prefix the directory with `_` to hide it from the launcher entirely
 
 ### 2. `backend/apps/<yourapp>/routes.py`
 
-Auth is automatic — every `/api/*` route is already protected.
-
 ```python
-from __future__ import annotations
+from __future__ import annotations  # required — server runs Python 3.9
 from flask import Blueprint, jsonify, session
 
 bp = Blueprint("myapp", __name__)
 
 @bp.route("/api/myapp/data")
 def get_data():
-    email = session.get("user_email")  # always present
+    email = session.get("user_email")  # always present — auth is guaranteed
     return jsonify({"user": email, "data": []})
 ```
 
-> **Note:** Always include `from __future__ import annotations` at the top. The server runs Python 3.9 (AL2023) and `X | Y` union type syntax requires 3.10+. This import makes annotations lazy and safe on 3.9+.
+- Prefix all routes with `/api/<yourapp>/` to avoid collisions
+- Optionally expose `enrich_me(email: str) -> dict` to add fields to `/api/me`
 
 ### 3. `frontend/src/routes/(<yourapp>)/<yourapp>/+page.svelte`
-
-The route group `(<yourapp>)` doesn't affect the URL — it's just for layout grouping. Add a `+layout.svelte` in the group folder for custom chrome.
 
 ```svelte
 <script lang="ts">
@@ -156,6 +146,8 @@ The route group `(<yourapp>)` doesn't affect the URL — it's just for layout gr
 <div>Hello {$user?.email}</div>
 ```
 
+The route group `(<yourapp>)` doesn't affect the URL. Add a `+layout.svelte` in the group folder for custom nav/chrome.
+
 Copy the full starter from `backend/apps/_template/` and `frontend/src/routes/(template)/`.
 
 ---
@@ -166,20 +158,20 @@ Copy the full starter from `backend/apps/_template/` and `frontend/src/routes/(t
 from salesforce import sf
 
 # SOQL query — returns all records, handles pagination automatically
-opps = sf.query("SELECT Id, Name, CloseDate FROM Opportunity WHERE StageName = 'Closed Won'")
+opps = sf.query("SELECT Id, Name FROM Opportunity WHERE StageName = 'Closed Won'")
 
-# Raw REST API call
+# Raw REST call
 record = sf.get("/services/data/v59.0/sobjects/Account/001XXXXXXXXXXXXXXX")
 ```
 
-Token refresh is automatic. Salesforce credentials come from `deploy.env` and are injected as environment variables on the server.
+Token refresh is automatic. Credentials come from `deploy.env` and are injected as environment variables — nothing to configure.
 
 ---
 
 ## Running locally
 
 ```bash
-# Backend — source deploy.env but override FRONTEND_URL to point at local Vite
+# Backend — source deploy.env but keep FRONTEND_URL pointed at local Vite
 cd backend
 set -a && source ../deploy.env && set +a
 LOCAL_DEV=1 FRONTEND_URL="http://localhost:5173" python3 app.py
@@ -187,16 +179,12 @@ LOCAL_DEV=1 FRONTEND_URL="http://localhost:5173" python3 app.py
 
 ```bash
 # Frontend
-cd frontend
-npm install
-npm run dev
+cd frontend && npm install && npm run dev
 ```
 
-Frontend: `http://localhost:5173` — Backend: `http://localhost:5001`. Vite proxies `/api/*` to Flask automatically.
+Frontend: `http://localhost:5173` · Backend: `http://localhost:5001`. Vite proxies `/api/*` to Flask.
 
-> **After modifying backend code**, restart Flask — blueprints are only discovered at startup.
-
-> **To reset cached Salesforce data**, delete files in `backend/outputs/sf_se_data_*.json`.
+> Restart Flask after any backend change — blueprints are discovered at startup only.
 
 ---
 
@@ -206,20 +194,9 @@ Frontend: `http://localhost:5173` — Backend: `http://localhost:5001`. Vite pro
 bash deploy.sh
 ```
 
-1. Builds SvelteKit frontend (`npm run build`)
-2. Tarballs backend + frontend, uploads to S3
-3. Terminates any existing tagged EC2 instance
-4. Launches fresh AL2023 t3.micro, runs userdata bootstrap:
-   - Installs Python 3, nginx, certbot
-   - Downloads + extracts app files from S3
-   - Installs Python dependencies
-   - Creates and starts `app.service` (gunicorn on `127.0.0.1:5000`)
-   - Configures nginx to proxy `/api/*` to Flask, serve frontend static files
-   - Issues Let's Encrypt SSL cert for the domain
-5. Associates Elastic IP
-6. Total time: ~7 minutes
+Builds the frontend, uploads backend + frontend to S3, terminates the existing instance, launches a fresh AL2023 EC2 t3.micro, bootstraps nginx + gunicorn + SSL, and associates the Elastic IP. ~7 minutes end to end.
 
-Requires `deploy.env` with all secrets set. The domain and frontend URL are configured there.
+Requires `deploy.env` with all secrets populated.
 
 ---
 
@@ -228,11 +205,9 @@ Requires `deploy.env` with all secrets set. The domain and frontend URL are conf
 | Thing | Convention |
 |---|---|
 | API routes | Prefix with `/api/<appname>/` |
-| Blueprint | Any name, auto-registered from `apps/<name>/routes.py` |
-| Hidden apps | Prefix directory with `_` (skipped from launcher + manifests) |
-| Manifest | `backend/apps/<name>/manifest.json` |
-| Frontend group | `frontend/src/routes/(<name>)/` |
-| Salesforce | `from salesforce import sf` |
-| Auth | Free — never implement it yourself |
+| Blueprint | Any name — auto-registered from `apps/<name>/routes.py` |
+| Hidden apps | Prefix directory with `_` |
+| Auth | Never implement it — the platform handles it |
 | `/api/me` enrichment | Expose `enrich_me(email) -> dict` in `routes.py` |
+| Salesforce | `from salesforce import sf` |
 | Python compat | Always add `from __future__ import annotations` (server is Python 3.9) |
