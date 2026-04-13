@@ -134,6 +134,8 @@ npm run dev
 
 Frontend runs on `http://localhost:5174`, backend on `http://localhost:5001`. The Vite dev server proxies `/api/*` to Flask automatically.
 
+> **After adding or modifying a backend app**, restart Flask — it only discovers blueprints at startup. New routes won't exist until you do.
+
 ---
 
 ## Deploying

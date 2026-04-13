@@ -138,7 +138,7 @@
 {:else}
 
 <div style="position:fixed;top:{$theme==='twilio'?'68px':'26px'};left:{$theme==='twilio'?'16px':'48px'};z-index:9999">
-  <a href="/sfscorecard" class="p5-back-btn">◀ Back</a>
+  <a href="/se-scorecard-v2" class="p5-back-btn">◀ Back</a>
 </div>
 
 <div style="position:fixed;bottom:{$theme==='p5'?'4px':'0'};left:0;right:0;height:52px;background:{$theme==='twilio'?'white':'#0d1117'};border-top:{$theme==='twilio'?'1px solid rgba(13,18,43,0.1)':'2px solid rgba(255,184,0,0.2)'};z-index:997;overflow:hidden;display:flex;align-items:center;{$theme==='twilio'?'box-shadow:0 -1px 8px rgba(13,18,43,0.06)':''}">
@@ -211,6 +211,8 @@
     {@const enter = isOne ? 'slamDown' : i <= 3 ? 'flipIn' : 'slideUp'}
     {@const glowAnim = $theme==='twilio' ? 'eliteGlowLight' : 'eliteGlowDark'}
     {@const isHovered = hoveredIdx === idx}
+    {@const totalEmails = (se.email_act_inq ?? 0) + (se.email_exp_inq ?? 0) + (se.email_act_outq ?? 0) + (se.email_exp_outq ?? 0)}
+    {@const notesCov = (se.note_hv_total ?? 0) > 0 ? Math.round((se.note_hv_covered ?? 0) / se.note_hv_total * 100) : null}
     <div
       style="animation:{enter} 0.6s cubic-bezier(.22,1,.36,1) {delay}ms both;transition:transform 0.2s cubic-bezier(.22,1,.36,1),box-shadow 0.2s;transform:{isHovered?'scale(1.04) translateY(-4px)':'scale(1) translateY(0)'}"
       onmouseenter={() => { hoveredIdx = idx; if (i === 1) burstConfetti(); }}
@@ -257,6 +259,30 @@
               </div>
             </div>
           </div>
+
+          <!-- Emails + Notes hygiene -->
+          {#if totalEmails > 0 || notesCov !== null}
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            {#if totalEmails > 0}
+            <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;background:{$theme==='twilio'?'#F4F4F6':'rgba(255,255,255,0.04)'};border:1px solid {$theme==='twilio'?'rgba(13,18,43,0.08)':'rgba(255,255,255,0.06)'}">
+              <span style="font-size:11px;color:var(--text-muted)">✉</span>
+              <span style="font-size:11px;font-weight:700;color:var(--text)">{totalEmails}</span>
+              <span style="font-size:10px;color:var(--text-muted)">emails</span>
+              {#if (se.email_act_outq ?? 0) + (se.email_exp_outq ?? 0) > 0}
+              <span style="font-size:10px;color:var(--text-muted)">· {(se.email_act_outq ?? 0) + (se.email_exp_outq ?? 0)} pipe</span>
+              {/if}
+            </div>
+            {/if}
+            {#if notesCov !== null}
+            {@const notesColor = notesCov === 100 ? ($theme==='twilio'?'#178742':'#10B981') : notesCov <= 50 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text)'}
+            <div style="display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:8px;background:{$theme==='twilio'?'#F4F4F6':'rgba(255,255,255,0.04)'};border:1px solid {$theme==='twilio'?'rgba(13,18,43,0.08)':'rgba(255,255,255,0.06)'}">
+              <span style="font-size:11px;color:var(--text-muted)">📝</span>
+              <span style="font-size:11px;font-weight:700;color:{notesColor}">{se.note_hv_covered}/{se.note_hv_total}</span>
+              <span style="font-size:10px;color:var(--text-muted)">notes · {se.note_hv_avg_entries} avg</span>
+            </div>
+            {/if}
+          </div>
+          {/if}
         </div>
       </div>
     </div>

@@ -20,7 +20,7 @@
     error = '';
     summary = null;
     const sub = subteamKey !== 'none' ? `&subteam=${subteamKey}` : '';
-    const r = await fetch(`/api/sfscorecard/data/report?team=${teamKey}&period=${periodKey}${sub}`);
+    const r = await fetch(`/api/se-scorecard-v2/data/report?team=${teamKey}&period=${periodKey}${sub}`);
     if (r.ok) {
       const d = await r.json();
       summary = { total: d.total, team_icav: d.team_icav, team_wins: d.team_wins, team_label: d.team_label, quarter: d.quarter };
@@ -52,7 +52,7 @@
 
   onMount(async () => {
     const [teamsRes, periodsData] = await Promise.all([
-      fetch('/api/sfscorecard/teams').then(r => r.ok ? r.json() : []),
+      fetch('/api/se-scorecard-v2/teams').then(r => r.ok ? r.json() : []),
       getSFPeriods(),
     ]);
     teams = teamsRes;
@@ -74,7 +74,7 @@
 
   <!-- Header -->
   <div class="text-center mb-8 w-full max-w-lg">
-    <div class="p5-badge mb-3">SF Scorecard</div>
+    <div class="p5-badge mb-3">SE Scorecard V2</div>
     <h1 style="font-size:28px;font-weight:800;color:var(--text);letter-spacing:-0.02em">SE Performance</h1>
     <div style="width:40px;height:3px;background:var(--red);border-radius:2px;margin:10px auto 0"></div>
   </div>
@@ -188,7 +188,7 @@
 
   <!-- Nav -->
   <div class="w-full max-w-lg" style="display:flex;flex-direction:column;gap:6px;margin-bottom:24px">
-    <a href="/sfscorecard/report" class="p5-menu-btn">
+    <a href="/se-scorecard-v2/report" class="p5-menu-btn">
       <span style="font-size:22px">📊</span>
       <div style="flex:1">
         <div style="font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">Full Report</div>
@@ -196,7 +196,7 @@
       </div>
       <span style="color:var(--red);font-size:18px">▶</span>
     </a>
-    <a href="/sfscorecard/rankings" class="p5-menu-btn">
+    <a href="/se-scorecard-v2/rankings" class="p5-menu-btn">
       <span style="font-size:22px">🏆</span>
       <div style="flex:1">
         <div style="font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">Power Rankings</div>
@@ -204,7 +204,7 @@
       </div>
       <span style="color:var(--red);font-size:18px">▶</span>
     </a>
-    <a href="/sfscorecard/me" class="p5-menu-btn">
+    <a href="/se-scorecard-v2/me" class="p5-menu-btn">
       <span style="font-size:22px">👤</span>
       <div style="flex:1">
         <div style="font-size:16px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">My Stats</div>

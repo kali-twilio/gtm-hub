@@ -204,7 +204,7 @@ def api_apps():
     manifests = []
     for app_dir in sorted(APPS_DIR.iterdir()):
         manifest_path = app_dir / "manifest.json"
-        if app_dir.is_dir() and manifest_path.exists():
+        if app_dir.is_dir() and not app_dir.name.startswith("_") and manifest_path.exists():
             manifests.append(json.loads(manifest_path.read_text(encoding="utf-8")))
     manifests.sort(key=lambda m: (m.get("status") != "live", m.get("name", "")))
     return jsonify(manifests)

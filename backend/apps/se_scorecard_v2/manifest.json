@@ -1,0 +1,8 @@
+{
+  "id": "se-scorecard-v2",
+  "name": "SE Scorecard V2",
+  "description": "Live Salesforce data for all SE teams — DSR, NAMER, EMEA, APJ, LATAM, and DORG.",
+  "icon": "⚡",
+  "path": "/se-scorecard-v2",
+  "status": "live"
+}

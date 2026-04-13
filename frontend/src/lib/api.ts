@@ -38,7 +38,7 @@ export async function getRankings() {
 }
 
 export async function getSFPeriods(): Promise<{key: string; label: string}[]> {
-  const r = await fetch('/api/sfscorecard/periods');
+  const r = await fetch('/api/se-scorecard-v2/periods');
   if (!r.ok) return [];
   return r.json();
 }
@@ -48,19 +48,19 @@ function subteamParam(subteam: string) {
 }
 
 export async function getSFSEs(team: string, period: string, icavMin = 0, subteam = '') {
-  const r = await fetch(`/api/sfscorecard/data/ses?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
+  const r = await fetch(`/api/se-scorecard-v2/data/ses?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
   if (!r.ok) return null;
   return r.json();
 }
 
 export async function getSFReport(team: string, period: string, icavMin = 0, subteam = '') {
-  const r = await fetch(`/api/sfscorecard/data/report?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
+  const r = await fetch(`/api/se-scorecard-v2/data/report?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
   if (!r.ok) return null;
   return r.json();
 }
 
 export async function getSFRankings(team: string, period: string, icavMin = 0, subteam = '') {
-  const r = await fetch(`/api/sfscorecard/data/rankings?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
+  const r = await fetch(`/api/se-scorecard-v2/data/rankings?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
   if (!r.ok) return null;
   return r.json();
 }

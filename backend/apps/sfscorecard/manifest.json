@@ -1,8 +1,0 @@
-{
-  "id": "sfscorecard",
-  "name": "SF Scorecard",
-  "description": "Live Q1 performance data pulled directly from Salesforce.",
-  "icon": "⚡",
-  "path": "/sfscorecard",
-  "status": "live"
-}

@@ -13,13 +13,21 @@ export const tierColorsTwilio: Record<string, { color: string; bg: string }> = {
 };
 
 export const flagColors: Record<string, string> = {
-  PIPELINE: '#4da6ff', EXPANSION: '#00e87a', HYGIENE: '#ff6b6b',
-  ACTIVATE: '#ffaa44', RISK: '#ff4466', MOTION: '#b87cff', STRENGTH: '#00d4ff',
+  STANDING: '#94a3b8', PIPELINE: '#4da6ff',
+  EXPANSION: '#00e87a', STRATEGIC: '#00e87a',
+  HYGIENE: '#ff6b6b',
+  ACTIVATE: '#ffaa44', 'NEW BUSINESS': '#ffaa44',
+  RISK: '#ff4466', MOTION: '#b87cff', STRENGTH: '#00d4ff',
+  NOTES: '#f59e0b',
 };
 
 export const flagColorsTwilio: Record<string, string> = {
-  PIPELINE: '#006EFF', EXPANSION: '#178742', HYGIENE: '#DC2626',
-  ACTIVATE: '#D97706', RISK: '#DC2626', MOTION: '#7C3AED', STRENGTH: '#0891B2',
+  STANDING: '#6B7280', PIPELINE: '#006EFF',
+  EXPANSION: '#178742', STRATEGIC: '#178742',
+  HYGIENE: '#DC2626',
+  ACTIVATE: '#D97706', 'NEW BUSINESS': '#D97706',
+  RISK: '#DC2626', MOTION: '#7C3AED', STRENGTH: '#0891B2',
+  NOTES: '#D97706',
 };
 
 export function tc(tier: string, currentTheme: string) {

@@ -1,0 +1,244 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { user, theme, sfTeam, sfPeriod } from '$lib/stores';
+  import { getSFSEs, fmt } from '$lib/api';
+  import { tc, fc } from '$lib/colors';
+
+  let ses: any[] = $state([]);
+  let selected = $state('');
+  let se: any = $state(null);
+  let periodLabel = $state('');
+
+  onMount(async () => {
+    const [data, periodsData] = await Promise.all([
+      getSFSEs($sfTeam, $sfPeriod),
+      fetch('/api/se-scorecard-v2/periods').then(r => r.ok ? r.json() : []),
+    ]);
+    if (!data) return;
+    const found = periodsData.find((p: any) => p.key === $sfPeriod);
+    periodLabel = found ? found.label : $sfPeriod;
+    ses = [...data].sort((a, b) => a.name.localeCompare(b.name));
+    if ($user?.sf_is_se && $user.sf_se_name) {
+      selected = $user.sf_se_name;
+      se = ses.find(s => s.name === selected) ?? null;
+    }
+  });
+
+  function onSelect(e: Event) {
+    selected = (e.target as HTMLSelectElement).value;
+    se = ses.find(s => s.name === selected) ?? null;
+  }
+
+  const isOwnProfile = () => $user?.sf_is_se ?? false;
+</script>
+
+<div class="w-full max-w-2xl mx-auto px-4 py-8">
+
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:28px">
+    <div>
+      <div class="p5-badge" style="margin-bottom:8px">SE Scorecard V2 · {periodLabel}</div>
+      <h1 style="font-size:32px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 var(--red)':''}">My Stats</h1>
+      <div style="width:50px;height:3px;background:var(--red);{$theme==='p5'?'transform:skewX(-20deg);box-shadow:0 0 8px var(--red)':'border-radius:2px'};margin-top:8px"></div>
+    </div>
+    <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:8px">
+      <span style="font-size:11px;color:var(--text-muted);font-weight:600">{$user?.email}</span>
+      {#if isOwnProfile()}
+        <a href="/logout" style="font-size:12px;color:var(--red);font-weight:700;text-decoration:none;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;letter-spacing:0.1em">Sign out {$theme==='p5'?'◆':''}</a>
+      {/if}
+    </div>
+  </div>
+
+  {#if !isOwnProfile()}
+  <div style="position:fixed;top:{$theme==='twilio'?'68px':'26px'};left:{$theme==='twilio'?'16px':'48px'};z-index:9999">
+    <a href="/se-scorecard-v2" class="p5-back-btn">◀ Back</a>
+  </div>
+  {/if}
+
+  {#if !isOwnProfile()}
+  <div style="margin-bottom:24px">
+    <div class="p5-badge" style="font-size:10px;margin-bottom:10px">{$theme==='p5'?'Select Operative':'Select SE'}</div>
+    <div style="position:relative">
+      <select onchange={onSelect} value={selected}>
+        <option value="">— Choose —</option>
+        {#each ses as s}
+          <option value={s.name} selected={s.name === selected}>{s.name}</option>
+        {/each}
+      </select>
+      <div style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:var(--red);font-size:12px;pointer-events:none">▼</div>
+    </div>
+  </div>
+  {/if}
+
+  {#if se}
+  {@const colors = tc(se.tier, $theme)}
+  {@const isAE = se.team_motion === 'ae'}
+  {@const actLabel = isAE ? 'New Business' : 'Activate'}
+  {@const expLabel = isAE ? 'Strategic' : 'Expansion'}
+  {@const showAct = se.act_wins > 0 || se.act_icav > 0}
+  {@const showExp = se.exp_wins > 0 || se.exp_icav > 0}
+  <div class="p5-panel" style="padding:24px;width:100%">
+
+    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
+      <div>
+        <div style="font-size:24px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 rgba(232,0,61,0.5)':''}">{se.name}</div>
+        <span style="display:inline-block;background:{colors.bg};color:{colors.color};border:1px solid {colors.color}40;padding:2px 12px 2px 8px;font-size:10px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;letter-spacing:0.18em;{$theme==='p5'?'clip-path:polygon(0 0,100% 0,calc(100% - 8px) 100%,0 100%)':'border-radius:4px'};margin-top:4px">{se.tier}</span>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:36px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};line-height:1;color:var(--text);{$theme==='p5'?'text-shadow:3px 3px 0 var(--red)':''}">{fmt(se.total_icav)}</div>
+        <div style="font-size:10px;color:var(--text-muted);letter-spacing:0.18em;text-transform:uppercase;font-weight:700;margin-top:2px">Total iACV</div>
+      </div>
+    </div>
+
+    <div style="height:2px;background:linear-gradient(90deg,var(--red),transparent);{$theme==='p5'?'transform:skewX(-20deg);transform-origin:left':'border-radius:1px'};margin-bottom:20px"></div>
+
+    <div style="display:grid;grid-template-columns:{showAct && showExp ? '1fr 1fr' : '1fr'};gap:8px;margin-bottom:20px">
+      {#if showAct}
+      {@const tm = se.team_medians ?? {}}
+      <div style="background:rgba(var(--act-rgb),0.08);border:1px solid rgba(var(--act-rgb),0.2);border-left:4px solid var(--act-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--act-color);margin-bottom:8px">{actLabel}</div>
+        <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--act-glow);line-height:1">{fmt(se.act_icav)}</div>
+        {#if tm.act_icav}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{fmt(tm.act_icav)}</div>{:else}<div style="margin-bottom:8px"></div>{/if}
+        <div style="border-top:1px solid rgba(var(--act-rgb),0.15);padding-top:8px">
+          <div style="font-size:12px;color:var(--text-muted)">{se.act_wins} wins · Med {fmt(se.act_median)}</div>
+          {#if tm.act_wins != null}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px">{tm.act_wins} wins · {fmt(tm.act_median)}</div>{/if}
+        </div>
+      </div>
+      {/if}
+      {#if showExp}
+      {@const tm = se.team_medians ?? {}}
+      <div style="background:rgba(var(--exp-rgb),0.08);border:1px solid rgba(var(--exp-rgb),0.2);border-left:4px solid var(--exp-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">{expLabel}{#if !isAE} · {se.exp_growing ? 'Growing' : 'Retaining'}{/if}</div>
+        <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-glow);line-height:1">{fmt(se.exp_icav)}</div>
+        {#if tm.exp_icav}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{fmt(tm.exp_icav)}</div>{:else}<div style="margin-bottom:8px"></div>{/if}
+        <div style="border-top:1px solid rgba(var(--exp-rgb),0.15);padding-top:8px">
+          <div style="font-size:12px;color:var(--text-muted)">{se.exp_wins} wins · Med {fmt(se.exp_median)}</div>
+          {#if tm.exp_wins != null}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px">{tm.exp_wins} wins · {fmt(tm.exp_median)}</div>{/if}
+        </div>
+      </div>
+      {/if}
+    </div>
+
+    {#if se.largest_deal_value > 0}
+    <div style="background:rgba(var(--red-rgb),0.04);border:1px solid rgba(var(--red-rgb),0.15);border-left:4px solid var(--red);padding:14px 16px;margin-bottom:20px;{$theme==='twilio'?'border-radius:8px':''}">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text-muted);margin-bottom:8px">{$theme==='p5'?'◆ ':''}Largest Deal</div>
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+        <div style="font-size:14px;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{se.largest_deal}</div>
+        <div style="font-size:16px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{$theme==='p5'?'var(--yellow)':'#B45309'};white-space:nowrap">{fmt(se.largest_deal_value)}</div>
+      </div>
+      {#if se.largest_deal_dsr}<div style="font-size:11px;color:var(--text-muted);margin-top:4px">AE: {se.largest_deal_dsr}</div>{/if}
+    </div>
+    {/if}
+
+    {#if se.flags?.length}
+    <div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+        <div class="p5-badge" style="font-size:10px">{$theme==='p5'?'Intel Report':'Performance Flags'}</div>
+        <div style="flex:1;height:1px;background:rgba(var(--red-rgb),0.15)"></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        {#each se.flags as [cat, msg]}
+        {@const color = fc(cat, $theme)}
+        <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 14px;border-left:4px solid {color};background:rgba(var(--red-rgb),0.03);{$theme==='twilio'?'border-radius:0 6px 6px 0':''}">
+          <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;font-style:{$theme==='p5'?'italic':'normal'};color:{color};width:72px;flex-shrink:0">{cat}</span>
+          <span style="font-size:13px;font-weight:500;color:var(--text-muted)">{msg}</span>
+        </div>
+        {/each}
+      </div>
+    </div>
+    {/if}
+
+  </div>
+
+  <!-- TW Closed Won opp detail tables -->
+  {#if se.tw_opps_detail?.length}
+  {@const actOpps = se.tw_opps_detail.filter((o: any) => isAE ? o.motion === 'nb' : o.motion === 'act')}
+  {@const expOpps = se.tw_opps_detail.filter((o: any) => isAE ? o.motion === 'strat' : o.motion === 'exp')}
+
+  {#if actOpps.length > 0}
+  <div class="p5-panel" style="padding:20px 24px;width:100%;margin-top:14px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div class="p5-badge" style="font-size:10px;background:rgba(var(--act-rgb),0.12);color:var(--act-color);border-color:rgba(var(--act-rgb),0.3)">{actLabel} · TW Closed Won</div>
+      <div style="flex:1;height:1px;background:rgba(var(--act-rgb),0.2)"></div>
+      <span style="font-size:11px;font-weight:700;color:var(--act-color)">{actOpps.length} opp{actOpps.length !== 1 ? 's' : ''}</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.12)">
+            <th style="text-align:left;padding:6px 8px 8px 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Opportunity</th>
+            <th style="text-align:left;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">AE</th>
+            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Close Date</th>
+            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">iACV</th>
+            <th style="text-align:right;padding:6px 0 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each actOpps as opp, i}
+          {@const notesOk = opp.has_notes && opp.has_history}
+          {@const notesPartial = opp.has_notes || opp.has_history}
+          {@const notesColor = notesOk ? ($theme==='twilio'?'#178742':'#10B981') : notesPartial ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')}
+          <tr style="border-bottom:{i < actOpps.length-1 ? '1px solid rgba(var(--red-rgb),0.06)' : 'none'}">
+            <td style="padding:8px 8px 8px 0;color:var(--text);font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={opp.name}>{opp.name}</td>
+            <td style="padding:8px;color:var(--text-muted);white-space:nowrap">{opp.owner}</td>
+            <td style="padding:8px;color:var(--text-muted);text-align:right;white-space:nowrap">{opp.close_date}</td>
+            <td style="padding:8px;font-weight:700;color:var(--act-color);text-align:right;white-space:nowrap">{fmt(opp.icav)}</td>
+            <td style="padding:8px 0 8px 8px;text-align:right;white-space:nowrap">
+              <span style="color:{notesColor};font-weight:700">{notesOk ? '✓' : notesPartial ? '△' : '✗'}</span>
+              {#if opp.note_entries > 0}<span style="color:var(--text-muted);margin-left:4px">{opp.note_entries}</span>{/if}
+            </td>
+          </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {/if}
+
+  {#if expOpps.length > 0}
+  <div class="p5-panel" style="padding:20px 24px;width:100%;margin-top:14px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div class="p5-badge" style="font-size:10px;background:rgba(var(--exp-rgb),0.12);color:var(--exp-color);border-color:rgba(var(--exp-rgb),0.3)">{expLabel} · TW Closed Won</div>
+      <div style="flex:1;height:1px;background:rgba(var(--exp-rgb),0.2)"></div>
+      <span style="font-size:11px;font-weight:700;color:var(--exp-color)">{expOpps.length} opp{expOpps.length !== 1 ? 's' : ''}</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.12)">
+            <th style="text-align:left;padding:6px 8px 8px 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Opportunity</th>
+            <th style="text-align:left;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">AE</th>
+            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Close Date</th>
+            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">iACV</th>
+            <th style="text-align:right;padding:6px 0 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each expOpps as opp, i}
+          {@const notesOk = opp.has_notes && opp.has_history}
+          {@const notesPartial = opp.has_notes || opp.has_history}
+          {@const notesColor = notesOk ? ($theme==='twilio'?'#178742':'#10B981') : notesPartial ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')}
+          <tr style="border-bottom:{i < expOpps.length-1 ? '1px solid rgba(var(--red-rgb),0.06)' : 'none'}">
+            <td style="padding:8px 8px 8px 0;color:var(--text);font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={opp.name}>{opp.name}</td>
+            <td style="padding:8px;color:var(--text-muted);white-space:nowrap">{opp.owner}</td>
+            <td style="padding:8px;color:var(--text-muted);text-align:right;white-space:nowrap">{opp.close_date}</td>
+            <td style="padding:8px;font-weight:700;color:var(--exp-color);text-align:right;white-space:nowrap">{fmt(opp.icav)}</td>
+            <td style="padding:8px 0 8px 8px;text-align:right;white-space:nowrap">
+              <span style="color:{notesColor};font-weight:700">{notesOk ? '✓' : notesPartial ? '△' : '✗'}</span>
+              {#if opp.note_entries > 0}<span style="color:var(--text-muted);margin-left:4px">{opp.note_entries}</span>{/if}
+            </td>
+          </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {/if}
+
+  {/if}
+  {:else if selected}
+  <div style="background:rgba(var(--red-rgb),0.08);border:1px solid rgba(var(--red-rgb),0.4);border-left:4px solid var(--red);padding:14px 18px;font-size:14px;color:var(--red);font-weight:700">
+    ⚠ "{selected}" not found in report data.
+  </div>
+  {/if}
+
+</div>

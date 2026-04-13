@@ -1,5 +1,5 @@
 """
-SF Scorecard — data layer.
+SE Scorecard V2 — data layer.
 Computes the same SE metrics as se_analysis.py but from live Salesforce opportunity records.
 Owl scores (Salesforce hygiene %) still come from a CSV upload.
 """
@@ -66,6 +66,13 @@ def _se_email(opp: dict) -> str:
 
 def _team(opp: dict) -> str:
     return (opp.get(FIELD_CONFIG["team_field"]) or "").strip()
+
+
+def _history_entries(text: str) -> int:
+    """Count entries in SE_Notes_History__c — each entry starts with [DATE: Name]."""
+    if not text:
+        return 0
+    return sum(1 for line in text.split("\n") if line.strip().startswith("["))
 
 
 def _owner_role(opp: dict) -> str:
@@ -198,11 +205,23 @@ def build_ses(opps: list, motion: str = "dsr") -> list:
 
         # SE notes — count TW opps with Solutions_Team_Notes fields filled
         tw_opps = [o for o in d["all_opps"] if o.get("Presales_Stage__c") == "4 - Technical Win Achieved"]
-        def _history_entries(text: str) -> int:
-            """Count entries in SE_Notes_History__c — each entry starts with [DATE: Name]."""
-            if not text:
-                return 0
-            return sum(1 for line in text.split("\n") if line.strip().startswith("["))
+
+        # Per-opp detail list for "My Stats" drilldown
+        def _opp_motion(opp):
+            if motion == "ae":
+                return "nb" if _is_new_business(opp) else ("strat" if _is_strategic(opp) else "nb")
+            return "act" if _is_activate(opp) else ("exp" if _is_expansion(opp) else "act")
+
+        tw_opps_detail = sorted([{
+            "name":         opp.get("Name") or "",
+            "owner":        ((opp.get("Owner") or {}).get("Name") or ""),
+            "close_date":   opp.get("CloseDate") or "",
+            "icav":         _icav(opp),
+            "motion":       _opp_motion(opp),
+            "has_notes":    bool(opp.get("Sales_Engineer_Notes__c")),
+            "has_history":  bool(opp.get("SE_Notes_History__c")),
+            "note_entries": _history_entries(opp.get("SE_Notes_History__c") or ""),
+        } for opp in tw_opps], key=lambda x: x["icav"], reverse=True)
 
         note_opps         = sum(1 for o in tw_opps if o.get("Sales_Engineer_Notes__c"))
         note_history_opps = sum(1 for o in tw_opps if o.get("SE_Notes_History__c"))
@@ -257,6 +276,7 @@ def build_ses(opps: list, motion: str = "dsr") -> list:
             "largest_deal":      largest_name,
             "largest_deal_value": largest_val,
             "largest_deal_dsr":  largest_dsr,
+            "tw_opps_detail":    tw_opps_detail,
         }
 
         se["total_icav"]       = total_icav
@@ -444,67 +464,142 @@ def tier(rank, total):
 # Flags (reused from se_analysis logic, email flags skipped when data is 0)
 # ---------------------------------------------------------------------------
 
-def collect_se_flags(se, ses):
+def collect_se_flags(se, ses, motion: str = "dsr"):
     flags = []
+    n = len(ses)
+
+    # Motion-specific category names and message text
+    act_cat = "NEW BUSINESS" if motion == "ae" else "ACTIVATE"
+    exp_cat = "STRATEGIC"    if motion == "ae" else "EXPANSION"
+    act_lbl = "new business" if motion == "ae" else "activate"
+    exp_lbl = "strategic"    if motion == "ae" else "expansion"
+
+    # Determine which motions this SE actually participates in
+    has_act  = se["act_wins"] > 0
+    has_exp  = se["exp_wins"] > 0
+    act_only = has_act and not has_exp
+    exp_only = has_exp and not has_act
 
     # Pre-compute team context
-    max_act_wins  = max(s["act_wins"] for s in ses)
-    act_ses       = [s for s in ses if s["act_wins"] > 0]
-    team_act_avg  = round(sum(s["act_avg"] for s in act_ses) / len(act_ses)) if act_ses else 0
-    team_pipe_max = max(s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ses)
+    max_act_wins         = max(s["act_wins"] for s in ses)
+    act_ses              = [s for s in ses if s["act_wins"] > 0]
+    act_medians          = [s["act_median"] for s in act_ses if s["act_median"] > 0]
+    team_act_median      = round(statistics.median(act_medians)) if act_medians else 0
+    team_median_act_wins = round(statistics.median([s["act_wins"] for s in act_ses])) if act_ses else 0
+    team_median_act_icav = round(statistics.median([s["act_icav"] for s in act_ses])) if act_ses else 0
+    exp_ses              = [s for s in ses if s["exp_wins"] > 0]
+    team_median_exp_icav = round(statistics.median([s["exp_icav"] for s in exp_ses])) if exp_ses else 0
+    team_median_exp_wins = round(statistics.median([s["exp_wins"] for s in exp_ses])) if exp_ses else 0
+    notes_ses            = [s for s in ses if s["note_hv_total"] > 0]
+    team_median_notes_pct = round(statistics.median(
+        [s["note_hv_covered"] / s["note_hv_total"] * 100 for s in notes_ses]
+    )) if notes_ses else 0
+    team_median_icav     = round(statistics.median([s["total_icav"] for s in ses]))
+    team_pipe_max        = max(s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ses)
 
-    # --- ACTIVATE ---
-    if se["act_wins"] == 0:
-        flags.append(("ACTIVATE", "No activate wins this quarter."))
-    elif se["act_wins"] == max_act_wins:
-        others = sum(s["act_wins"] for s in ses) - se["act_wins"]
-        flags.append(("ACTIVATE", f"Highest activate volume on team — {se['act_wins']} wins. Rest of team combined: {others}."))
-    elif se["act_wins"] <= 2:
-        flags.append(("ACTIVATE", f"Low activate volume — {se['act_wins']} win{'s' if se['act_wins'] > 1 else ''} this quarter."))
+    def _rel(val, med):
+        """Return a short relative label vs a team median."""
+        if med == 0:
+            return ""
+        diff = round((val - med) / med * 100)
+        if diff > 10:
+            return f"+{diff}% above median"
+        if diff < -10:
+            return f"{diff}% below median"
+        return "at team median"
 
-    if se["act_wins"] >= 4:
-        if se["act_wins"] >= 5 and se["act_avg"] < ACT_AVG_SIZE_WARNING:
-            flags.append(("ACTIVATE", f"{fmt(se['act_avg'])} avg on {se['act_wins']} wins — below ${ACT_AVG_SIZE_WARNING//1000}K floor. Team avg {fmt(team_act_avg)}."))
-        if se["act_median"] > 0:
-            ratio = se["act_avg"] / se["act_median"]
-            if ratio >= 2.5:
-                flags.append(("ACTIVATE", f"Whale-dependent — {fmt(se['act_avg'])} avg vs {fmt(se['act_median'])} median. One big deal skewing the numbers."))
-            elif ratio < 1.2 and se["act_wins"] >= 5 and se["act_avg"] >= ACT_AVG_SIZE_WARNING:
-                flags.append(("STRENGTH", f"Consistent activate sizing — {fmt(se['act_avg'])} avg, {fmt(se['act_median'])} median across {se['act_wins']} wins."))
+    # --- ACTIVATE / NEW BUSINESS --- (skip entirely for expansion/strategic-only SEs)
+    if not exp_only:
+        if se["act_wins"] == 0:
+            flags.append((act_cat, f"No {act_lbl} wins this quarter. Team median: {team_median_act_wins} wins."))
+        elif se["act_wins"] == max_act_wins:
+            others = sum(s["act_wins"] for s in ses) - se["act_wins"]
+            flags.append((act_cat, (
+                f"Highest {act_lbl} volume on team — {se['act_wins']} wins "
+                f"(team median {team_median_act_wins}). Rest of team combined: {others}."
+            )))
+        elif se["act_wins"] <= 2:
+            flags.append((act_cat, (
+                f"Low {act_lbl} volume — {se['act_wins']} win{'s' if se['act_wins'] > 1 else ''} "
+                f"vs team median {team_median_act_wins} wins."
+            )))
+        else:
+            act_rel = _rel(se["act_icav"], team_median_act_icav)
+            flags.append((act_cat, (
+                f"{se['act_wins']} wins, {fmt(se['act_icav'])} iACV — {act_rel} "
+                f"(team median {fmt(team_median_act_icav)})."
+            )))
 
-    # --- EXPANSION ---
-    if se["exp_growing"]:
-        flags.append(("EXPANSION", f"Growing — {fmt(se['exp_median'])} median. Accounts genuinely upselling."))
-    elif se["exp_wins"] >= 10:
-        flags.append(("EXPANSION", f"High renewal load — {se['exp_wins']} wins at $0 median. Retaining, not expanding."))
-    elif se["exp_wins"] > 0:
-        flags.append(("EXPANSION", f"Retaining — $0 median on {se['exp_wins']} expansion wins."))
-    else:
-        flags.append(("EXPANSION", "No expansion contribution this quarter."))
+        if se["act_wins"] >= 4:
+            if se["act_wins"] >= 5 and se["act_median"] < ACT_AVG_SIZE_WARNING:
+                flags.append((act_cat, (
+                    f"{fmt(se['act_median'])} median on {se['act_wins']} wins — "
+                    f"below ${ACT_AVG_SIZE_WARNING//1000}K floor. Team deal median {fmt(team_act_median)}."
+                )))
+            if se["act_median"] > 0:
+                ratio = se["act_avg"] / se["act_median"]
+                if ratio >= 2.5:
+                    flags.append((act_cat, (
+                        f"Whale-dependent — {fmt(se['act_avg'])} avg vs {fmt(se['act_median'])} median. "
+                        f"One big deal skewing the numbers."
+                    )))
+                elif ratio < 1.2 and se["act_wins"] >= 5 and se["act_median"] >= ACT_AVG_SIZE_WARNING:
+                    flags.append(("STRENGTH", (
+                        f"Consistent {act_lbl} sizing — {fmt(se['act_median'])} median across "
+                        f"{se['act_wins']} wins (team deal median {fmt(team_act_median)})."
+                    )))
 
-    # --- MOTION ---
-    if se["total_icav"] > 0:
+    # --- EXPANSION / STRATEGIC --- (skip entirely for activate/NB-only SEs)
+    if not act_only:
+        exp_team_ctx = f" Team {exp_lbl} median: {fmt(team_median_exp_icav)} ({team_median_exp_wins} wins)." if team_median_exp_icav > 0 else ""
+        if se["exp_growing"]:
+            exp_rel = _rel(se["exp_icav"], team_median_exp_icav)
+            flags.append((exp_cat, (
+                f"Growing — {fmt(se['exp_median'])} median, {fmt(se['exp_icav'])} total "
+                f"({exp_rel} for {exp_lbl}).{exp_team_ctx}"
+            )))
+        elif se["exp_wins"] >= 10:
+            flags.append((exp_cat, (
+                f"High {exp_lbl} load — {se['exp_wins']} wins at $0 median. "
+                f"Retaining, not expanding.{exp_team_ctx}"
+            )))
+        elif se["exp_wins"] > 0:
+            flags.append((exp_cat, (
+                f"Retaining — $0 median on {se['exp_wins']} {exp_lbl} wins.{exp_team_ctx}"
+            )))
+        else:
+            flags.append((exp_cat, f"No {exp_lbl} contribution this quarter.{exp_team_ctx}"))
+
+    # --- MOTION --- (only meaningful when SE has wins in both motions)
+    if has_act and has_exp and se["total_icav"] > 0:
         act_pct = se["act_icav"] / se["total_icav"]
         exp_pct = se["exp_icav"] / se["total_icav"]
         if act_pct > 0.85 and se["act_icav"] > 200_000:
-            flags.append(("MOTION", f"{round(act_pct*100)}% of iACV from activate — expansion not contributing."))
+            flags.append(("MOTION", f"{round(act_pct*100)}% of iACV from {act_lbl} — {exp_lbl} not contributing."))
         elif exp_pct > 0.85 and se["exp_icav"] > 200_000:
-            flags.append(("MOTION", f"{round(exp_pct*100)}% of iACV from expansion — new business light."))
+            flags.append(("MOTION", f"{round(exp_pct*100)}% of iACV from {exp_lbl} — {act_lbl} light."))
 
     # --- PIPELINE (emails) ---
     total_pipe = se.get("email_act_outq", 0) + se.get("email_exp_outq", 0)
     total_inq  = se.get("email_act_inq", 0) + se.get("email_exp_inq", 0)
     pipe_icav  = se.get("email_act_outq_icav", 0) + se.get("email_exp_outq_icav", 0)
+    team_median_pipe = round(statistics.median(
+        [s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ses]
+    ))
 
     if total_pipe == 0 and total_inq == 0:
-        flags.append(("RISK", "Zero email activity recorded — no in-Q or pipeline engagement."))
+        flags.append(("RISK", f"Zero email activity recorded — no in-Q or pipeline engagement. Team median: {team_median_pipe} pipeline emails."))
     elif total_pipe == 0:
-        flags.append(("RISK", f"No pipeline emails — {total_inq} in-Q emails but nothing building for next quarter."))
+        flags.append(("RISK", f"No pipeline emails — {total_inq} in-Q emails but nothing building for next quarter. Team median: {team_median_pipe}."))
     elif total_pipe == team_pipe_max and total_pipe > 0:
         pipe_str = f"{total_pipe} pipeline emails" + (f" · {fmt(pipe_icav)}" if pipe_icav > 0 else "")
-        flags.append(("STRENGTH", f"Top pipeline builder on the team — {pipe_str}."))
+        flags.append(("STRENGTH", f"Top pipeline builder on the team — {pipe_str} (team median {team_median_pipe})."))
     elif total_pipe >= 20 and pipe_icav > 500_000:
         flags.append(("STRENGTH", f"Strong pipeline footprint — {total_pipe} outq emails, {fmt(pipe_icav)} in future deals."))
+    else:
+        pipe_rel = _rel(total_pipe, team_median_pipe)
+        if total_pipe > 0:
+            flags.append(("PIPELINE", f"{total_pipe} pipeline emails ({pipe_rel}, team median {team_median_pipe})."))
 
     # --- RISK: deal concentration ---
     if se["total_icav"] > 0 and se["largest_deal_value"] > se["total_icav"] * DEAL_CONCENTRATION_THRESHOLD:
@@ -518,13 +613,49 @@ def collect_se_flags(se, ses):
     # --- RISK: notes on high-value opps ---
     if se["note_hv_total"] > 0:
         cov_pct = round(se["note_hv_covered"] / se["note_hv_total"] * 100)
+        notes_rel = _rel(cov_pct, team_median_notes_pct)
         if cov_pct <= 50:
             missing = se["note_hv_total"] - se["note_hv_covered"]
-            flags.append(("RISK", f"{se['note_hv_covered']}/{se['note_hv_total']} high-value opps documented ({cov_pct}%) — {missing} high-value deal{'s' if missing > 1 else ''} missing notes."))
+            flags.append(("RISK", (
+                f"{se['note_hv_covered']}/{se['note_hv_total']} opps documented ({cov_pct}%) — "
+                f"{missing} deal{'s' if missing > 1 else ''} missing notes. "
+                f"Team median: {team_median_notes_pct}% coverage."
+            )))
         elif cov_pct == 100 and se["note_hv_avg_entries"] >= 5:
-            flags.append(("STRENGTH", f"Notes discipline — {se['note_hv_avg_entries']} avg history entries on {se['note_hv_total']} high-value opps."))
+            flags.append(("STRENGTH", (
+                f"Notes discipline — {se['note_hv_avg_entries']} avg history entries on "
+                f"{se['note_hv_total']} opps. Team median coverage: {team_median_notes_pct}%."
+            )))
+        else:
+            flags.append(("NOTES", (
+                f"{se['note_hv_covered']}/{se['note_hv_total']} opps documented ({cov_pct}%) — "
+                f"{notes_rel} (team median {team_median_notes_pct}%)."
+            )))
 
     return flags
+
+
+def compute_team_medians(ses: list) -> dict:
+    """Team-level medians for display in SE profile stat boxes."""
+    act_ses   = [s for s in ses if s["act_wins"] > 0]
+    exp_ses   = [s for s in ses if s["exp_wins"] > 0]
+    notes_ses = [s for s in ses if s["note_hv_total"] > 0]
+
+    def med(lst):
+        return round(statistics.median(lst)) if lst else 0
+
+    return {
+        "total_icav": med([s["total_icav"] for s in ses]),
+        "act_wins":   med([s["act_wins"]   for s in act_ses]),
+        "act_icav":   med([s["act_icav"]   for s in act_ses]),
+        "act_median": med([s["act_median"] for s in act_ses if s["act_median"] > 0]),
+        "exp_wins":   med([s["exp_wins"]   for s in exp_ses]),
+        "exp_icav":   med([s["exp_icav"]   for s in exp_ses]),
+        "exp_median": med([s["exp_median"] for s in exp_ses if s["exp_median"] > 0]),
+        "notes_pct":  round(statistics.median(
+            [s["note_hv_covered"] / s["note_hv_total"] * 100 for s in notes_ses]
+        )) if notes_ses else 0,
+    }
 
 
 def collect_team_trends(ses):
@@ -543,11 +674,12 @@ def collect_team_trends(ses):
     # ACTIVATE — deal quality + volume issues
     act_ses    = [se for se in ses if se["act_wins"] > 0]
     if act_ses:
-        team_act_avg = round(sum(se["act_avg"] for se in act_ses) / len(act_ses))
-        low_floor    = [se for se in act_ses if se["act_wins"] >= 5 and se["act_avg"] < ACT_AVG_SIZE_WARNING]
-        whale_dep    = [se for se in act_ses if se["act_wins"] >= 4 and se["act_median"] > 0
-                        and se["act_avg"] / se["act_median"] >= 2.5]
-        msg = f"Team activate avg {fmt(team_act_avg)}."
+        act_medians      = [se["act_median"] for se in act_ses if se["act_median"] > 0]
+        team_act_median  = round(statistics.median(act_medians)) if act_medians else 0
+        low_floor        = [se for se in act_ses if se["act_wins"] >= 5 and se["act_median"] < ACT_AVG_SIZE_WARNING]
+        whale_dep        = [se for se in act_ses if se["act_wins"] >= 4 and se["act_median"] > 0
+                            and se["act_avg"] / se["act_median"] >= 2.5]
+        msg = f"Team activate median {fmt(team_act_median)}."
         if low_floor:
             msg += f" {len(low_floor)} SE{'s' if len(low_floor) > 1 else ''} closing high volume below the ${ACT_AVG_SIZE_WARNING//1000}K floor."
         if whale_dep:

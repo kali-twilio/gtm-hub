@@ -30,7 +30,7 @@ function createThemeStore() {
 
 export const theme = createThemeStore();
 
-// Persists the selected SF Scorecard team across page navigations
+// Persists the selected SE Scorecard V2 team across page navigations
 function createSFTeamStore() {
   const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('sf_team') : null;
   const { subscribe, set } = writable<string>(stored ?? 'digital_sales');

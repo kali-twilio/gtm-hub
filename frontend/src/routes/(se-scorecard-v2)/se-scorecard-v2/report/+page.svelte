@@ -94,13 +94,13 @@
 {:else}
 
 <div style="position:fixed;top:{$theme==='twilio'?'68px':'26px'};left:{$theme==='twilio'?'16px':'48px'};z-index:9999">
-  <a href="/sfscorecard" class="p5-back-btn">◀ Back</a>
+  <a href="/se-scorecard-v2" class="p5-back-btn">◀ Back</a>
 </div>
 
 <div style="max-width:1200px;margin:0 auto;padding:60px 24px 40px">
 
   <div style="margin-bottom:28px">
-    <div class="p5-badge" style="margin-bottom:10px">SF Scorecard · {data.quarter}</div>
+    <div class="p5-badge" style="margin-bottom:10px">SE Scorecard V2 · {data.quarter}</div>
     <h1 style="font-size:36px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:3px 3px 0 var(--red)':''}">SE Scorecard</h1>
     <p style="font-size:13px;color:var(--text-muted);font-weight:600;margin-top:4px">{data.total} SEs · Live data from Salesforce</p>
   </div>
@@ -250,7 +250,7 @@
             <!-- SE Notes: coverage + avg entries -->
             <td style="padding:10px 16px;font-size:12px;line-height:1.6">
               {#if (se.note_hv_total ?? 0) > 0}
-                <div style="font-weight:700;color:{se.note_hv_covered === se.note_hv_total ? 'var(--exp-color)' : se.note_hv_covered > 0 ? 'var(--text)' : 'var(--red)'}">{se.note_hv_covered}/{se.note_hv_total} <span style="font-size:10px;font-weight:400;color:var(--text-muted)">{notesFloorLabel}</span></div>
+                <div style="font-weight:700;color:{se.note_hv_covered === se.note_hv_total ? 'var(--exp-color)' : se.note_hv_covered > 0 ? 'var(--text)' : 'var(--red)'}">{se.note_hv_covered}/{se.note_hv_total}</div>
                 <div style="font-size:11px;color:var(--text-muted)">{se.note_hv_avg_entries} avg entries</div>
               {:else}
                 <span style="color:var(--text-faint)">—</span>
@@ -498,7 +498,7 @@
           {/if}
           <span>Emails <strong style="color:var(--text)">{emailTotal(se)}</strong></span>
           {#if (se.note_hv_total ?? 0) > 0}
-          <span>Notes <strong style="color:{se.note_hv_covered === se.note_hv_total ? 'var(--exp-color)' : se.note_hv_covered > 0 ? 'var(--text)' : 'var(--red)'}">{se.note_hv_covered}/{se.note_hv_total}</strong> <span style="font-size:10px">{notesFloorLabel}</span> · <strong style="color:var(--text)">{se.note_hv_avg_entries} avg</strong></span>
+          <span>Notes <strong style="color:{se.note_hv_covered === se.note_hv_total ? 'var(--exp-color)' : se.note_hv_covered > 0 ? 'var(--text)' : 'var(--red)'}">{se.note_hv_covered}/{se.note_hv_total}</strong> · <strong style="color:var(--text)">{se.note_hv_avg_entries} avg</strong></span>
           {/if}
         </div>
 

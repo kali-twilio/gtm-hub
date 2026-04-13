@@ -1,5 +1,5 @@
 """
-SF Scorecard — Flask Blueprint.
+SE Scorecard V2 — Flask Blueprint.
 Data is fetched live from Salesforce on demand and cached per-team per-period.
 Current quarter: 10-minute TTL. Historical quarters/years: 1-week TTL.
 """
@@ -20,7 +20,7 @@ from . import sf_analysis
 
 log = logging.getLogger(__name__)
 
-sfscorecard_bp = Blueprint("sfscorecard", __name__)
+se_scorecard_v2_bp = Blueprint("se_scorecard_v2", __name__)
 
 OUTPUT_DIR = Path(__file__).parent.parent.parent / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -39,11 +39,16 @@ TEAMS = {
             " AND Technical_Lead__r.UserRole.Name = 'SE - Self Service'"
             " AND Technical_Lead__r.Title LIKE '%Engineer%'"
         ),
+        # Historical periods: FY_16_Owner_Team__c didn't exist pre-2026; use SE role only
+        "historical_soql_filter": (
+            "Technical_Lead__r.UserRole.Name = 'SE - Self Service'"
+            " AND Technical_Lead__r.Title LIKE '%Engineer%'"
+        ),
         "email_owner_filter": "Owner.UserRole.Name = 'SE - Self Service'",
         "criteria": [
             {
                 "label":  "DSR Opportunity",
-                "detail": "FY_16_Owner_Team__c starts with 'DSR' — stamped at assignment, unchanged if DSR leaves or changes role",
+                "detail": "FY_16_Owner_Team__c starts with 'DSR' — stamped at assignment, unchanged if SE leaves or changes role",
             },
             {
                 "label":  "SE Tagged",
@@ -205,7 +210,7 @@ def _build_soql(team_filter: str, start: str, end: str, icav_min: int = 0) -> st
     """All Closed Won opps. Presales_Stage__c included to tag TW vs non-TW."""
     icav_clause = f"AND {_ICAV_FIELD} > {icav_min} " if icav_min > 0 else ""
     return (
-        f"SELECT Id, Name, {_ICAV_FIELD}, {_TEAM_FIELD}, Presales_Stage__c, "
+        f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, {_TEAM_FIELD}, Presales_Stage__c, "
         f"Technical_Lead__r.Name, Technical_Lead__r.Email, "
         f"Owner.Name, Owner.UserRole.Name, "
         f"Sales_Engineer_Notes__c, SE_Notes_History__c "
@@ -282,14 +287,14 @@ def _load_cached(team_key: str, period_key: str, icav_min: int = 0) -> list | No
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0):
+def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0, motion: str = "dsr"):
     total   = len(ranked)
     payload = []
     for i, se in enumerate(ranked, 1):
         entry          = {k: v for k, v in se.items() if not k.startswith("_")}
         entry["rank"]  = i
         entry["tier"]  = sf_analysis.tier(i, total)
-        entry["flags"] = sf_analysis.collect_se_flags(se, ranked)
+        entry["flags"] = sf_analysis.collect_se_flags(se, ranked, motion)
         entry["roast"] = sf_analysis._roast(se, ranked)
         payload.append(entry)
     p   = _cache_path(team_key, period_key, icav_min)
@@ -324,6 +329,12 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
 
     cache_key = f"{team_key}_{subteam_key}" if subteam_key else team_key
     info      = _period_info(period_key)
+
+    # For prior-year periods, use the looser filter if the team defines one
+    # (role/title filters reflect current state; only the DSR stamp is stable across years)
+    period_year = int(period_key.split("_")[0])
+    if not subteam_key and period_year < date.today().year and "historical_soql_filter" in team:
+        soql_filter = team["historical_soql_filter"]
 
     if _is_fresh(cache_key, period_key, icav_min, info["ttl"]):
         return _load_cached(cache_key, period_key, icav_min), None
@@ -385,7 +396,7 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     if not ses:
         return None, f"No closed won TW opportunities found for {display_label} in {info['label']}."
     ranked = sf_analysis.rank_ses(ses)
-    _save_cached(ranked, cache_key, period_key, icav_min)
+    _save_cached(ranked, cache_key, period_key, icav_min, team.get("motion", "dsr"))
     log.info("Refreshed %s/%s (min $%s) SE data from Salesforce (%d opps, %d win-rate opps)",
              cache_key, period_key, icav_min, len(opps), len(win_rate_opps))
     return _load_cached(cache_key, period_key, icav_min), None
@@ -454,7 +465,7 @@ def enrich_me(email: str) -> dict:
 # Routes
 # ---------------------------------------------------------------------------
 
-@sfscorecard_bp.route("/api/sfscorecard/teams")
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/teams")
 def api_teams():
     return jsonify([
         {
@@ -468,13 +479,13 @@ def api_teams():
     ])
 
 
-@sfscorecard_bp.route("/api/sfscorecard/periods")
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/periods")
 def api_periods():
     return jsonify(_available_periods())
 
 
 
-@sfscorecard_bp.route("/api/sfscorecard/data/ses")
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/ses")
 def api_ses():
     team_key    = request.args.get("team", _DEFAULT_TEAM)
     period_key  = request.args.get("period", _default_period())
@@ -483,13 +494,15 @@ def api_ses():
     ses, err    = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
-    se_name = _email_to_se_name(session.get("user_email", ""), ses)
+    team_medians = sf_analysis.compute_team_medians(ses)
+    se_name      = _email_to_se_name(session.get("user_email", ""), ses)
     if se_name:
         ses = [s for s in ses if s["name"] == se_name]
-    return jsonify(ses)
+    team_motion = TEAMS[team_key].get("motion", "dsr") if team_key in TEAMS else "dsr"
+    return jsonify([{**s, "team_motion": team_motion, "team_medians": team_medians} for s in ses])
 
 
-@sfscorecard_bp.route("/api/sfscorecard/data/report")
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/report")
 def api_report():
     team_key    = request.args.get("team", _DEFAULT_TEAM)
     period_key  = request.args.get("period", _default_period())
@@ -533,7 +546,7 @@ def api_report():
     })
 
 
-@sfscorecard_bp.route("/api/sfscorecard/data/rankings")
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")
 def api_rankings():
     team_key    = request.args.get("team", _DEFAULT_TEAM)
     period_key  = request.args.get("period", _default_period())
