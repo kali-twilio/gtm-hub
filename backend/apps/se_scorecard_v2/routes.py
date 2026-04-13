@@ -3,6 +3,7 @@ SE Scorecard V2 — Flask Blueprint.
 Data is fetched live from Salesforce on demand and cached per-team per-period.
 Current quarter: 10-minute TTL. Historical quarters/years: 1-week TTL.
 """
+from __future__ import annotations
 
 import csv
 import io
