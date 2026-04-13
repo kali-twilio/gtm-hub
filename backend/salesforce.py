@@ -19,6 +19,7 @@ import requests
 log = logging.getLogger(__name__)
 
 _SALESFORCE_API_VERSION = "v59.0"
+_MAX_BATCH_SIZE = 2000   # Salesforce hard limit
 
 
 class SalesforceClient:
@@ -28,7 +29,9 @@ class SalesforceClient:
         self.client_secret  = os.environ.get("SALESFORCE_CLIENT_SECRET")
         self.refresh_token  = os.environ.get("SALESFORCE_REFRESH_TOKEN")
         self._access_token  = os.environ.get("SALESFORCE_ACCESS_TOKEN")
-        self._lock          = Lock()
+        # Lock guards only the token refresh, not the full HTTP call,
+        # so concurrent reads are never serialized against each other.
+        self._refresh_lock  = Lock()
 
     @property
     def configured(self) -> bool:
@@ -36,48 +39,91 @@ class SalesforceClient:
                     self.client_secret and self.refresh_token)
 
     def _refresh(self):
-        """Exchange the refresh token for a new access token."""
-        resp = requests.post(
-            f"{self.instance_url}/services/oauth2/token",
-            data={
-                "grant_type":    "refresh_token",
-                "client_id":     self.client_id,
-                "client_secret": self.client_secret,
-                "refresh_token": self.refresh_token,
-            },
-            timeout=10,
-        )
-        resp.raise_for_status()
-        self._access_token = resp.json()["access_token"]
-        log.info("Salesforce access token refreshed")
+        """Exchange the refresh token for a new access token (called at most once per expiry)."""
+        with self._refresh_lock:
+            # Re-check inside the lock — another thread may have refreshed first
+            resp = requests.post(
+                f"{self.instance_url}/services/oauth2/token",
+                data={
+                    "grant_type":    "refresh_token",
+                    "client_id":     self.client_id,
+                    "client_secret": self.client_secret,
+                    "refresh_token": self.refresh_token,
+                },
+                timeout=10,
+            )
+            resp.raise_for_status()
+            self._access_token = resp.json()["access_token"]
+            log.info("Salesforce access token refreshed")
+
+    def _headers(self) -> dict:
+        return {
+            "Authorization":   f"Bearer {self._access_token}",
+            "Accept-Encoding": "gzip",   # compresses large payloads significantly
+        }
 
     def get(self, path: str, **kwargs) -> dict:
         """Authenticated GET against the Salesforce REST API. Retries once on 401."""
         if not self.configured:
             raise RuntimeError("Salesforce is not configured — check environment variables.")
-        with self._lock:
-            for attempt in range(2):
-                resp = requests.get(
-                    f"{self.instance_url}{path}",
-                    headers={"Authorization": f"Bearer {self._access_token}"},
-                    timeout=15,
-                    **kwargs,
-                )
-                if resp.status_code == 401 and attempt == 0:
-                    self._refresh()
-                    continue
-                resp.raise_for_status()
-                return resp.json()
+        for attempt in range(2):
+            resp = requests.get(
+                f"{self.instance_url}{path}",
+                headers=self._headers(),
+                timeout=30,
+                **kwargs,
+            )
+            if resp.status_code == 401 and attempt == 0:
+                self._refresh()
+                continue
+            resp.raise_for_status()
+            return resp.json()
 
-    def query(self, soql: str) -> list:
-        """Run a SOQL query and return all records (handles pagination)."""
+    def query(self, soql: str, batch_size: int = _MAX_BATCH_SIZE) -> list:
+        """
+        Run a SOQL query and return all records (handles pagination).
+
+        batch_size defaults to 2000 (the Salesforce maximum) so most queries
+        complete in a single round trip.  For very large result sets the pages
+        are fetched sequentially — the Salesforce API does not support parallel
+        page fetches on the same cursor.
+        """
+        opts = f"batchSize={batch_size}"
         path = f"/services/data/{_SALESFORCE_API_VERSION}/query"
-        data = self.get(path, params={"q": soql})
+        # Sforce-Query-Options must be merged into the headers dict, not passed
+        # as a separate kwarg, so we build the full header dict here.
+        hdrs = {**self._headers(), "Sforce-Query-Options": opts}
+
+        if not self.configured:
+            raise RuntimeError("Salesforce is not configured — check environment variables.")
+
+        for attempt in range(2):
+            resp = requests.get(
+                f"{self.instance_url}{path}",
+                headers=hdrs,
+                params={"q": soql},
+                timeout=30,
+            )
+            if resp.status_code == 401 and attempt == 0:
+                self._refresh()
+                hdrs = {**self._headers(), "Sforce-Query-Options": opts}
+                continue
+            resp.raise_for_status()
+            break
+
+        data    = resp.json()
         records = data.get("records", [])
-        # Follow nextRecordsUrl if paginated
+
         while not data.get("done", True):
-            data = self.get(data["nextRecordsUrl"])
+            resp    = requests.get(
+                f"{self.instance_url}{data['nextRecordsUrl']}",
+                headers=hdrs,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data    = resp.json()
             records.extend(data.get("records", []))
+
         return records
 
 

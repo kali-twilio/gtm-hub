@@ -37,6 +37,34 @@ export async function getRankings() {
   return r.json();
 }
 
+export async function getSFPeriods(): Promise<{key: string; label: string}[]> {
+  const r = await fetch('/api/sfscorecard/periods');
+  if (!r.ok) return [];
+  return r.json();
+}
+
+function subteamParam(subteam: string) {
+  return subteam && subteam !== 'none' ? `&subteam=${subteam}` : '';
+}
+
+export async function getSFSEs(team: string, period: string, icavMin = 0, subteam = '') {
+  const r = await fetch(`/api/sfscorecard/data/ses?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
+export async function getSFReport(team: string, period: string, icavMin = 0, subteam = '') {
+  const r = await fetch(`/api/sfscorecard/data/report?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
+export async function getSFRankings(team: string, period: string, icavMin = 0, subteam = '') {
+  const r = await fetch(`/api/sfscorecard/data/rankings?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
 export function fmt(n: number): string {
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;

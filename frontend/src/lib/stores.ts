@@ -29,3 +29,33 @@ function createThemeStore() {
 }
 
 export const theme = createThemeStore();
+
+// Persists the selected SF Scorecard team across page navigations
+function createSFTeamStore() {
+  const stored = typeof localStorage !== 'undefined' ? localStorage.getItem('sf_team') : null;
+  const { subscribe, set } = writable<string>(stored ?? 'digital_sales');
+  return {
+    subscribe,
+    set(v: string) {
+      if (typeof localStorage !== 'undefined') localStorage.setItem('sf_team', v);
+      set(v);
+    }
+  };
+}
+
+export const sfTeam = createSFTeamStore();
+
+function createPersistedStore(key: string, fallback: string) {
+  const stored = typeof localStorage !== 'undefined' ? localStorage.getItem(key) : null;
+  const { subscribe, set } = writable<string>(stored ?? fallback);
+  return {
+    subscribe,
+    set(v: string) {
+      if (typeof localStorage !== 'undefined') localStorage.setItem(key, v);
+      set(v);
+    }
+  };
+}
+
+export const sfPeriod  = createPersistedStore('sf_period',  '2026_Q1');
+export const sfSubteam = createPersistedStore('sf_subteam', 'none');
