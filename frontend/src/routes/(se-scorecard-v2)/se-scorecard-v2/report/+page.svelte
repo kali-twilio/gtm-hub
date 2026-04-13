@@ -154,7 +154,7 @@
 
     <!-- iACV cutoff -->
     <div>
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Notes floor</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">iACV</div>
       <div style="display:flex;gap:6px">
         {#each ICAV_PRESETS as p}
         <button onclick={() => loadWithMin(p.value)}

@@ -54,16 +54,45 @@ In local dev (`LOCAL_DEV=1`), `SECURE` is relaxed and `OAUTHLIB_INSECURE_TRANSPO
 
 ### Platform-level auth gate
 
-Every `/api/*` route is protected automatically in `app.py`:
+Every `/api/*` route is protected automatically in `app.py`. The `before_request` hook runs three checks in order before any blueprint route is reached:
 
 ```python
 @app.before_request
 def enforce_auth():
-    if request.path.startswith("/api/") and not session.get("user_email"):
+    # 1. CSRF: reject requests from unexpected origins
+    origin = request.headers.get("Origin")
+    if origin and origin != FRONTEND_URL:
+        return jsonify({"error": "Forbidden"}), 403
+
+    # 2. Auth: valid session required
+    if not session.get("user_email"):
         return jsonify({"error": "Unauthorized"}), 401
+
+    # 3. Rate limit: 60 requests / 60 seconds per user
+    if _rate_limited(session["user_email"]):
+        return jsonify({"error": "Too many requests"}), 429
 ```
 
-App builders never implement auth themselves — if a request reaches a blueprint route, the user is already authenticated.
+App builders never implement auth themselves — if a request reaches a blueprint route, the user is authenticated, the request is same-origin, and the rate limit has not been exceeded.
+
+### Input validation
+
+All user-supplied integer parameters are validated against an explicit allowlist before reaching any business logic. Unknown or non-integer values return `400` immediately:
+
+```python
+_ICAV_PRESETS = {0, 10_000, 30_000, 50_000, 100_000}
+
+def _parse_icav_min(raw):
+    try:
+        val = int(raw or 0)
+    except (ValueError, TypeError):
+        return 0, "icav_min must be an integer"
+    if val not in _ICAV_PRESETS:
+        return 0, f"icav_min must be one of {sorted(_ICAV_PRESETS)}"
+    return val, None
+```
+
+This prevents both type errors (`?icav_min=abc` → 500) and parameter enumeration outside the defined set.
 
 ### Response security headers (every response)
 
@@ -81,6 +110,7 @@ App builders never implement auth themselves — if a request reaches a blueprin
 
 - **HTTPS only** — Let's Encrypt SSL cert provisioned automatically on deploy. Nginx redirects all HTTP to HTTPS.
 - **IMDSv2 required** — EC2 instance launched with `HttpTokens=required`. Blocks SSRF attacks that try to read instance metadata.
+- **Secrets never in user-data** — EC2 user-data contains no secret values. `deploy.sh` uploads an encrypted secrets file to a private S3 bucket, passes the instance a short-lived (30-minute) pre-signed URL, and the instance downloads, sources, and immediately deletes the file at boot. `deploy.sh` then deletes the S3 object once the instance is running. Querying `/latest/user-data` from the instance yields only an expired URL.
 - **Least privilege processes** — gunicorn runs as `ec2-user`, nginx as `nginx`. Neither runs as root.
 - **nginx server tokens off** — version number not exposed in response headers or error pages.
 - **Request size limit** — `client_max_body_size 10M` in nginx, `MAX_CONTENT_LENGTH = 10MB` in Flask. Prevents oversized upload attacks.

@@ -27,6 +27,18 @@ se_scorecard_v2_bp = Blueprint("se_scorecard_v2", __name__)
 OUTPUT_DIR = Path(__file__).parent.parent.parent / "outputs"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
+_ICAV_PRESETS = {0, 10_000, 30_000, 50_000, 100_000}
+
+def _parse_icav_min(raw: str | None) -> tuple[int, str | None]:
+    """Parse and validate icav_min. Returns (value, error) — only preset values allowed."""
+    try:
+        val = int(raw or 0)
+    except (ValueError, TypeError):
+        return 0, "icav_min must be an integer"
+    if val not in _ICAV_PRESETS:
+        return 0, f"icav_min must be one of {sorted(_ICAV_PRESETS)}"
+    return val, None
+
 # ---------------------------------------------------------------------------
 # Team config — add new teams here; no other file needs to change
 # ---------------------------------------------------------------------------
@@ -208,8 +220,9 @@ def _default_period() -> str:
     return f"{year - 1}_Q4"
 
 
-def _build_soql(team_filter: str, start: str, end: str) -> str:
+def _build_soql(team_filter: str, start: str, end: str, icav_min: int = 0) -> str:
     """All Closed Won opps. Presales_Stage__c included to tag TW vs non-TW."""
+    icav_clause = f"AND {_ICAV_FIELD} >= {icav_min} " if icav_min > 0 else ""
     return (
         f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, {_TEAM_FIELD}, Presales_Stage__c, "
         f"Technical_Lead__r.Name, Technical_Lead__r.Email, "
@@ -226,7 +239,8 @@ def _build_soql(team_filter: str, start: str, end: str) -> str:
         f"AND {team_filter} "
         f"AND Technical_Lead__c != null "
         f"AND CloseDate >= {start} "
-        f"AND CloseDate <= {end}"
+        f"AND CloseDate <= {end} "
+        f"{icav_clause}"
     )
 
 
@@ -357,7 +371,7 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     opps = win_rate_opps = pipe_opps = email_tasks = None
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"]))
+        f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"], icav_min))
         f_win_rate = pool.submit(sf.query, _build_win_rate_soql(soql_filter, info["start"], info["end"]))
         f_pipeline = pool.submit(sf.query, _build_pipeline_soql(soql_filter, info["end"]))
         f_email    = pool.submit(sf.query, _build_email_soql(info["start"], info["end"], email_owner_filter))
@@ -515,7 +529,9 @@ def api_periods():
 def api_ses():
     team_key    = request.args.get("team", _DEFAULT_TEAM)
     period_key  = request.args.get("period", _default_period())
-    icav_min    = int(request.args.get("icav_min", 0))
+    icav_min, err = _parse_icav_min(request.args.get("icav_min"))
+    if err:
+        return jsonify({"error": err}), 400
     subteam_key = request.args.get("subteam", "")
     ses, err    = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
@@ -532,7 +548,9 @@ def api_ses():
 def api_report():
     team_key    = request.args.get("team", _DEFAULT_TEAM)
     period_key  = request.args.get("period", _default_period())
-    icav_min    = int(request.args.get("icav_min", 0))
+    icav_min, err = _parse_icav_min(request.args.get("icav_min"))
+    if err:
+        return jsonify({"error": err}), 400
     subteam_key   = request.args.get("subteam", "")
     ses_list, err = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
@@ -607,7 +625,9 @@ def api_report():
 def api_rankings():
     team_key    = request.args.get("team", _DEFAULT_TEAM)
     period_key  = request.args.get("period", _default_period())
-    icav_min    = int(request.args.get("icav_min", 0))
+    icav_min, err = _parse_icav_min(request.args.get("icav_min"))
+    if err:
+        return jsonify({"error": err}), 400
     subteam_key   = request.args.get("subteam", "")
     ses_list, err = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:

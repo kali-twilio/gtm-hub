@@ -21,6 +21,8 @@ import json
 import logging
 import importlib
 import inspect
+import time
+from collections import defaultdict
 from pathlib import Path
 from flask import Blueprint
 
@@ -70,7 +72,24 @@ APPS_DIR = Path(__file__).parent / "apps"
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Routes the platform exposes publicly (no login required)
-_PUBLIC_ROUTES = {"/auth", "/oauth2callback", "/logout", "/simulate", "/api/me", "/api/apps"}
+_PUBLIC_ROUTES = {"/auth", "/oauth2callback", "/logout", "/simulate", "/api/me"}
+
+# ── Rate limiting (in-memory, per IP) ────────────────────────────────────────
+_rl_store: dict[str, list[float]] = defaultdict(list)
+_RL_LIMIT  = 60   # max requests
+_RL_WINDOW = 60   # per N seconds
+
+def _rate_limited(ip: str) -> bool:
+    """Returns True if this IP has exceeded the rate limit."""
+    now = time.monotonic()
+    cutoff = now - _RL_WINDOW
+    ts = _rl_store[ip]
+    while ts and ts[0] < cutoff:
+        ts.pop(0)
+    if len(ts) >= _RL_LIMIT:
+        return True
+    ts.append(now)
+    return False
 
 # ── Auto-discover app blueprints ──────────────────────────────────────────────
 # Drop a routes.py in apps/<name>/ with any Blueprint and it registers itself.
@@ -114,8 +133,25 @@ def enforce_auth():
     """
     if request.path in _PUBLIC_ROUTES:
         return
-    if request.path.startswith("/api/") and not session.get("user_email"):
+
+    if not request.path.startswith("/api/"):
+        return
+
+    # CSRF: reject API requests whose Origin doesn't match this app.
+    # Browsers always send Origin on cross-origin requests; same-origin
+    # requests either omit it or send the correct value.
+    origin = request.headers.get("Origin")
+    if origin and _frontend_url and origin.rstrip("/") != _frontend_url.rstrip("/"):
+        return jsonify({"error": "Forbidden"}), 403
+
+    # Auth
+    if not session.get("user_email"):
         return jsonify({"error": "Unauthorized"}), 401
+
+    # Rate limit (per authenticated user email, falls back to IP)
+    key = session.get("user_email") or request.remote_addr or "unknown"
+    if _rate_limited(key):
+        return jsonify({"error": "Too many requests"}), 429
 
 @app.after_request
 def security_headers(response):
