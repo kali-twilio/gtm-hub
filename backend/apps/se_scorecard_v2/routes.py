@@ -185,7 +185,7 @@ def _available_periods() -> list[dict]:
     cur_q   = (today.month - 1) // 3 + 1
     periods = []
 
-    for q in range(1, cur_q + 1):
+    for q in range(cur_q, 0, -1):
         key   = f"{year}_Q{q}"
         label = f"Q{q} {year}"
         if q == cur_q:
@@ -208,17 +208,21 @@ def _default_period() -> str:
     return f"{year - 1}_Q4"
 
 
-def _build_soql(team_filter: str, start: str, end: str, icav_min: int = 0) -> str:
+def _build_soql(team_filter: str, start: str, end: str) -> str:
     """All Closed Won opps. Presales_Stage__c included to tag TW vs non-TW."""
-    icav_clause = f"AND {_ICAV_FIELD} > {icav_min} " if icav_min > 0 else ""
     return (
         f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, {_TEAM_FIELD}, Presales_Stage__c, "
         f"Technical_Lead__r.Name, Technical_Lead__r.Email, "
         f"Owner.Name, Owner.UserRole.Name, "
-        f"Sales_Engineer_Notes__c, SE_Notes_History__c "
+        f"Sales_Engineer_Notes__c, SE_Notes_History__c, "
+        f"Account.Name, "
+        f"Account.Current_ARR_Based_on_Last_6_Months__c, "
+        f"Account.Average_Amortized_Usage_Last_3_Months__c, "
+        f"Account.X3_month_vs_6_month_usage_delta__c, "
+        f"Account.Fast_Revenue_Growth__c, "
+        f"Account.Significant_Revenue_Contraction__c "
         f"FROM Opportunity "
         f"WHERE StageName = 'Closed Won' "
-        f"{icav_clause}"
         f"AND {team_filter} "
         f"AND Technical_Lead__c != null "
         f"AND CloseDate >= {start} "
@@ -353,7 +357,7 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     opps = win_rate_opps = pipe_opps = email_tasks = None
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"], icav_min))
+        f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"]))
         f_win_rate = pool.submit(sf.query, _build_win_rate_soql(soql_filter, info["start"], info["end"]))
         f_pipeline = pool.submit(sf.query, _build_pipeline_soql(soql_filter, info["end"]))
         f_email    = pool.submit(sf.query, _build_email_soql(info["start"], info["end"], email_owner_filter))
@@ -386,7 +390,7 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     if not opps:
         return None, f"No closed won opportunities found for {display_label} in {info['label']}."
 
-    ses = sf_analysis.build_ses(opps, team.get("motion", "dsr"))
+    ses = sf_analysis.build_ses(opps, team.get("motion", "dsr"), notes_floor=icav_min)
     sf_analysis.merge_win_rate(ses, win_rate_opps)
 
     # Build opp motion map from closed-won + pipeline opps, then merge email activity
@@ -546,6 +550,36 @@ def api_report():
     exp_sorted  = sorted(ses_list, key=lambda x: x["exp_icav"], reverse=True)
     deal_sorted = [s for s in sorted(ses_list, key=lambda x: x["largest_deal_value"], reverse=True)
                    if s["largest_deal_value"] > 0]
+
+    # --- Expansion trend across comparable cached periods ---
+    # "Total influenced" = TW exp_icav + non-TW exp_icav (deals SE was tagged on but didn't get full TW)
+    cache_key_trend = f"{team_key}_{subteam_key}" if subteam_key else team_key
+    is_fy           = "_FY" in period_key
+    comparable      = [p for p in _available_periods()
+                       if (("_FY" in p["key"]) == is_fy) and p["key"] != period_key]
+
+    def _exp_snapshot(ses: list, p_label: str, p_key: str, is_current: bool) -> dict:
+        return {
+            "period":          p_label,
+            "period_key":      p_key,
+            "is_current":      is_current,
+            "team_exp_icav":   sum(s.get("exp_icav", 0) for s in ses),
+            "team_exp_wins":   sum(s.get("exp_wins", 0) for s in ses),
+            "team_influenced": sum(s.get("exp_icav", 0) + s.get("non_tw_exp_icav", 0) for s in ses),
+            "ses":             {s["name"]: {
+                "exp_icav":    s.get("exp_icav", 0),
+                "influenced":  s.get("exp_icav", 0) + s.get("non_tw_exp_icav", 0),
+            } for s in ses},
+        }
+
+    exp_trend = [_exp_snapshot(ses_list, period["label"], period_key, True)]
+    for p in comparable[:3]:
+        prior = _load_cached(cache_key_trend, p["key"], 0)
+        if prior:
+            exp_trend.append(_exp_snapshot(prior, p["label"], p["key"], False))
+
+    exp_trend.reverse()  # chronological order — oldest first
+
     return jsonify({
         "ranked":       ses_list,
         "total":        total,
@@ -562,6 +596,7 @@ def api_report():
         "max_act_icav": max(s["act_icav"] for s in ses_list) or 1,
         "max_exp_icav": max(s["exp_icav"] for s in ses_list) or 1,
         "trends":       sorted(sf_analysis.collect_team_trends(ses_list), key=lambda x: x[0]),
+        "exp_trend":    exp_trend,
         "quarter":      period["label"],
         "team_label":   team_label,
         "motion":       team.get("motion", "dsr"),

@@ -29,13 +29,31 @@
     outq_icav:actSes.reduce((n: number, s: any) => n + (s.email_act_outq_icav ?? 0), 0),
   });
   const expTotals   = $derived({
-    wins:     expSes.reduce((n: number, s: any) => n + s.exp_wins, 0),
-    icav:     expSes.reduce((n: number, s: any) => n + s.exp_icav, 0),
-    avg:      expSes.length ? Math.round(expSes.reduce((n: number, s: any) => n + s.exp_avg, 0) / expSes.length) : 0,
-    inq:      data ? data.ranked.reduce((n: number, s: any) => n + (s.email_exp_inq ?? 0), 0) : 0,
-    outq:     data ? data.ranked.reduce((n: number, s: any) => n + (s.email_exp_outq ?? 0), 0) : 0,
-    outq_icav:data ? data.ranked.reduce((n: number, s: any) => n + (s.email_exp_outq_icav ?? 0), 0) : 0,
+    wins:           expSes.reduce((n: number, s: any) => n + s.exp_wins, 0),
+    icav:           expSes.reduce((n: number, s: any) => n + s.exp_icav, 0),
+    avg:            expSes.length ? Math.round(expSes.reduce((n: number, s: any) => n + s.exp_avg, 0) / expSes.length) : 0,
+    inq:            data ? data.ranked.reduce((n: number, s: any) => n + (s.email_exp_inq ?? 0), 0) : 0,
+    outq:           data ? data.ranked.reduce((n: number, s: any) => n + (s.email_exp_outq ?? 0), 0) : 0,
+    outq_icav:      data ? data.ranked.reduce((n: number, s: any) => n + (s.email_exp_outq_icav ?? 0), 0) : 0,
+    arr_total:      data ? data.ranked.reduce((n: number, s: any) => n + (s.exp_arr_total ?? 0), 0) : 0,
+    mrr_delta_total:data ? data.ranked.reduce((n: number, s: any) => n + (s.exp_mrr_delta_total ?? 0), 0) : 0,
   });
+
+  function fmtMrrDelta(delta: number): string {
+    if (delta === 0) return '→ flat';
+    const sign = delta > 0 ? '↑' : '↓';
+    return `${sign} ${fmt(Math.abs(delta))}/mo`;
+  }
+
+  const expStatCols = $derived(data ? [
+    {l:'Total Wins',  v:String(expTotals.wins),  c:'var(--exp-color)'},
+    {l:'Total iACV',  v:fmt(expTotals.icav),      c:'var(--exp-color)'},
+    {l:'Avg Deal',    v:fmt(expTotals.avg),        c:'var(--exp-color)'},
+    ...(expTotals.arr_total > 0 ? [{l:'Account ARR', v:fmt(expTotals.arr_total), c:$theme==='twilio'?'#178742':'#10B981'}] : []),
+    ...(expTotals.arr_total > 0 ? [{l:'MRR Trend', v:fmtMrrDelta(expTotals.mrr_delta_total), c:expTotals.mrr_delta_total > 0 ? ($theme==='twilio'?'#178742':'#10B981') : expTotals.mrr_delta_total < 0 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}] : []),
+    {l:'In-Q Emails', v:expTotals.inq > 0 ? String(expTotals.inq) : '—', c:'var(--exp-color)'},
+    {l:'Pipe Emails', v:expTotals.outq > 0 ? expTotals.outq + (expTotals.outq_icav > 0 ? ' · '+fmt(expTotals.outq_icav) : '') : '—', c:'var(--exp-color)'},
+  ] : []);
 
   function med(vals: number[]): number {
     const v = vals.filter(x => x > 0).sort((a, b) => a - b);
@@ -93,7 +111,7 @@
 </div>
 {:else}
 
-<div style="position:fixed;top:{$theme==='twilio'?'68px':'26px'};left:{$theme==='twilio'?'16px':'48px'};z-index:9999">
+<div style="position:fixed;top:68px;left:16px;z-index:9999">
   <a href="/se-scorecard-v2" class="p5-back-btn">◀ Back</a>
 </div>
 
@@ -136,7 +154,7 @@
 
     <!-- iACV cutoff -->
     <div>
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Min deal size</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Notes floor</div>
       <div style="display:flex;gap:6px">
         {#each ICAV_PRESETS as p}
         <button onclick={() => loadWithMin(p.value)}
@@ -333,23 +351,23 @@
         <p style="font-size:12px;color:var(--text-muted)">{motionLabels.expDesc}{data.motion === 'dsr' ? ' · $0 median = flat retentions' : ''}</p>
       </div>
       <!-- Expansion totals summary -->
-      <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:0;border-bottom:2px solid rgba(var(--exp-rgb),0.2)">
-        {#each [
-          {l:'Total Wins',  v:String(expTotals.wins)},
-          {l:'Total iACV',  v:fmt(expTotals.icav)},
-          {l:'Avg Deal',    v:fmt(expTotals.avg)},
-          {l:'In-Q Emails', v:expTotals.inq > 0 ? String(expTotals.inq) : '—'},
-          {l:'Pipe Emails', v:expTotals.outq > 0 ? expTotals.outq + (expTotals.outq_icav > 0 ? ' · '+fmt(expTotals.outq_icav) : '') : '—'},
-        ] as t}
+      <div style="display:grid;grid-template-columns:repeat({expStatCols.length},1fr);gap:0;border-bottom:2px solid rgba(var(--exp-rgb),0.2)">
+        {#each expStatCols as t}
         <div style="padding:12px 16px;border-right:1px solid rgba(var(--red-rgb),0.08)">
-          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--exp-color);margin-bottom:4px">{t.l}</div>
+          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:{t.c};margin-bottom:4px">{t.l}</div>
           <div style="font-size:16px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text)">{t.v}</div>
         </div>
         {/each}
       </div>
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
-          <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['#','SE','Wins','iACV','Avg','Median','Status','In-Q Emails','Pipe Emails'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>{/each}</tr></thead>
+          <thead style="background:rgba(var(--red-rgb),0.06)">
+            <tr>
+              {#each ['#','SE','Wins','iACV','Avg','Median','Status',...(expTotals.arr_total > 0 ? ['Account ARR','MRR Trend'] : []),'In-Q Emails','Pipe Emails'] as h}
+              <th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>
+              {/each}
+            </tr>
+          </thead>
           <tbody>
             {#each data.exp_sorted as se, i}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
@@ -366,6 +384,16 @@
                   <span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:700;background:{$theme==='twilio'?'var(--dark)':'rgba(255,255,255,0.05)'};color:var(--text-muted);border:1px solid rgba(var(--red-rgb),0.1);{$theme==='p5'?'clip-path:polygon(0 0,100% 0,calc(100% - 6px) 100%,0 100%)':'border-radius:4px'}">Retaining</span>
                 {/if}
               </td>
+              {#if expTotals.arr_total > 0}
+              {@const seArr = se.exp_arr_total ?? 0}
+              {@const seDelta = se.exp_mrr_delta_total ?? 0}
+              <td style="padding:10px 16px;font-weight:700;color:{seArr > 0 ? ($theme==='twilio'?'#178742':'#10B981') : 'var(--text-faint)'}">
+                {seArr > 0 ? fmt(seArr) : '—'}
+              </td>
+              <td style="padding:10px 16px;font-weight:700;color:{seDelta > 0 ? ($theme==='twilio'?'#178742':'#10B981') : seDelta < 0 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-faint)'}">
+                {seArr > 0 ? fmtMrrDelta(seDelta) : '—'}
+              </td>
+              {/if}
               <td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.email_exp_inq ?? 0) > 0 ? se.email_exp_inq : '—'}</td>
               <td style="padding:10px 16px;color:var(--exp-color);font-weight:700">
                 {#if (se.email_exp_outq ?? 0) > 0}{se.email_exp_outq}{#if (se.email_exp_outq_icav ?? 0) > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(se.email_exp_outq_icav)}</span>{/if}{:else}—{/if}
@@ -375,6 +403,7 @@
           </tbody>
         </table>
       </div>
+
     </div>
     {/if}
   </div>
@@ -385,12 +414,17 @@
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)"><h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Largest Deals</h2></div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['SE','Value','AE','Deal'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'}">{h}</th>{/each}</tr></thead>
+        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['SE','Value','Motion','AE','Deal'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'}">{h}</th>{/each}</tr></thead>
         <tbody>
           {#each data.deal_sorted as se}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
             <td style="padding:10px 16px;font-weight:700;color:var(--text)">{se.name}</td>
             <td style="padding:10px 16px;color:{$theme==='twilio'?'#B45309':'var(--yellow)'};font-weight:900;font-style:{$theme==='p5'?'italic':'normal'}">{fmt(se.largest_deal_value)}</td>
+            <td style="padding:10px 16px">
+              {#if se.largest_deal_motion}
+              <span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:700;border-radius:4px;background:{se.largest_deal_motion==='Activate'||se.largest_deal_motion==='New Business' ? 'rgba(var(--act-rgb),0.1)' : 'rgba(var(--exp-rgb),0.1)'};color:{se.largest_deal_motion==='Activate'||se.largest_deal_motion==='New Business' ? 'var(--act-color)' : 'var(--exp-color)'}">{se.largest_deal_motion}</span>
+              {:else}—{/if}
+            </td>
             <td style="padding:10px 16px;color:var(--text-muted)">{se.largest_deal_dsr || '—'}</td>
             <td style="padding:10px 16px;color:var(--text-muted);font-size:12px">{se.largest_deal.slice(0,60)}{se.largest_deal.length > 60 ? '…' : ''}</td>
           </tr>

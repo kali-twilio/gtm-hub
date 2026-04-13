@@ -101,6 +101,10 @@
     }, 700);
     const [rankData] = await Promise.all([getSFRankings($sfTeam, $sfPeriod, 0, $sfSubteam), new Promise(r => setTimeout(r, 2200))]);
     clearInterval(msgTimer);
+    if (!rankData || !rankData.ranked?.length) {
+      loadingMsg = 'Failed to load data. Try refreshing.';
+      return;
+    }
     data = rankData;
     ready = true;
     setTimeout(startConfetti, 300);
@@ -137,7 +141,7 @@
 </div>
 {:else}
 
-<div style="position:fixed;top:{$theme==='twilio'?'68px':'26px'};left:{$theme==='twilio'?'16px':'48px'};z-index:9999">
+<div style="position:fixed;top:68px;left:16px;z-index:9999">
   <a href="/se-scorecard-v2" class="p5-back-btn">◀ Back</a>
 </div>
 
@@ -173,7 +177,7 @@
 @keyframes devWiggle { 0%,80%,100%{transform:rotate(0)} 82%{transform:rotate(-1.2deg)} 84%{transform:rotate(1.2deg)} 86%{transform:rotate(-.8deg)} 88%{transform:rotate(.8deg)} }
 </style>
 
-<div style="max-width:820px;margin:0 auto;padding:80px 20px 80px">
+<div style="max-width:1100px;margin:0 auto;padding:80px 24px 80px">
 
   <div style="text-align:center;margin-bottom:32px">
     <div style="display:flex;justify-content:center;margin-bottom:18px">

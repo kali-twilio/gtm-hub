@@ -32,24 +32,16 @@
   const isOwnProfile = () => $user?.sf_is_se ?? false;
 </script>
 
-<div class="w-full max-w-2xl mx-auto px-4 py-8">
+<div class="w-full mx-auto px-4 py-8" style="max-width:min(100%,900px)">
 
-  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:28px">
-    <div>
-      <div class="p5-badge" style="margin-bottom:8px">SE Scorecard V2 · {periodLabel}</div>
-      <h1 style="font-size:32px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 var(--red)':''}">My Stats</h1>
-      <div style="width:50px;height:3px;background:var(--red);{$theme==='p5'?'transform:skewX(-20deg);box-shadow:0 0 8px var(--red)':'border-radius:2px'};margin-top:8px"></div>
-    </div>
-    <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:8px">
-      <span style="font-size:11px;color:var(--text-muted);font-weight:600">{$user?.email}</span>
-      {#if isOwnProfile()}
-        <a href="/logout" style="font-size:12px;color:var(--red);font-weight:700;text-decoration:none;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;letter-spacing:0.1em">Sign out {$theme==='p5'?'◆':''}</a>
-      {/if}
-    </div>
+  <div style="margin-bottom:28px">
+    <div class="p5-badge" style="margin-bottom:8px">SE Scorecard V2 · {periodLabel}</div>
+    <h1 style="font-size:32px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 var(--red)':''}">My Stats</h1>
+    <div style="width:50px;height:3px;background:var(--red);{$theme==='p5'?'transform:skewX(-20deg);box-shadow:0 0 8px var(--red)':'border-radius:2px'};margin-top:8px"></div>
   </div>
 
   {#if !isOwnProfile()}
-  <div style="position:fixed;top:{$theme==='twilio'?'68px':'26px'};left:{$theme==='twilio'?'16px':'48px'};z-index:9999">
+  <div style="position:fixed;top:68px;left:16px;z-index:9999">
     <a href="/se-scorecard-v2" class="p5-back-btn">◀ Back</a>
   </div>
   {/if}
@@ -120,7 +112,10 @@
 
     {#if se.largest_deal_value > 0}
     <div style="background:rgba(var(--red-rgb),0.04);border:1px solid rgba(var(--red-rgb),0.15);border-left:4px solid var(--red);padding:14px 16px;margin-bottom:20px;{$theme==='twilio'?'border-radius:8px':''}">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text-muted);margin-bottom:8px">{$theme==='p5'?'◆ ':''}Largest Deal</div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text-muted)">{$theme==='p5'?'◆ ':''}Largest Deal</div>
+        {#if se.largest_deal_motion}<span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:700;border-radius:4px;background:{se.largest_deal_motion==='Activate'||se.largest_deal_motion==='New Business'?'rgba(var(--act-rgb),0.1)':'rgba(var(--exp-rgb),0.1)'};color:{se.largest_deal_motion==='Activate'||se.largest_deal_motion==='New Business'?'var(--act-color)':'var(--exp-color)'}">{se.largest_deal_motion}</span>{/if}
+      </div>
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
         <div style="font-size:14px;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{se.largest_deal}</div>
         <div style="font-size:16px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{$theme==='p5'?'var(--yellow)':'#B45309'};white-space:nowrap">{fmt(se.largest_deal_value)}</div>
@@ -225,6 +220,50 @@
             <td style="padding:8px 0 8px 8px;text-align:right;white-space:nowrap">
               <span style="color:{notesColor};font-weight:700">{notesOk ? '✓' : notesPartial ? '△' : '✗'}</span>
               {#if opp.note_entries > 0}<span style="color:var(--text-muted);margin-left:4px">{opp.note_entries}</span>{/if}
+            </td>
+          </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {/if}
+
+  <!-- Expansion / Strat account ARR + MRR impact -->
+  {#if se.exp_account_detail?.length}
+  <div class="p5-panel" style="padding:20px 24px;width:100%;margin-top:14px">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <div class="p5-badge" style="font-size:10px;background:rgba(var(--exp-rgb),0.12);color:var(--exp-color);border-color:rgba(var(--exp-rgb),0.3)">{expLabel} · Account Revenue Impact</div>
+      <div style="flex:1;height:1px;background:rgba(var(--exp-rgb),0.2)"></div>
+      <span style="font-size:11px;font-weight:700;color:var(--exp-color)">{se.exp_account_detail.length} account{se.exp_account_detail.length !== 1 ? 's' : ''}</span>
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead>
+          <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.12)">
+            <th style="text-align:left;padding:6px 8px 8px 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Account</th>
+            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">iACV</th>
+            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Current ARR</th>
+            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Avg MRR (3m)</th>
+            <th style="text-align:right;padding:6px 0 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">MRR Trend</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each se.exp_account_detail as acct, i}
+          {@const trendUp   = acct.mrr_delta > 0}
+          {@const trendDown = acct.mrr_delta < 0}
+          {@const trendColor = trendUp ? ($theme==='twilio'?'#178742':'#10B981') : trendDown ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}
+          <tr style="border-bottom:{i < se.exp_account_detail.length-1 ? '1px solid rgba(var(--red-rgb),0.06)' : 'none'}">
+            <td style="padding:8px 8px 8px 0;color:var(--text);font-weight:600;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={acct.acct_name}>{acct.acct_name || acct.opp_name}</td>
+            <td style="padding:8px;text-align:right;font-weight:700;color:{acct.icav > 0 ? 'var(--exp-color)' : 'var(--text-muted)'};white-space:nowrap">{acct.icav > 0 ? fmt(acct.icav) : '$0'}</td>
+            <td style="padding:8px;text-align:right;font-weight:700;color:{$theme==='twilio'?'#178742':'#10B981'};white-space:nowrap">{acct.arr > 0 ? fmt(acct.arr) : '—'}</td>
+            <td style="padding:8px;text-align:right;color:var(--text-muted);white-space:nowrap">{acct.mrr_3m > 0 ? fmt(acct.mrr_3m) : '—'}</td>
+            <td style="padding:8px 0 8px 8px;text-align:right;white-space:nowrap">
+              {#if acct.mrr_delta !== 0}
+              <span style="font-weight:700;color:{trendColor}">{trendUp ? '↑' : '↓'} {fmt(Math.abs(acct.mrr_delta))}/mo</span>
+              {:else}
+              <span style="color:var(--text-faint)">→ flat</span>
+              {/if}
             </td>
           </tr>
           {/each}

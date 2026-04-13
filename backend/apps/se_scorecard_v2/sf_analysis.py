@@ -54,6 +54,14 @@ def _icav(opp: dict) -> int:
         return 0
 
 
+def _acct_num(val) -> int:
+    """Safely parse an Account currency/number field (can be negative for deltas)."""
+    try:
+        return int(float(val or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _se_name(opp: dict) -> str:
     tl = opp.get("Technical_Lead__r") or {}
     return (tl.get("Name") or "").strip()
@@ -130,7 +138,7 @@ def _is_strategic(opp: dict) -> bool:
 # Build SE records from raw Salesforce opportunity records
 # ---------------------------------------------------------------------------
 
-def build_ses(opps: list, motion: str = "dsr") -> list:
+def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
     """
     opps   — list of Salesforce Closed Won Opportunity dicts (TW and non-TW)
     motion — 'dsr' (Activate/Expansion) or 'ae' (New Business/Strategic)
@@ -153,6 +161,7 @@ def build_ses(opps: list, motion: str = "dsr") -> list:
                 "non_tw_act_icavs": [], # non-TW activate wins
                 "non_tw_exp_icavs": [], # non-TW expansion wins
                 "all_opps":       [],
+                "exp_tw_opps":    [],  # ALL TW expansion wins (for account ARR/MRR aggregation)
             }
 
         icav  = _icav(opp)
@@ -167,6 +176,7 @@ def build_ses(opps: list, motion: str = "dsr") -> list:
                 by_se[name]["act_icavs"].append(icav)
             elif is_exp:
                 by_se[name]["exp_icavs"].append(icav)
+                by_se[name]["exp_tw_opps"].append(opp)
             else:
                 by_se[name]["act_icavs"].append(icav)  # fallback
         else:
@@ -228,8 +238,8 @@ def build_ses(opps: list, motion: str = "dsr") -> list:
         note_both_opps    = sum(1 for o in tw_opps if o.get("Sales_Engineer_Notes__c") and o.get("SE_Notes_History__c"))
         note_history_entries = sum(_history_entries(o.get("SE_Notes_History__c") or "") for o in tw_opps)
 
-        # Notes quality on all closed won opps in the query (already filtered by icav_min at SOQL level)
-        hv_opps           = list(d["all_opps"])
+        # Notes quality: only opps with positive iACV, at or above the notes floor
+        hv_opps           = [o for o in d["all_opps"] if _icav(o) >= max(notes_floor, 1)]
         note_hv_total     = len(hv_opps)
         note_hv_covered   = sum(1 for o in hv_opps if o.get("Sales_Engineer_Notes__c") and o.get("SE_Notes_History__c"))
         note_hv_entries   = sum(_history_entries(o.get("SE_Notes_History__c") or "") for o in hv_opps)
@@ -238,10 +248,41 @@ def build_ses(opps: list, motion: str = "dsr") -> list:
         # Largest deal
         all_icavs = [(o, _icav(o)) for o in d["all_opps"]]
         largest_opp, largest_val = max(all_icavs, key=lambda x: x[1]) if all_icavs else (None, 0)
-        largest_name = (largest_opp.get("Name") or "") if largest_opp else ""
-        largest_dsr  = ((largest_opp.get("Owner") or {}).get("Name") or "") if largest_opp else ""
+        largest_name   = (largest_opp.get("Name") or "") if largest_opp else ""
+        largest_dsr    = ((largest_opp.get("Owner") or {}).get("Name") or "") if largest_opp else ""
+        if largest_opp:
+            if motion == "ae":
+                largest_motion = "New Business" if _is_new_business(largest_opp) else ("Strategic" if _is_strategic(largest_opp) else "")
+            else:
+                largest_motion = "Activate" if _is_activate(largest_opp) else ("Expansion" if _is_expansion(largest_opp) else "")
+        else:
+            largest_motion = ""
 
         conc = round(largest_val / total_icav * 100) if total_icav > 0 and largest_val > 0 else 0
+
+        # Account ARR/MRR across ALL TW expansion opps
+        # Used for: aggregate totals in full report, per-account detail in My Stats
+        exp_tw_opps = d.get("exp_tw_opps", [])
+        exp_account_detail = []
+        for e_opp in exp_tw_opps:
+            acct = e_opp.get("Account") or {}
+            arr       = _acct_num(acct.get("Current_ARR_Based_on_Last_6_Months__c"))
+            mrr_3m    = _acct_num(acct.get("Average_Amortized_Usage_Last_3_Months__c"))
+            mrr_delta = _acct_num(acct.get("X3_month_vs_6_month_usage_delta__c"))
+            exp_account_detail.append({
+                "opp_name":   e_opp.get("Name") or "",
+                "acct_name":  acct.get("Name") or "",
+                "icav":       _icav(e_opp),
+                "arr":        arr,
+                "mrr_3m":     mrr_3m,
+                "mrr_delta":  mrr_delta,
+                "fast_growth": bool(acct.get("Fast_Revenue_Growth__c")),
+                "contraction": bool(acct.get("Significant_Revenue_Contraction__c")),
+            })
+        exp_account_detail.sort(key=lambda x: x["arr"], reverse=True)
+        exp_arr_total       = sum(a["arr"]       for a in exp_account_detail)
+        exp_mrr_3m_total    = sum(a["mrr_3m"]    for a in exp_account_detail)
+        exp_mrr_delta_total = sum(a["mrr_delta"] for a in exp_account_detail)
 
         se = {
             "name":              name,
@@ -273,10 +314,15 @@ def build_ses(opps: list, motion: str = "dsr") -> list:
             "email_exp_inq":       0,  # emails to Expansion opps closing this period
             "email_exp_outq":      0,  # emails to future Expansion opps (pipeline building)
             "email_exp_outq_icav": 0,  # iACV of those future Expansion opps
-            "largest_deal":      largest_name,
-            "largest_deal_value": largest_val,
-            "largest_deal_dsr":  largest_dsr,
-            "tw_opps_detail":    tw_opps_detail,
+            "largest_deal":        largest_name,
+            "largest_deal_value":  largest_val,
+            "largest_deal_dsr":    largest_dsr,
+            "largest_deal_motion": largest_motion,
+            "tw_opps_detail":      tw_opps_detail,
+            "exp_account_detail":  exp_account_detail,
+            "exp_arr_total":       exp_arr_total,
+            "exp_mrr_3m_total":    exp_mrr_3m_total,
+            "exp_mrr_delta_total": exp_mrr_delta_total,
         }
 
         se["total_icav"]       = total_icav
