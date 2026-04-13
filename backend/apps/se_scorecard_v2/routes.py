@@ -10,6 +10,7 @@ import json
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 from pathlib import Path
 
@@ -295,7 +296,7 @@ def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0
         entry["rank"]  = i
         entry["tier"]  = sf_analysis.tier(i, total)
         entry["flags"] = sf_analysis.collect_se_flags(se, ranked, motion)
-        entry["roast"] = sf_analysis._roast(se, ranked)
+        entry["roast"] = sf_analysis._roast(se, ranked, motion)
         payload.append(entry)
     p   = _cache_path(team_key, period_key, icav_min)
     tmp = p.with_suffix(".tmp")
@@ -346,16 +347,40 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
             return stale, None
         return None, "Salesforce is not configured."
 
-    try:
-        opps          = sf.query(_build_soql(soql_filter, info["start"], info["end"], icav_min))
-        win_rate_opps = sf.query(_build_win_rate_soql(soql_filter, info["start"], info["end"]))
-    except Exception as e:
-        log.exception("Salesforce query failed for team %s / %s", cache_key, period_key)
+    # Run all 4 queries in parallel — they are fully independent
+    core_exc: Exception | None = None
+    opps = win_rate_opps = pipe_opps = email_tasks = None
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"], icav_min))
+        f_win_rate = pool.submit(sf.query, _build_win_rate_soql(soql_filter, info["start"], info["end"]))
+        f_pipeline = pool.submit(sf.query, _build_pipeline_soql(soql_filter, info["end"]))
+        f_email    = pool.submit(sf.query, _build_email_soql(info["start"], info["end"], email_owner_filter))
+
+        try:
+            opps          = f_opps.result()
+            win_rate_opps = f_win_rate.result()
+        except Exception as e:
+            core_exc = e
+            log.exception("Salesforce query failed for team %s / %s", cache_key, period_key)
+
+        try:
+            pipe_opps = f_pipeline.result()
+        except Exception:
+            log.warning("Pipeline query for email motion failed — classifying closed-won opps only")
+            pipe_opps = []
+
+        try:
+            email_tasks = f_email.result()
+        except Exception:
+            log.warning("Email activity query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+
+    if core_exc is not None:
         stale = _load_cached(cache_key, period_key, icav_min)
         if stale:
             log.warning("Salesforce error — serving stale cache for %s/%s", cache_key, period_key)
             return stale, None
-        return None, f"Salesforce query failed: {e}"
+        return None, f"Salesforce query failed: {core_exc}"
 
     if not opps:
         return None, f"No closed won opportunities found for {display_label} in {info['label']}."
@@ -363,34 +388,30 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     ses = sf_analysis.build_ses(opps, team.get("motion", "dsr"))
     sf_analysis.merge_win_rate(ses, win_rate_opps)
 
-    # Email activity — best-effort; failures do not block the response
-    try:
-        opp_motion_map: dict[str, str] = {}
-        for opp in opps:
-            oid = opp.get("Id") or ""
-            if oid:
-                if sf_analysis._is_activate(opp):
-                    opp_motion_map[oid] = "activate"
-                elif sf_analysis._is_expansion(opp):
-                    opp_motion_map[oid] = "expansion"
-        try:
-            pipe_opps = sf.query(_build_pipeline_soql(soql_filter, info["end"]))
-            for opp in pipe_opps:
-                oid = opp.get("Id") or ""
-                if oid and oid not in opp_motion_map:
-                    if sf_analysis._is_activate(opp):
-                        opp_motion_map[oid] = "activate"
-                    elif sf_analysis._is_expansion(opp):
-                        opp_motion_map[oid] = "expansion"
-        except Exception:
-            log.warning("Pipeline query for email motion failed — classifying closed-won opps only")
+    # Build opp motion map from closed-won + pipeline opps, then merge email activity
+    opp_motion_map: dict[str, str] = {}
+    for opp in opps:
+        oid = opp.get("Id") or ""
+        if oid:
+            if sf_analysis._is_activate(opp):
+                opp_motion_map[oid] = "activate"
+            elif sf_analysis._is_expansion(opp):
+                opp_motion_map[oid] = "expansion"
+    for opp in (pipe_opps or []):
+        oid = opp.get("Id") or ""
+        if oid and oid not in opp_motion_map:
+            if sf_analysis._is_activate(opp):
+                opp_motion_map[oid] = "activate"
+            elif sf_analysis._is_expansion(opp):
+                opp_motion_map[oid] = "expansion"
 
-        email_tasks = sf.query(_build_email_soql(info["start"], info["end"], email_owner_filter))
-        sf_analysis.merge_email_activity(ses, email_tasks, info["end"], opp_motion_map)
-        log.info("Email activity: %d tasks, %d opp motion entries for %s/%s",
-                 len(email_tasks), len(opp_motion_map), cache_key, period_key)
-    except Exception:
-        log.warning("Email activity query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+    if email_tasks is not None:
+        try:
+            sf_analysis.merge_email_activity(ses, email_tasks, info["end"], opp_motion_map)
+            log.info("Email activity: %d tasks, %d opp motion entries for %s/%s",
+                     len(email_tasks), len(opp_motion_map), cache_key, period_key)
+        except Exception:
+            log.warning("Email activity merge failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
 
     ses    = [s for s in ses if s["act_wins"] + s["exp_wins"] > 0]
     if not ses:

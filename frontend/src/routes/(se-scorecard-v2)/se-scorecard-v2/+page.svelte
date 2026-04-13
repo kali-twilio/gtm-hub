@@ -11,6 +11,7 @@
   let periods: Period[] = $state([]);
   let summary: { total: number; team_icav: number; team_wins: number; team_label: string; quarter: string } | null = $state(null);
   let loading = $state(false);
+  let showLoading = $state(false);
   let error = $state('');
 
   let criteriaExpanded = $state(false);
@@ -19,6 +20,7 @@
     loading = true;
     error = '';
     summary = null;
+    const t = setTimeout(() => { if (loading) showLoading = true; }, 400);
     const sub = subteamKey !== 'none' ? `&subteam=${subteamKey}` : '';
     const r = await fetch(`/api/se-scorecard-v2/data/report?team=${teamKey}&period=${periodKey}${sub}`);
     if (r.ok) {
@@ -28,7 +30,9 @@
       const d = await r.json().catch(() => ({}));
       error = d.error || 'Failed to load data.';
     }
+    clearTimeout(t);
     loading = false;
+    showLoading = false;
   }
 
   function onTeamChange(e: Event) {
@@ -153,15 +157,16 @@
   {/if}
 
   <!-- Loading / error / summary -->
-  {#if loading}
+  {#if showLoading}
   <div class="w-full max-w-lg p5-panel" style="padding:32px;text-align:center;margin-bottom:16px">
     <div style="font-size:13px;color:var(--text-muted);font-weight:600;letter-spacing:0.05em">Pulling live Salesforce data…</div>
-    <div style="margin-top:14px;height:3px;background:rgba(var(--red-rgb),0.1);border-radius:99px;overflow:hidden">
-      <div style="height:100%;border-radius:99px;background:var(--red);animation:loadPulse 1.4s ease-in-out infinite"></div>
+    <div style="margin-top:14px;height:4px;background:rgba(var(--red-rgb),0.12);border-radius:99px;overflow:hidden">
+      <div style="height:100%;border-radius:99px;background:var(--red);animation:loadFill 10s linear forwards,shimmer 1.8s ease-in-out infinite"></div>
     </div>
   </div>
+  {/if}
 
-  {:else if error}
+  {#if error}
   <div class="w-full max-w-lg mb-4" style="background:rgba(var(--red-rgb),0.08);border:1px solid rgba(var(--red-rgb),0.3);border-left:4px solid var(--red);padding:14px 16px;font-size:13px;color:var(--red);font-weight:700">
     ⚠ {error}
   </div>
@@ -219,9 +224,18 @@
 </div>
 
 <style>
-@keyframes loadPulse {
-  0%   { width: 0%;    margin-left: 0% }
-  50%  { width: 60%;   margin-left: 20% }
-  100% { width: 0%;    margin-left: 100% }
+@keyframes loadFill {
+  0%   { width: 0%  }
+  12%  { width: 38% }
+  30%  { width: 58% }
+  52%  { width: 72% }
+  70%  { width: 80% }
+  85%  { width: 85% }
+  100% { width: 88% }
+}
+@keyframes shimmer {
+  0%   { filter: brightness(1)   }
+  50%  { filter: brightness(1.3) }
+  100% { filter: brightness(1)   }
 }
 </style>
