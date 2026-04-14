@@ -209,7 +209,7 @@ server {
     add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 
-    location ~ ^/(api|auth|oauth2callback|logout|simulate) {
+    location ~ ^/(api|auth|oauth2callback|logout) {
         proxy_pass         http://127.0.0.1:5000;
         proxy_set_header   Host \$host;
         proxy_set_header   X-Real-IP \$remote_addr;

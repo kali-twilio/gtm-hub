@@ -2,26 +2,35 @@
   import '../app.css';
   import { onMount } from 'svelte';
   import { user, hasData, authReady, theme } from '$lib/stores';
-  import { getMe } from '$lib/api';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import UserChip from '$lib/UserChip.svelte';
 
-  let { children } = $props();
+  let { children, data } = $props();
 
-  onMount(async () => {
-    const me = await getMe();
+  // Runs on every navigation (load function re-fetches /api/me each time).
+  // This is what makes /simulate work: after the redirect, the load function
+  // runs with the new session and $user updates here.
+  $effect(() => {
+    const me = data.me;
     if (me?.email) {
       user.set(me);
-      hasData.set(me.has_data);
-      const allowedForSE = ['/', '/me'];
-      if (me.is_se && !allowedForSE.includes($page.url.pathname)) {
-        goto('/me');
-      }
-    } else if ($page.url.pathname !== '/') {
-      goto('/');
+      hasData.set(me.has_data ?? false);
+    } else {
+      user.set(null);
     }
     authReady.set(true);
+  });
+
+  // Auth redirect — only on initial page load, not on every SPA nav
+  onMount(() => {
+    const me = data.me;
+    if (!me?.email && $page.url.pathname !== '/') {
+      goto('/');
+    } else if (me?.is_se) {
+      const allowedForSE = ['/', '/me'];
+      if (!allowedForSE.includes($page.url.pathname)) goto('/me');
+    }
   });
 
   $effect(() => {

@@ -1,28 +1,38 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { user, theme, sfTeam, sfPeriod } from '$lib/stores';
-  import { getSFSEs, fmt } from '$lib/api';
+  import { getSFSEs, getSFPeriods, fmt } from '$lib/api';
   import { tc, fc } from '$lib/colors';
 
+  interface Period { key: string; label: string; }
+
   let ses: any[] = $state([]);
+  let periods: Period[] = $state([]);
   let selected = $state('');
   let se: any = $state(null);
-  let periodLabel = $state('');
+  let loading = $state(false);
+  let showLoading = $state(false);
 
-  onMount(async () => {
-    const [data, periodsData] = await Promise.all([
-      getSFSEs($sfTeam, $sfPeriod),
-      fetch('/api/se-scorecard-v2/periods').then(r => r.ok ? r.json() : []),
-    ]);
+  async function loadData(periodKey: string) {
+    loading = true;
+    const t = setTimeout(() => { if (loading) showLoading = true; }, 400);
+    const data = await getSFSEs($sfTeam, periodKey);
+    clearTimeout(t);
+    loading = false;
+    showLoading = false;
     if (!data) return;
-    const found = periodsData.find((p: any) => p.key === $sfPeriod);
-    periodLabel = found ? found.label : $sfPeriod;
     ses = [...data].sort((a, b) => a.name.localeCompare(b.name));
-    if ($user?.sf_is_se && $user.sf_se_name) {
-      selected = $user.sf_se_name;
-      se = ses.find(s => s.name === selected) ?? null;
-    }
-  });
+    // Maintain selection across period switches; auto-select SE ICs on first load
+    const target = selected || ($user?.sf_is_se ? ($user.sf_se_name ?? '') : '');
+    const found = target ? ses.find(s => s.name === target) : null;
+    se = found ?? null;
+    if (found) selected = target;
+  }
+
+  function onPeriodChange(key: string) {
+    sfPeriod.set(key);
+    loadData(key);
+  }
 
   function onSelect(e: Event) {
     selected = (e.target as HTMLSelectElement).value;
@@ -30,15 +40,45 @@
   }
 
   const isOwnProfile = () => $user?.sf_is_se ?? false;
+
+  onMount(async () => {
+    periods = await getSFPeriods();
+    await loadData($sfPeriod);
+  });
 </script>
 
 <div class="w-full mx-auto px-4 py-8" style="max-width:min(100%,900px)">
 
-  <div style="margin-bottom:28px">
-    <div class="p5-badge" style="margin-bottom:8px">SE Scorecard V2 · {periodLabel}</div>
+  <div style="margin-bottom:20px">
+    <div class="p5-badge" style="margin-bottom:8px">SE Scorecard V2 · {periods.find(p => p.key === $sfPeriod)?.label ?? $sfPeriod}</div>
     <h1 style="font-size:32px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 var(--red)':''}">My Stats</h1>
     <div style="width:50px;height:3px;background:var(--red);{$theme==='p5'?'transform:skewX(-20deg);box-shadow:0 0 8px var(--red)':'border-radius:2px'};margin-top:8px"></div>
   </div>
+
+  <!-- Period selector -->
+  {#if periods.length > 0}
+  <div style="margin-bottom:20px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--text-muted);margin-bottom:8px">Period</div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px">
+      {#each periods as p}
+      <button
+        onclick={() => onPeriodChange(p.key)}
+        disabled={loading}
+        style="padding:6px 14px;font-size:12px;font-weight:700;border-radius:6px;border:1px solid {$sfPeriod === p.key ? 'var(--red)' : 'rgba(var(--red-rgb),0.2)'};background:{$sfPeriod === p.key ? 'rgba(var(--red-rgb),0.12)' : 'transparent'};color:{$sfPeriod === p.key ? 'var(--red)' : 'var(--text-muted)'};cursor:{loading ? 'default' : 'pointer'};opacity:{loading && $sfPeriod !== p.key ? '0.5' : '1'};transition:all 0.15s;letter-spacing:0.04em"
+      >{p.label}</button>
+      {/each}
+    </div>
+  </div>
+  {/if}
+
+  {#if showLoading}
+  <div style="margin-bottom:20px">
+    <div style="font-size:11px;color:var(--text-muted);font-weight:600;letter-spacing:0.06em;margin-bottom:8px">Loading period data…</div>
+    <div style="height:4px;background:rgba(var(--red-rgb),0.12);border-radius:99px;overflow:hidden">
+      <div style="height:100%;border-radius:99px;background:var(--red);animation:loadFill 10s linear forwards,shimmer 1.8s ease-in-out infinite"></div>
+    </div>
+  </div>
+  {/if}
 
   {#if !isOwnProfile()}
   <div style="position:fixed;top:68px;left:16px;z-index:9999">
@@ -61,6 +101,7 @@
   </div>
   {/if}
 
+  <div style="transition:opacity 0.2s;opacity:{loading ? 0.4 : 1}">
   {#if se}
   {@const isAE = se.team_motion === 'ae'}
   {@const actLabel = isAE ? 'New Business' : 'Activate'}
@@ -258,5 +299,23 @@
     ⚠ "{selected}" not found in report data.
   </div>
   {/if}
+  </div><!-- end opacity wrapper -->
 
 </div>
+
+<style>
+@keyframes loadFill {
+  0%   { width: 0%  }
+  12%  { width: 38% }
+  30%  { width: 58% }
+  52%  { width: 72% }
+  70%  { width: 80% }
+  85%  { width: 85% }
+  100% { width: 88% }
+}
+@keyframes shimmer {
+  0%   { filter: brightness(1)   }
+  50%  { filter: brightness(1.3) }
+  100% { filter: brightness(1)   }
+}
+</style>

@@ -1,8 +1,0 @@
-{
-  "id": "scorecard",
-  "name": "SE Scorecard",
-  "description": "Analytics for the Self Service SE team.",
-  "icon": "📊",
-  "path": "/scorecard",
-  "status": "live"
-}

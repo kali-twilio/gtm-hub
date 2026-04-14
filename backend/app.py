@@ -300,7 +300,12 @@ def simulate():
         return "Not available", 404
     email = request.args.get("email", "")
     if email:
+        session.clear()
         session["user_email"] = email
+        _enrich_session_from_sf(email)
+    # Send restricted SEs straight to their personal stats page
+    if session.get("sf_access") == "se_restricted":
+        return redirect(f"{_frontend_url}/se-scorecard-v2/me")
     return redirect(f"{_frontend_url}/")
 
 # ── Platform API ──────────────────────────────────────────────────────────────

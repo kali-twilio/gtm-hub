@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { user, sfTeam, sfPeriod, sfSubteam } from '$lib/stores';
+  import { user, sfTeam, sfPeriod, sfSubteam, authReady } from '$lib/stores';
   import { getSFPeriods, fmt } from '$lib/api';
+  import { goto } from '$app/navigation';
 
   interface Criterion { label: string; detail: string; }
   interface Team { key: string; label: string; description: string; criteria: Criterion[]; }
@@ -55,6 +56,11 @@
 
 
   const restricted = $derived($user?.sf_access === 'se_restricted');
+
+  // Auto-send SE ICs straight to their personal stats page
+  $effect(() => {
+    if ($authReady && restricted) goto('/se-scorecard-v2/me');
+  });
 
   onMount(async () => {
     const [teamsRes, periodsData] = await Promise.all([
