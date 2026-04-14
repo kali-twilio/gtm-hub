@@ -74,12 +74,6 @@
         <span class="t-val">{$user!.sf_manager}</span>
       </div>
       {/if}
-      {#if $user!.sf_phone}
-      <div class="t-row">
-        <span class="t-label">Phone</span>
-        <span class="t-val">{$user!.sf_phone}</span>
-      </div>
-      {/if}
     </div>
 
     <a href="/logout" class="t-signout">Sign out</a>
