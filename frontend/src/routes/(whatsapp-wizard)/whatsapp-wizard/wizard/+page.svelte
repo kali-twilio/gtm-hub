@@ -383,7 +383,7 @@
         </div>
         <div>
           <label style="display:block;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:rgba(13,18,43,0.5);margin-bottom:6px">Body *</label>
-          <textarea bind:value={templateBody} placeholder="Hello {{1}}, welcome to our service!" rows="4" style="width:100%;padding:10px 14px;border:1px solid rgba(13,18,43,0.15);border-radius:6px;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
+          <textarea bind:value={templateBody} placeholder={"Hello {{1}}, welcome to our service!"} rows="4" style="width:100%;padding:10px 14px;border:1px solid rgba(13,18,43,0.15);border-radius:6px;font-size:13px;resize:vertical;box-sizing:border-box"></textarea>
           <div style="font-size:11px;color:rgba(13,18,43,0.35);margin-top:4px">Use {`{{1}}`}, {`{{2}}`} etc. for variables · Max 1024 chars</div>
         </div>
         <button onclick={submitTemplate} disabled={saving || !templateName.trim() || !templateBody.trim()} style="padding:11px 24px;background:{templateSaved ? 'rgba(23,135,66,0.1)' : '#E8003D'};color:{templateSaved ? '#178742' : 'white'};font-weight:700;font-size:13px;border:none;border-radius:8px;cursor:pointer;opacity:{saving || !templateName.trim() || !templateBody.trim() ? 0.6 : 1}">
