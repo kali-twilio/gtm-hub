@@ -260,7 +260,6 @@
 
   const ICAV_PRESETS = [
     { label: 'All', value: 0 },
-    { label: '$10K+', value: 10_000 },
     { label: '$30K+', value: 30_000 },
     { label: '$50K+', value: 50_000 },
     { label: '$100K+', value: 100_000 },
@@ -276,10 +275,13 @@
     return view === 'all' ? (se.total_icav + se.non_tw_total_icav) : se.total_icav;
   }
 
+  let icavLoading = $state(false);
   async function loadWithMin(min: number) {
+    if (min === icavMin) return;
     icavMin = min;
-    data = null;
+    icavLoading = true;
     data = await getSFReport($sfTeam, $sfPeriod, min, $sfSubteam);
+    icavLoading = false;
   }
 
   onMount(async () => { data = await getSFReport($sfTeam, $sfPeriod, icavMin, $sfSubteam); });
@@ -361,8 +363,8 @@
       <div style="display:flex;gap:6px">
         {#each ICAV_PRESETS as p}
         <button onclick={() => loadWithMin(p.value)}
-          style="padding:5px 12px;font-size:12px;font-weight:700;border-radius:5px;border:1px solid {icavMin===p.value?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:{icavMin===p.value?'rgba(var(--red-rgb),0.1)':'transparent'};color:{icavMin===p.value?'var(--red)':'var(--text-muted)'};cursor:pointer"
-        >{p.label}</button>
+          style="padding:5px 12px;font-size:12px;font-weight:700;border-radius:5px;border:1px solid {icavMin===p.value?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:{icavMin===p.value?'rgba(var(--red-rgb),0.1)':'transparent'};color:{icavMin===p.value?'var(--red)':'var(--text-muted)'};cursor:pointer;opacity:{icavLoading&&icavMin===p.value?0.5:1};transition:opacity 0.15s"
+        >{icavLoading && icavMin === p.value ? '…' : p.label}</button>
         {/each}
       </div>
     </div>
