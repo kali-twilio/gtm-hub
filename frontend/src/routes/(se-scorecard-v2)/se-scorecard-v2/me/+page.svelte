@@ -99,7 +99,7 @@
       {#if showExp}
       {@const tm = se.team_medians ?? {}}
       <div style="background:rgba(var(--exp-rgb),0.08);border:1px solid rgba(var(--exp-rgb),0.2);border-left:4px solid var(--exp-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">{expLabel}{#if !isAE} · {se.exp_growing ? 'Growing' : 'Retaining'}{/if}</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">{expLabel}{#if !isAE} · {se.exp_status ?? (se.exp_growing ? 'Growing' : 'Retaining')}{/if}</div>
         <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-glow);line-height:1">{fmt(se.exp_icav)}</div>
         {#if tm.exp_icav}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{fmt(tm.exp_icav)}</div>{:else}<div style="margin-bottom:8px"></div>{/if}
         <div style="border-top:1px solid rgba(var(--exp-rgb),0.15);padding-top:8px">
@@ -207,7 +207,7 @@
             <th style="text-align:left;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">AE</th>
             <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">iACV</th>
             <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Acct ARR</th>
-            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">MRR Trend</th>
+            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Quarter MRR Δ</th>
             <th style="text-align:right;padding:6px 0 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Notes</th>
           </tr>
         </thead>
@@ -220,6 +220,7 @@
           {@const trendUp = acct?.mrr_delta > 0}
           {@const trendDown = acct?.mrr_delta < 0}
           {@const trendColor = trendUp ? ($theme==='twilio'?'#178742':'#10B981') : trendDown ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}
+          {@const mrrPct = acct?.mrr_pct ?? 0}
           <tr style="border-bottom:{i < expOpps.length-1 ? '1px solid rgba(var(--red-rgb),0.06)' : 'none'}">
             <td style="padding:8px 8px 8px 0;max-width:240px">
               <div style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={opp.name}>{opp.name}</div>
@@ -235,9 +236,9 @@
             <td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:top">
               {#if acct}
                 {#if acct.mrr_delta !== 0}
-                <span style="font-weight:700;color:{trendColor}">{trendUp ? '↑' : '↓'} {fmt(Math.abs(acct.mrr_delta))}/mo</span>
+                <span style="font-weight:700;color:{trendColor}">{trendUp ? '↑' : '↓'} {fmt(Math.abs(acct.mrr_delta))}/mo{#if mrrPct !== 0} <span style="font-size:10px;font-weight:600">({mrrPct > 0 ? '+' : ''}{mrrPct}%)</span>{/if}</span>
                 {:else}
-                <span style="color:var(--text-faint)">→ flat</span>
+                <span style="color:var(--text-faint)">→ flat{#if mrrPct === 0} (0%){/if}</span>
                 {/if}
               {:else}<span style="color:var(--text-faint)">—</span>{/if}
             </td>

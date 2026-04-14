@@ -49,7 +49,13 @@ TEAMS = {
         "description":      "Self Service SE team (DSR)",
         "motion":           "dsr",
         "soql_filter": (
-            "FY_16_Owner_Team__c LIKE 'DSR%'"
+            # Primary: FY_16_Owner_Team__c stamped as DSR (frozen at assignment — survives AE role changes).
+            # Fallback: owner's current UserRole contains DSR but FY_16 was never stamped correctly
+            #   (observed as null/'Not Found'/'Digital Sales Representative'/'Sales Operations').
+            #   Excludes Twilio.org roles to avoid org-specific opps.
+            "(FY_16_Owner_Team__c LIKE 'DSR%'"
+            " OR (Owner.UserRole.Name LIKE '%DSR%'"
+            " AND (NOT (Owner.UserRole.Name LIKE '%Twilio.org%'))))"
             " AND Technical_Lead__r.UserRole.Name = 'SE - Self Service'"
             " AND Technical_Lead__r.Title LIKE '%Engineer%'"
         ),
@@ -62,7 +68,7 @@ TEAMS = {
         "criteria": [
             {
                 "label":  "DSR Opportunity",
-                "detail": "FY_16_Owner_Team__c starts with 'DSR' — stamped at assignment, unchanged if SE leaves or changes role",
+                "detail": "FY_16_Owner_Team__c starts with 'DSR' (stamped at assignment) OR owner's current role contains 'DSR' (fallback for opps where FY_16 was never stamped). Excludes Twilio.org roles.",
             },
             {
                 "label":  "SE Tagged",
@@ -231,7 +237,22 @@ def _build_soql(team_filter: str, start: str, end: str, icav_min: int = 0) -> st
         f"Account.Name, "
         f"Account.Current_ARR_Based_on_Last_6_Months__c, "
         f"Account.Average_Amortized_Usage_Last_3_Months__c, "
-        f"Account.X3_month_vs_6_month_usage_delta__c, "
+        # Monthly amortized usage snapshots — used to compute quarter-anchored MRR delta
+        f"Account.Total_Amortized_Twilio_Usage_This_Month__c, "
+        f"Account.Total_Amortized_Twilio_Usage_Last_Month__c, "
+        f"Account.Total_Amortized_Twilio_Usage_2_Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_3_Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_4_Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_5_Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_6_Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_7_Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_8_Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_9_Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_10Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_11Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_12Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_13Month_Ago__c, "
+        f"Account.Total_Amortized_Twilio_Usage_14Month_Ago__c, "
         f"Account.Fast_Revenue_Growth__c, "
         f"Account.Significant_Revenue_Contraction__c "
         f"FROM Opportunity "
@@ -280,6 +301,30 @@ def _build_email_soql(start: str, end: str, se_owner_filter: str) -> str:
         f"FROM Task "
         f"WHERE TaskSubtype = 'Email' "
         f"AND What.Type = 'Opportunity' "
+        f"AND ActivityDate >= {start} "
+        f"AND ActivityDate <= {end} "
+        f"AND {se_owner_filter}"
+    )
+
+
+def _build_meeting_soql(start: str, end: str, se_owner_filter: str) -> str:
+    """Calendar events (meetings) logged by SEs during the period, linked to Opps.
+    Same classification logic as emails — opp owner role drives activate/expansion.
+
+    IsRecurrence = false excludes series master records — a recurring event creates
+    one master (IsRecurrence=true) plus N child occurrences (IsRecurrence=false,
+    RecurrenceActivityId=<master>). Without this filter the master would be
+    double-counted alongside its own occurrences.
+    RecurrenceActivityId is fetched so merge_meeting_activity can further
+    deduplicate: the same recurring series on the same opp counts once."""
+    return (
+        f"SELECT Id, WhatId, Owner.Name, ActivityDate, RecurrenceActivityId, "
+        f"TYPEOF What "
+        f"  WHEN Opportunity THEN CloseDate, StageName, Owner.UserRole.Name, {_ICAV_FIELD} "
+        f"END "
+        f"FROM Event "
+        f"WHERE What.Type = 'Opportunity' "
+        f"AND IsRecurrence = false "
         f"AND ActivityDate >= {start} "
         f"AND ActivityDate <= {end} "
         f"AND {se_owner_filter}"
@@ -366,15 +411,16 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
             return stale, None
         return None, "Salesforce is not configured."
 
-    # Run all 4 queries in parallel — they are fully independent
+    # Run all 5 queries in parallel — they are fully independent
     core_exc: Exception | None = None
-    opps = win_rate_opps = pipe_opps = email_tasks = None
+    opps = win_rate_opps = pipe_opps = email_tasks = meeting_events = None
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=5) as pool:
         f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"], icav_min))
         f_win_rate = pool.submit(sf.query, _build_win_rate_soql(soql_filter, info["start"], info["end"]))
         f_pipeline = pool.submit(sf.query, _build_pipeline_soql(soql_filter, info["end"]))
         f_email    = pool.submit(sf.query, _build_email_soql(info["start"], info["end"], email_owner_filter))
+        f_meetings = pool.submit(sf.query, _build_meeting_soql(info["start"], info["end"], email_owner_filter))
 
         try:
             opps          = f_opps.result()
@@ -394,6 +440,11 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
         except Exception:
             log.warning("Email activity query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
 
+        try:
+            meeting_events = f_meetings.result()
+        except Exception:
+            log.warning("Meeting activity query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+
     if core_exc is not None:
         stale = _load_cached(cache_key, period_key, icav_min)
         if stale:
@@ -405,7 +456,7 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
         return None, f"No closed won opportunities found for {display_label} in {info['label']}."
 
     ses = sf_analysis.build_ses(opps, team.get("motion", "dsr"), notes_floor=icav_min)
-    sf_analysis.merge_win_rate(ses, win_rate_opps)
+    sf_analysis.merge_win_rate(ses, win_rate_opps, team.get("motion", "dsr"))
 
     # Build opp motion map from closed-won + pipeline opps, then merge email activity
     opp_motion_map: dict[str, str] = {}
@@ -431,6 +482,14 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
                      len(email_tasks), len(opp_motion_map), cache_key, period_key)
         except Exception:
             log.warning("Email activity merge failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+
+    if meeting_events is not None:
+        try:
+            sf_analysis.merge_meeting_activity(ses, meeting_events, info["end"], opp_motion_map)
+            log.info("Meeting activity: %d events for %s/%s",
+                     len(meeting_events), cache_key, period_key)
+        except Exception:
+            log.warning("Meeting activity merge failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
 
     ses    = [s for s in ses if s["act_wins"] + s["exp_wins"] > 0]
     if not ses:
@@ -614,6 +673,7 @@ def api_report():
         "max_act_icav": max(s["act_icav"] for s in ses_list) or 1,
         "max_exp_icav": max(s["exp_icav"] for s in ses_list) or 1,
         "trends":       sorted(sf_analysis.collect_team_trends(ses_list), key=lambda x: x[0]),
+        "recommendations": sf_analysis.generate_recommendations(ses_list, team.get("motion", "dsr")),
         "exp_trend":    exp_trend,
         "quarter":      period["label"],
         "team_label":   team_label,

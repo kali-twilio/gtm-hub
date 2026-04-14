@@ -5,7 +5,69 @@ Owl scores (Salesforce hygiene %) still come from a CSV upload.
 """
 
 import statistics
+from datetime import date as _date
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Monthly amortized usage snapshots — index = months ago from today
+# Fields 2-9 have an underscore before "Month"; 10-14 do not (SF naming quirk).
+# ---------------------------------------------------------------------------
+
+_MONTHLY_USAGE_FIELDS: list[str] = [
+    "Total_Amortized_Twilio_Usage_This_Month__c",            # 0
+    "Total_Amortized_Twilio_Usage_Last_Month__c",            # 1
+    *[f"Total_Amortized_Twilio_Usage_{n}_Month_Ago__c" for n in range(2, 10)],   # 2-9
+    *[f"Total_Amortized_Twilio_Usage_{n}Month_Ago__c"  for n in range(10, 15)],  # 10-14
+]
+
+
+def _month_add(year: int, month: int, delta: int) -> tuple[int, int]:
+    """Offset (year, month) by delta months (positive or negative)."""
+    total = (year * 12 + month - 1) + delta
+    return total // 12, total % 12 + 1
+
+
+def _quarter_mrr_delta(acct: dict, close_date_str: str) -> tuple[int, int, int]:
+    """
+    Quarter-anchored MRR impact using monthly amortized usage snapshots.
+
+    Identifies the 3 calendar months of the opp's close quarter and the
+    3 months immediately before it, reads the corresponding snapshot fields
+    (relative to today's date), and returns:
+        (quarter_mrr_avg, pre_quarter_mrr_avg, delta)
+
+    Returns (0, 0, 0) if any required snapshot is beyond the 14-month
+    lookback window or is missing from the account record.
+    Falls back to the caller using the rolling 3mo average instead.
+    """
+    try:
+        close = _date.fromisoformat(close_date_str)
+    except (ValueError, TypeError):
+        return 0, 0, 0
+
+    today     = _date.today()
+    q_start   = ((close.month - 1) // 3) * 3 + 1          # first month of close quarter
+    q_months  = [_month_add(close.year, q_start, i)     for i in range(3)]
+    pre_months= [_month_add(close.year, q_start, i - 3) for i in range(3)]
+
+    def _get(year: int, month: int) -> int | None:
+        months_ago = (today.year - year) * 12 + (today.month - month)
+        if months_ago < 0 or months_ago >= len(_MONTHLY_USAGE_FIELDS):
+            return None
+        raw = acct.get(_MONTHLY_USAGE_FIELDS[months_ago])
+        if raw is None:
+            return None
+        return _acct_num(raw)
+
+    q_vals   = [_get(y, m) for y, m in q_months]
+    pre_vals = [_get(y, m) for y, m in pre_months]
+
+    if any(v is None for v in q_vals + pre_vals):
+        return 0, 0, 0
+
+    q_avg   = round(sum(q_vals) / 3)
+    pre_avg = round(sum(pre_vals) / 3)
+    return q_avg, pre_avg, q_avg - pre_avg
 
 # ---------------------------------------------------------------------------
 # Field config — derived from the Self Service SE Dashboard (01Z8Z000001XBAGUA4)
@@ -265,24 +327,77 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
         exp_tw_opps = d.get("exp_tw_opps", [])
         exp_account_detail = []
         for e_opp in exp_tw_opps:
-            acct = e_opp.get("Account") or {}
+            acct      = e_opp.get("Account") or {}
             arr       = _acct_num(acct.get("Current_ARR_Based_on_Last_6_Months__c"))
             mrr_3m    = _acct_num(acct.get("Average_Amortized_Usage_Last_3_Months__c"))
-            mrr_delta = _acct_num(acct.get("X3_month_vs_6_month_usage_delta__c"))
+
+            # Quarter-anchored MRR delta: avg usage in opp's quarter vs avg of 3 months prior.
+            # Falls back to rolling 3mo avg vs ARR/12 baseline if snapshots aren't available
+            # (e.g. data older than 14 months, or fields missing for this account).
+            q_avg, pre_avg, mrr_delta = _quarter_mrr_delta(acct, e_opp.get("CloseDate") or "")
+            if q_avg == 0 and mrr_delta == 0:
+                # Fallback: rolling 3-month avg vs 6-month ARR baseline
+                pre_avg   = round(arr / 12) if arr else 0
+                mrr_delta = mrr_3m - pre_avg
+                q_avg     = mrr_3m
+
+            mrr_pct = round((mrr_delta / pre_avg) * 100) if pre_avg > 0 else 0
             exp_account_detail.append({
-                "opp_name":   e_opp.get("Name") or "",
-                "acct_name":  acct.get("Name") or "",
-                "icav":       _icav(e_opp),
-                "arr":        arr,
-                "mrr_3m":     mrr_3m,
-                "mrr_delta":  mrr_delta,
+                "opp_name":        e_opp.get("Name") or "",
+                "acct_name":       acct.get("Name") or "",
+                "icav":            _icav(e_opp),
+                "arr":             arr,
+                "mrr_quarter_avg": q_avg,     # avg MRR during opp's close quarter
+                "mrr_pre_avg":     pre_avg,   # avg MRR in 3 months before the quarter
+                "mrr_delta":       mrr_delta, # quarter_avg - pre_avg
+                "mrr_pct":         mrr_pct,   # % change in monthly MRR vs pre-quarter
                 "fast_growth": bool(acct.get("Fast_Revenue_Growth__c")),
                 "contraction": bool(acct.get("Significant_Revenue_Contraction__c")),
             })
         exp_account_detail.sort(key=lambda x: x["arr"], reverse=True)
-        exp_arr_total       = sum(a["arr"]       for a in exp_account_detail)
-        exp_mrr_3m_total    = sum(a["mrr_3m"]    for a in exp_account_detail)
-        exp_mrr_delta_total = sum(a["mrr_delta"] for a in exp_account_detail)
+
+        # Deduplicate by account: ARR/MRR are account-level fields — count each account once.
+        # After sort-by-ARR the first occurrence of each account has the highest ARR entry.
+        _seen_accts: set[str] = set()
+        _deduped: list = []
+        for _a in exp_account_detail:
+            _key = _a["acct_name"] or _a["opp_name"]
+            if _key not in _seen_accts:
+                _seen_accts.add(_key)
+                _deduped.append(_a)
+        exp_account_detail  = _deduped  # replace with deduped list (affects My Stats too)
+
+        exp_arr_total         = sum(a["arr"]             for a in exp_account_detail)
+        exp_mrr_quarter_total = sum(a["mrr_quarter_avg"] for a in exp_account_detail)
+        exp_mrr_pre_total     = sum(a["mrr_pre_avg"]     for a in exp_account_detail)
+        exp_mrr_delta_total   = sum(a["mrr_delta"]       for a in exp_account_detail)
+        # Derive % from totals so it always matches the ↑/↓ direction of exp_mrr_delta_total.
+        # Averaging per-account percentages (unweighted) can flip the sign: a small account
+        # growing +33% can outweigh a large account dropping -13% in the average.
+        exp_mrr_pct_avg       = round(exp_mrr_delta_total / exp_mrr_pre_total * 100) if exp_mrr_pre_total > 0 else 0
+
+        # Expansion status — combines iACV and MRR signals across all expansion accounts.
+        #   Growing     — avg MRR % ≥ +5% with more growing accounts than contracting
+        #   Contracting — avg MRR % ≤ -5% with more contracting accounts than growing
+        #   Mixed       — accounts moving in both directions, net near zero
+        #   Expanding   — positive iACV committed but MRR flat or no snapshot data yet
+        #   Retaining   — $0 median, flat MRR (pure retention)
+        _has_mrr  = exp_arr_total > 0 and bool(exp_account_detail)
+        if _has_mrr:
+            _grow  = sum(1 for a in exp_account_detail if a["mrr_delta"] > 0)
+            _contr = sum(1 for a in exp_account_detail if a["mrr_delta"] < 0)
+            if exp_mrr_pct_avg >= 5 and _grow > _contr:
+                exp_status = "Growing"
+            elif exp_mrr_pct_avg <= -5 and _contr >= _grow:
+                exp_status = "Contracting"
+            elif _grow > 0 and _contr > 0:
+                exp_status = "Mixed"
+            elif exp_median > 0:
+                exp_status = "Expanding"
+            else:
+                exp_status = "Retaining"
+        else:
+            exp_status = "Expanding" if exp_median > 0 else "Retaining"
 
         se = {
             "name":              name,
@@ -314,15 +429,25 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
             "email_exp_inq":       0,  # emails to Expansion opps closing this period
             "email_exp_outq":      0,  # emails to future Expansion opps (pipeline building)
             "email_exp_outq_icav": 0,  # iACV of those future Expansion opps
+            # Meeting activity — populated by merge_meeting_activity()
+            "meeting_act_inq":       0,  # meetings on Activate opps closing this period
+            "meeting_act_outq":      0,  # meetings on future Activate opps (pipeline building)
+            "meeting_act_outq_icav": 0,  # iACV of those future Activate opps
+            "meeting_exp_inq":       0,  # meetings on Expansion opps closing this period
+            "meeting_exp_outq":      0,  # meetings on future Expansion opps (pipeline building)
+            "meeting_exp_outq_icav": 0,  # iACV of those future Expansion opps
             "largest_deal":        largest_name,
             "largest_deal_value":  largest_val,
             "largest_deal_dsr":    largest_dsr,
             "largest_deal_motion": largest_motion,
             "tw_opps_detail":      tw_opps_detail,
             "exp_account_detail":  exp_account_detail,
-            "exp_arr_total":       exp_arr_total,
-            "exp_mrr_3m_total":    exp_mrr_3m_total,
-            "exp_mrr_delta_total": exp_mrr_delta_total,
+            "exp_arr_total":          exp_arr_total,
+            "exp_mrr_quarter_total":  exp_mrr_quarter_total,  # sum of per-account quarter avg MRR
+            "exp_mrr_pre_total":      exp_mrr_pre_total,      # sum of per-account pre-quarter avg MRR
+            "exp_mrr_delta_total":    exp_mrr_delta_total,    # quarter_total - pre_total
+            "exp_mrr_pct_avg":        exp_mrr_pct_avg,        # avg % MRR change across accounts
+            "exp_status":             exp_status,             # Growing/Expanding/Mixed/Contracting/Retaining
         }
 
         se["total_icav"]       = total_icav
@@ -330,7 +455,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
         se["future_pct"]       = 0
         se["act_target_pct"]   = 0
         se["exp_target_pct"]   = 0
-        se["exp_growing"]      = exp_median > 0
+        se["exp_growing"]      = exp_status in ("Growing", "Expanding")
         se["conc"]             = conc
         # Non-TW closed won (supplemental)
         se["non_tw_act_wins"]  = non_tw_act_wins
@@ -352,14 +477,23 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
 # Win rate
 # ---------------------------------------------------------------------------
 
-def merge_win_rate(ses: list, win_rate_opps: list):
-    """Merge closed won/lost counts into SE records. Mutates ses in place."""
+def merge_win_rate(ses: list, win_rate_opps: list, motion: str = "dsr"):
+    """Merge closed won/lost counts into SE records for activate/NB opps only.
+    Expansion/Strategic opps are excluded — win rate is only meaningful for
+    net-new logos where the SE drives the outcome, not renewals."""
     lookup: dict[str, dict] = {}
     for opp in win_rate_opps:
         tl   = opp.get("Technical_Lead__r") or {}
         name = (tl.get("Name") or "").strip()
         if not name:
             continue
+        # Only count activate (DSR) or new business (AE) opps
+        if motion == "ae":
+            if not _is_new_business(opp):
+                continue
+        else:
+            if not _is_activate(opp):
+                continue
         if name not in lookup:
             lookup[name] = {"won": 0, "lost": 0}
         if opp.get("StageName") == "Closed Won":
@@ -475,24 +609,170 @@ def merge_email_activity(ses: list, email_tasks: list, period_end: str,
 
 
 # ---------------------------------------------------------------------------
-# Ranking (identical weights to se_analysis.py)
+# Meeting activity
+# ---------------------------------------------------------------------------
+
+def merge_meeting_activity(ses: list, meeting_events: list, period_end: str,
+                           opp_motion_map: dict):
+    """
+    Merge Event meeting counts into SE records. Mutates ses in place.
+    Identical classification logic to merge_email_activity — opp owner role
+    drives activate/expansion split.
+
+    Activate (opp owner role contains 'Activation'):
+      meeting_act_inq       – meetings on Activate opps closing this period
+      meeting_act_outq      – meetings on future Activate opps (pipeline building)
+      meeting_act_outq_icav – iACV of those future Activate opps
+
+    Expansion (opp owner role contains 'Expansion'):
+      meeting_exp_inq       – meetings on Expansion opps closing this period
+      meeting_exp_outq      – meetings on future Expansion opps (pipeline building)
+      meeting_exp_outq_icav – iACV of those future Expansion opps
+    """
+    from datetime import date as _date
+    p_end    = _date.fromisoformat(period_end)
+    icav_key = FIELD_CONFIG["icav_field"]
+
+    def _blank():
+        return {
+            "act_inq": 0, "act_outq": 0, "act_outq_opps": {},
+            "exp_inq": 0, "exp_outq": 0, "exp_outq_opps": {},
+        }
+
+    counts: dict[str, dict] = {}
+    # Deduplicate recurring series: same recurring series on same opp for same SE
+    # counts as one meeting. Without this, a weekly sync recurring 13x in the quarter
+    # inflates the count 13-fold. Key = (se_name, opp_id, recurrence_series_id).
+    seen_series: set = set()
+
+    for event in meeting_events:
+        owner = event.get("Owner") or {}
+        name  = (owner.get("Name") or "").strip()
+        if not name:
+            continue
+
+        what          = event.get("What") or {}
+        opp_id        = event.get("WhatId") or ""
+        recurrence_id = event.get("RecurrenceActivityId") or ""
+
+        # Skip duplicate occurrences of the same recurring series on the same opp
+        if recurrence_id:
+            series_key = (name, opp_id, recurrence_id)
+            if series_key in seen_series:
+                continue
+            seen_series.add(series_key)
+
+        if name not in counts:
+            counts[name] = _blank()
+        c = counts[name]
+
+        opp_role = ((what.get("Owner") or {}).get("UserRole") or {}).get("Name") or ""
+        if "Activation" in opp_role:
+            motion = "activate"
+        elif "Expansion" in opp_role:
+            motion = "expansion"
+        else:
+            continue  # not a DSR activate/expand opp
+
+        close_date_str = what.get("CloseDate") or ""
+        if not close_date_str:
+            continue
+        try:
+            close_date = _date.fromisoformat(close_date_str)
+        except ValueError:
+            continue
+
+        try:
+            icav = int(float(what.get(icav_key) or 0))
+        except (TypeError, ValueError):
+            icav = 0
+
+        if motion == "activate":
+            if close_date <= p_end:
+                c["act_inq"] += 1
+            else:
+                c["act_outq"] += 1
+                if opp_id:
+                    c["act_outq_opps"].setdefault(opp_id, icav)
+        else:  # expansion
+            if close_date <= p_end:
+                c["exp_inq"] += 1
+            else:
+                c["exp_outq"] += 1
+                if opp_id:
+                    c["exp_outq_opps"].setdefault(opp_id, icav)
+
+    for se in ses:
+        c = counts.get(se["name"], _blank())
+        se["meeting_act_inq"]       = c["act_inq"]
+        se["meeting_act_outq"]      = c["act_outq"]
+        se["meeting_act_outq_icav"] = sum(c["act_outq_opps"].values())
+        se["meeting_exp_inq"]       = c["exp_inq"]
+        se["meeting_exp_outq"]      = c["exp_outq"]
+        se["meeting_exp_outq_icav"] = sum(c["exp_outq_opps"].values())
+
+
+# ---------------------------------------------------------------------------
+# Ranking
 # ---------------------------------------------------------------------------
 
 def rank_ses(ses):
     """
-    Ranking criteria (lower rank_score = better):
+    Weighted composite score — each SE is percentile-ranked 0-100 per metric within
+    the team, then scores are combined with the following weights:
 
-    Lexicographic sort — each criterion is a strict tiebreaker for the one before it:
-      1. Total iACV        (highest iACV always ranks highest — no weighting can override)
-      2. Notes coverage    note_hv_covered / note_hv_total on high-value opps
-      3. Win count         act_wins + exp_wins — same iACV + same notes rate, more deals wins
+      85%  Total iACV          primary revenue output — dominant signal
+       8%  Quarter MRR %       avg % MRR growth across expansion accounts
+       5%  Total ARR touched   breadth of account footprint
+       2%  Notes hygiene       note_hv_covered / note_hv_total on high-value opps
+
+    Percentile ranking (0 = team worst, 100 = team best) makes the weights fair even
+    when the raw metrics are on very different scales (e.g. $M iACV vs % MRR change).
+    Ties within a metric receive the same percentile score.
     """
-    def sort_key(se):
-        notes_rate = se["note_hv_covered"] / max(se["note_hv_total"], 1)
-        wins = se["act_wins"] + se["exp_wins"]
-        return (-se["total_icav"], -notes_rate, -wins)
+    n = len(ses)
+    if n == 0:
+        return ses
 
-    ranked = sorted(ses, key=sort_key)
+    def _pct_rank(values: list) -> list:
+        """Map values to percentile scores 0-100. Ties share the same score."""
+        if n == 1:
+            return [100.0]
+        unique_sorted = sorted(set(values))
+        u = len(unique_sorted)
+        val_to_pct = {
+            v: (rank / (u - 1) * 100 if u > 1 else 100.0)
+            for rank, v in enumerate(unique_sorted)
+        }
+        return [val_to_pct[v] for v in values]
+
+    icav_scores  = _pct_rank([se["total_icav"]                                       for se in ses])
+    mrr_scores   = _pct_rank([se.get("exp_mrr_pct_avg", 0)                           for se in ses])
+    arr_scores   = _pct_rank([se.get("exp_arr_total", 0)                             for se in ses])
+    notes_scores = _pct_rank([se["note_hv_covered"] / max(se["note_hv_total"], 1)    for se in ses])
+
+    # SEs with zero expansion/strategic wins have no ARR or MRR data — those metrics
+    # don't apply to their motion. Give them a neutral 50 so they are neither penalised
+    # (scored 0, as if worst on the team) nor rewarded relative to SEs who do expansion.
+    for i, se in enumerate(ses):
+        if se.get("exp_wins", 0) == 0:
+            mrr_scores[i] = 50.0
+            arr_scores[i] = 50.0
+
+    for i, se in enumerate(ses):
+        se["score_icav"]  = round(icav_scores[i],  1)
+        se["score_mrr"]   = round(mrr_scores[i],   1)
+        se["score_arr"]   = round(arr_scores[i],   1)
+        se["score_notes"] = round(notes_scores[i], 1)
+        se["composite_score"] = round(
+            0.85 * icav_scores[i]  +
+            0.08 * mrr_scores[i]   +
+            0.05 * arr_scores[i]   +
+            0.02 * notes_scores[i],
+            1,
+        )
+
+    ranked = sorted(ses, key=lambda s: -s["composite_score"])
     for i, se in enumerate(ranked):
         se["rank_score"] = i + 1  # kept for tier() downstream
     return ranked
@@ -542,6 +822,10 @@ def collect_se_flags(se, ses, motion: str = "dsr"):
     )) if notes_ses else 0
     team_median_icav     = round(statistics.median([s["total_icav"] for s in ses]))
     team_pipe_max        = max(s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ses)
+    team_meet_max        = max(
+        s.get("meeting_act_inq", 0) + s.get("meeting_act_outq", 0) +
+        s.get("meeting_exp_inq", 0) + s.get("meeting_exp_outq", 0) for s in ses
+    )
 
     def _rel(val, med):
         """Return a short relative label vs a team median."""
@@ -646,6 +930,25 @@ def collect_se_flags(se, ses, motion: str = "dsr"):
         pipe_rel = _rel(total_pipe, team_median_pipe)
         if total_pipe > 0:
             flags.append(("PIPELINE", f"{total_pipe} pipeline emails ({pipe_rel}, team median {team_median_pipe})."))
+
+    # --- MEETINGS ---
+    total_meet     = (se.get("meeting_act_inq", 0) + se.get("meeting_act_outq", 0) +
+                      se.get("meeting_exp_inq", 0) + se.get("meeting_exp_outq", 0))
+    meet_inq       = se.get("meeting_act_inq", 0) + se.get("meeting_exp_inq", 0)
+    meet_pipe      = se.get("meeting_act_outq", 0) + se.get("meeting_exp_outq", 0)
+    team_median_meet = round(statistics.median(
+        [s.get("meeting_act_inq", 0) + s.get("meeting_act_outq", 0) +
+         s.get("meeting_exp_inq", 0) + s.get("meeting_exp_outq", 0) for s in ses]
+    ))
+
+    if team_meet_max > 0:
+        if total_meet == 0:
+            flags.append(("RISK", f"Zero meetings recorded. Team median: {team_median_meet}."))
+        elif total_meet == team_meet_max and len(ses) > 1:
+            flags.append(("STRENGTH", f"Most meetings on the team — {total_meet} ({meet_inq} in-Q, {meet_pipe} pipeline). Team median: {team_median_meet}."))
+        else:
+            meet_rel = _rel(total_meet, team_median_meet)
+            flags.append(("MEETINGS", f"{total_meet} meetings ({meet_inq} in-Q, {meet_pipe} pipeline) — {meet_rel} (team median {team_median_meet})."))
 
     # --- RISK: deal concentration ---
     if se["total_icav"] > 0 and se["largest_deal_value"] > se["total_icav"] * DEAL_CONCENTRATION_THRESHOLD:
@@ -755,6 +1058,21 @@ def collect_team_trends(ses):
         pipe_msg += f" {len(zero_email)} SE{'s' if len(zero_email) > 1 else ''} with zero email activity recorded."
     trends.append(("PIPELINE", pipe_msg))
 
+    # MEETINGS — calendar activity
+    def _meet_total(se):
+        return (se.get("meeting_act_inq", 0) + se.get("meeting_act_outq", 0) +
+                se.get("meeting_exp_inq", 0) + se.get("meeting_exp_outq", 0))
+    meet_ses       = [se for se in ses if _meet_total(se) > 0]
+    zero_meetings  = [se for se in ses if _meet_total(se) == 0]
+    total_meetings = sum(_meet_total(se) for se in ses)
+    total_meet_pipe = sum(se.get("meeting_act_outq", 0) + se.get("meeting_exp_outq", 0) for se in ses)
+    if total_meetings > 0:
+        meet_msg = (f"{len(meet_ses)} of {n} SEs have logged meetings — "
+                    f"{total_meetings} total ({total_meet_pipe} on pipeline opps).")
+        if zero_meetings:
+            meet_msg += f" {len(zero_meetings)} SE{'s' if len(zero_meetings) > 1 else ''} with zero meetings recorded."
+        trends.append(("MEETINGS", meet_msg))
+
     # RISK — revenue concentration + notes gap
     sorted_icav = sorted(ses, key=lambda x: x["total_icav"], reverse=True)
     top2_total  = sum(se["total_icav"] for se in sorted_icav[:2])
@@ -779,6 +1097,262 @@ def collect_team_trends(ses):
     trends.append(("RISK", risk_msg))
 
     return trends
+
+
+# ---------------------------------------------------------------------------
+# Recommendations
+# ---------------------------------------------------------------------------
+
+def generate_recommendations(ses: list, motion: str = "dsr") -> list:
+    """
+    Data-driven recommendations for the SE org leader.
+    Returns list of {"cat": str, "title": str, "body": str}.
+
+    Sources used (no email/note body text — all structural signals):
+      - Email and meeting inq/outq counts (where SEs spend activity time)
+      - tw_opps_detail per SE (opp-level note coverage, iACV, motion)
+      - Win rate, deal sizing (act_median, act_avg), concentration
+      - Expansion ARR/MRR signals, exp_status
+      - Composite ranking scores
+    """
+    recs = []
+    n = len(ses)
+    if n < 2:
+        return recs
+
+    act_lbl = "new business" if motion == "ae" else "activate"
+    exp_lbl = "strategic"    if motion == "ae" else "expansion"
+
+    # ── Aggregates ────────────────────────────────────────────────────────────
+    team_total_icav  = sum(s["total_icav"]  for s in ses)
+    team_act_icav    = sum(s["act_icav"]    for s in ses)
+    team_exp_icav    = sum(s["exp_icav"]    for s in ses)
+    team_act_wins    = sum(s["act_wins"]    for s in ses)
+    team_exp_wins    = sum(s["exp_wins"]    for s in ses)
+
+    total_emails_inq  = sum(s.get("email_act_inq",  0) + s.get("email_exp_inq",  0) for s in ses)
+    total_emails_outq = sum(s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ses)
+    total_meet_inq    = sum(s.get("meeting_act_inq",  0) + s.get("meeting_exp_inq",  0) for s in ses)
+    total_meet_outq   = sum(s.get("meeting_act_outq", 0) + s.get("meeting_exp_outq", 0) for s in ses)
+    total_pipe_icav   = sum(s.get("email_act_outq_icav", 0) + s.get("email_exp_outq_icav", 0) for s in ses)
+
+    # Aggregate all TW opp detail rows across every SE
+    all_opps = [o for s in ses for o in s.get("tw_opps_detail", [])]
+
+    # ── 1. Time allocation: in-Q vs pipeline ─────────────────────────────────
+    total_emails = total_emails_inq + total_emails_outq
+    total_meets  = total_meet_inq + total_meet_outq
+    if total_emails > 0:
+        inq_email_pct  = round(total_emails_inq  / total_emails * 100)
+        outq_email_pct = round(total_emails_outq / total_emails * 100)
+        inq_meet_pct   = round(total_meet_inq  / total_meets * 100) if total_meets > 0 else 0
+        outq_meet_pct  = round(total_meet_outq / total_meets * 100) if total_meets > 0 else 0
+        meet_str = (f" Meetings follow the same pattern: {inq_meet_pct}% in-Q, {outq_meet_pct}% pipeline."
+                    if total_meets > 0 else "")
+        if inq_email_pct >= 65:
+            recs.append({
+                "cat":   "PIPELINE",
+                "title": f"SE effort is {inq_email_pct}% in-quarter — next quarter is underfunded",
+                "body":  (
+                    f"{total_emails_inq} of {total_emails} emails target opps closing this period. "
+                    f"Only {total_emails_outq} emails build future pipeline"
+                    + (f" ({fmt(total_pipe_icav)} in tracked deals)" if total_pipe_icav else "") + "."
+                    + meet_str
+                    + " Recommend a team target of 40–50% outbound pipeline activity."
+                ),
+            })
+        elif outq_email_pct >= 55 and total_pipe_icav > team_total_icav * 0.5:
+            recs.append({
+                "cat":   "PIPELINE",
+                "title": f"Pipeline investment is healthy — {fmt(total_pipe_icav)} in future deals",
+                "body":  (
+                    f"{outq_email_pct}% of emails target future pipeline. "
+                    f"{fmt(total_pipe_icav)} tracked across next-quarter opportunities. "
+                    "Maintain this cadence to keep the next quarter loaded."
+                ),
+            })
+
+    # ── 2. Pipeline concentration ─────────────────────────────────────────────
+    if total_emails_outq > 0:
+        se_outq = sorted(ses, key=lambda s: s.get("email_act_outq", 0) + s.get("email_exp_outq", 0), reverse=True)
+        top1_outq = se_outq[0].get("email_act_outq", 0) + se_outq[0].get("email_exp_outq", 0)
+        top2_outq = top1_outq + (se_outq[1].get("email_act_outq", 0) + se_outq[1].get("email_exp_outq", 0) if n >= 2 else 0)
+        top2_pct  = round(top2_outq / total_emails_outq * 100)
+        zero_pipe = [s for s in ses if s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) == 0]
+        if top2_pct >= 70 and len(zero_pipe) >= 2:
+            recs.append({
+                "cat":   "COACHING",
+                "title": f"Pipeline building concentrated in {min(2,n-len(zero_pipe))} SE{'s' if min(2,n-len(zero_pipe))>1 else ''}",
+                "body":  (
+                    f"Top 2 SEs account for {top2_pct}% of all pipeline emails. "
+                    f"{len(zero_pipe)} SE{'s' if len(zero_pipe)>1 else ''} sent zero pipeline emails this period. "
+                    "If top builders miss next quarter, the team has no bench. "
+                    "Coach zero-pipeline SEs on prospecting cadence."
+                ),
+            })
+
+    # ── 3. Deal sizing — activate median below floor ──────────────────────────
+    act_ses = [s for s in ses if s["act_wins"] >= 2]
+    if act_ses:
+        act_medians = [s["act_median"] for s in act_ses if s["act_median"] > 0]
+        if act_medians:
+            team_act_med = round(statistics.median(act_medians))
+            below_floor  = [s for s in act_ses if s["act_median"] < ACT_AVG_SIZE_WARNING and s["act_wins"] >= 3]
+            whale_dep    = [s for s in act_ses if s["act_wins"] >= 4 and s["act_median"] > 0
+                            and s["act_avg"] / s["act_median"] >= 2.5]
+            if team_act_med < ACT_AVG_SIZE_WARNING:
+                recs.append({
+                    "cat":   "REVENUE",
+                    "title": f"Team {act_lbl} median {fmt(team_act_med)} is below the ${ACT_AVG_SIZE_WARNING//1000}K deal floor",
+                    "body":  (
+                        f"{len(below_floor)} SE{'s' if len(below_floor)>1 else ''} closing high volume under ${ACT_AVG_SIZE_WARNING//1000}K. "
+                        f"Shifting the median to ${ACT_AVG_SIZE_WARNING//1000}K+ would add "
+                        f"~{fmt(round((ACT_AVG_SIZE_WARNING - team_act_med) * team_act_wins))} in team iACV at the same win count. "
+                        "Focus coaching on deal qualification and minimum viable scope."
+                    ),
+                })
+            if whale_dep:
+                recs.append({
+                    "cat":   "REVENUE",
+                    "title": f"{len(whale_dep)} SE{'s' if len(whale_dep)>1 else ''} whale-dependent — avg vs median gap signals outlier quarters",
+                    "body":  (
+                        f"{'Their' if len(whale_dep)==1 else 'These SEs\''} quarters are propped up by one large deal. "
+                        "High avg/median ratio (≥2.5×) means a missed whale collapses the number. "
+                        "Encourage consistent mid-size deal flow alongside the large pursuits."
+                    ),
+                })
+
+    # ── 4. Expansion untapped — high ARR, flat MRR ───────────────────────────
+    exp_ses_with_arr = [s for s in ses if s.get("exp_arr_total", 0) > 0]
+    if exp_ses_with_arr:
+        contracting  = [s for s in exp_ses_with_arr if s.get("exp_status") == "Contracting"]
+        flat_big_arr = [s for s in exp_ses_with_arr
+                        if s.get("exp_status") in ("Retaining", "Expanding")
+                        and s.get("exp_arr_total", 0) > 200_000]
+        total_flat_arr = sum(s.get("exp_arr_total", 0) for s in flat_big_arr)
+        if flat_big_arr:
+            recs.append({
+                "cat":   "EXPANSION",
+                "title": f"{fmt(total_flat_arr)} ARR sitting flat — expansion opportunity for {len(flat_big_arr)} SE{'s' if len(flat_big_arr)>1 else ''}",
+                "body":  (
+                    f"{len(flat_big_arr)} SE{'s' if len(flat_big_arr)>1 else ''} {'have' if len(flat_big_arr)>1 else 'has'} "
+                    f"large ARR accounts showing flat or Retaining status. "
+                    "Accounts with $200K+ ARR and no MRR growth are candidates for new use-case expansion. "
+                    "Prioritise account mapping and QBRs with these customers."
+                ),
+            })
+        if contracting:
+            contr_arr = sum(s.get("exp_arr_total", 0) for s in contracting)
+            recs.append({
+                "cat":   "RISK",
+                "title": f"{len(contracting)} SE{'s' if len(contracting)>1 else ''} with contracting accounts — {fmt(contr_arr)} ARR at risk",
+                "body":  (
+                    f"{'These SEs touch' if len(contracting)>1 else 'This SE touches'} accounts "
+                    f"where quarter MRR dropped ≥5%. Contraction in expansion accounts compresses "
+                    "net revenue even when new logo wins look healthy. Investigate churn drivers."
+                ),
+            })
+
+    # ── 5. Notes → attribution gap ───────────────────────────────────────────
+    if all_opps:
+        hv_opps     = [o for o in all_opps if o["icav"] >= 50_000]
+        hv_covered  = sum(1 for o in hv_opps if o["has_notes"] and o["has_history"])
+        hv_total    = len(hv_opps)
+        hv_pct      = round(hv_covered / hv_total * 100) if hv_total else 0
+
+        # iACV breakdown by coverage
+        covered_icav   = sum(o["icav"] for o in hv_opps if o["has_notes"] and o["has_history"])
+        uncovered_icav = sum(o["icav"] for o in hv_opps if not (o["has_notes"] and o["has_history"]))
+
+        if hv_pct < 70 and uncovered_icav > 0:
+            recs.append({
+                "cat":   "HYGIENE",
+                "title": f"{100-hv_pct}% of high-value opps undocumented — {fmt(uncovered_icav)} iACV without SE notes",
+                "body":  (
+                    f"{hv_covered}/{hv_total} opps ≥$50K have both SE notes fields filled ({hv_pct}% coverage). "
+                    f"{fmt(uncovered_icav)} in closed wins has no SE attribution documented. "
+                    "Undocumented wins are invisible in attribution reports and harder to replicate. "
+                    "Set a team expectation: all opps ≥$50K require notes before quarter close."
+                ),
+            })
+
+        # Attention distribution: what share of total opp count drives the iACV?
+        if all_opps:
+            sorted_opps   = sorted(all_opps, key=lambda o: o["icav"], reverse=True)
+            top20_count   = max(1, round(len(sorted_opps) * 0.20))
+            top20_icav    = sum(o["icav"] for o in sorted_opps[:top20_count])
+            top20_pct_rev = round(top20_icav / team_total_icav * 100) if team_total_icav else 0
+            top20_noted   = sum(1 for o in sorted_opps[:top20_count] if o["has_notes"] and o["has_history"])
+            top20_noted_pct = round(top20_noted / top20_count * 100)
+            recs.append({
+                "cat":   "EFFICIENCY",
+                "title": f"Top 20% of opps ({top20_count} deals) drive {top20_pct_rev}% of team iACV",
+                "body":  (
+                    f"The {top20_count} highest-value closed wins represent {fmt(top20_icav)} of "
+                    f"{fmt(team_total_icav)} total iACV. "
+                    f"{top20_noted_pct}% of these high-impact deals have full SE notes. "
+                    + (f"The {top20_count - top20_noted} undocumented top-20% deals are the highest-leverage notes gap to close."
+                       if top20_noted < top20_count else
+                       "All top-20% deals are fully documented — strong discipline on the deals that matter most.")
+                ),
+            })
+
+    # ── 6. Win rate — qualification signal ───────────────────────────────────
+    wr_ses = [s for s in ses if (s.get("closed_won", 0) + s.get("closed_lost", 0)) >= 4]
+    if wr_ses:
+        wr_vals   = [s["win_rate"] for s in wr_ses]
+        team_wr   = round(statistics.mean(wr_vals))
+        low_wr    = [s for s in wr_ses if s["win_rate"] < 40]
+        high_wr   = [s for s in wr_ses if s["win_rate"] >= 75]
+        if low_wr:
+            recs.append({
+                "cat":   "COACHING",
+                "title": f"{len(low_wr)} SE{'s' if len(low_wr)>1 else ''} below 40% win rate — deal qualification gap",
+                "body":  (
+                    f"Team average win rate: {team_wr}%. "
+                    f"{len(low_wr)} SE{'s' if len(low_wr)>1 else ''} {'are' if len(low_wr)>1 else 'is'} closing fewer than 40% of contested deals. "
+                    "Low win rates at high volume burn SE capacity on deals they won't close. "
+                    "Review deal selection criteria: are SEs chasing unwinnable opps?"
+                ),
+            })
+        if high_wr and len(high_wr) < n // 2:
+            top_wr_se  = max(wr_ses, key=lambda s: s["win_rate"])
+            recs.append({
+                "cat":   "COACHING",
+                "title": f"Win rate gap: {top_wr_se['win_rate']}% top vs {min(wr_vals)}% bottom — spread insights",
+                "body":  (
+                    f"{len(high_wr)} SE{'s' if len(high_wr)>1 else ''} at ≥75% win rate vs {len(low_wr)} below 40%. "
+                    f"The delta suggests a discovery or qualification pattern difference. "
+                    "Pair high-win-rate SEs with lower performers for deal review sessions."
+                ),
+            })
+
+    # ── 7. Meeting investment vs email investment ─────────────────────────────
+    if total_emails > 0 and total_meets > 0:
+        meet_per_email = round(total_meets / total_emails, 2)
+        if meet_per_email < 0.2:
+            recs.append({
+                "cat":   "EFFICIENCY",
+                "title": "SE engagement is primarily email-based — meetings underutilised",
+                "body":  (
+                    f"{total_meets} meetings logged vs {total_emails} emails "
+                    f"({round(meet_per_email*100)}% meeting-to-email ratio). "
+                    "High-value expansion accounts typically close faster with live touchpoints. "
+                    "For $100K+ opps, target at least one recorded meeting per quarter close."
+                ),
+            })
+        elif meet_per_email > 1.5:
+            recs.append({
+                "cat":   "EFFICIENCY",
+                "title": "High meeting load relative to emails — check async engagement balance",
+                "body":  (
+                    f"{total_meets} meetings vs {total_emails} emails. "
+                    "Heavy meeting investment may be appropriate for enterprise deals, but "
+                    "ensure async email follow-up is happening to advance opps between calls."
+                ),
+            })
+
+    return recs
 
 
 # ---------------------------------------------------------------------------
