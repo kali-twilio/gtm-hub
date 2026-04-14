@@ -1,26 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { user } from '$lib/stores';
   import UserChip from '$lib/UserChip.svelte';
 
   let { children } = $props();
 
-  let userName = $state('');
-  let userEmail = $state('');
-
   const isActive = (path: string) => $page.url.pathname.startsWith(path);
-
-  onMount(async () => {
-    try {
-      const res = await fetch('/api/se_assist/me', { credentials: 'include' });
-      if (res.ok) {
-        const data = await res.json();
-        userName = data.name || '';
-        userEmail = data.email || '';
-      }
-    } catch {}
-  });
 </script>
 
 <div class="se-assist-shell">
@@ -62,17 +46,7 @@
       </div>
 
       <div class="se-assist-sidebar-bottom">
-        {#if userEmail}
-          <div class="se-assist-user-info">
-            <div class="se-assist-user-avatar">
-              {userName[0]?.toUpperCase() || userEmail[0]?.toUpperCase()}
-            </div>
-            <div class="se-assist-user-text">
-              <div class="se-assist-user-name">{userName || userEmail.split('@')[0]}</div>
-              <div class="se-assist-user-email">{userEmail}</div>
-            </div>
-          </div>
-        {/if}
+        <UserChip inline={true} dark={true} />
       </div>
     </div>
   </nav>
@@ -135,15 +109,6 @@
   .se-assist-nav-item.active { background: rgba(255,255,255,0.12); color: #fff; font-weight: 600; }
 
   .se-assist-sidebar-bottom { margin-top: auto; padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.1); }
-  .se-assist-user-info { display: flex; align-items: center; gap: 10px; }
-  .se-assist-user-avatar {
-    width: 32px; height: 32px; border-radius: 50%;
-    background: rgba(255,255,255,0.15); display: flex; align-items: center; justify-content: center;
-    font-size: 13px; font-weight: 600; color: #fff; flex-shrink: 0;
-  }
-  .se-assist-user-text { overflow: hidden; }
-  .se-assist-user-name { font-size: 13px; font-weight: 600; color: rgba(255,255,255,0.9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .se-assist-user-email { font-size: 11px; color: rgba(255,255,255,0.45); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
   .se-assist-main {
     flex: 1;

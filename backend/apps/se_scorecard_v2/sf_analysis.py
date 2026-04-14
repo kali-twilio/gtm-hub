@@ -1010,15 +1010,20 @@ def compute_team_medians(ses: list) -> dict:
     def med(lst):
         return round(statistics.median(lst)) if lst else 0
 
+    arr_ses = [s for s in ses if s.get("exp_arr_total", 0) > 0]
+    mrr_ses = [s for s in ses if s.get("exp_mrr_delta_total", 0) != 0]
+
     return {
-        "total_icav": med([s["total_icav"] for s in ses]),
-        "act_wins":   med([s["act_wins"]   for s in act_ses]),
-        "act_icav":   med([s["act_icav"]   for s in act_ses]),
-        "act_median": med([s["act_median"] for s in act_ses if s["act_median"] > 0]),
-        "exp_wins":   med([s["exp_wins"]   for s in exp_ses]),
-        "exp_icav":   med([s["exp_icav"]   for s in exp_ses]),
-        "exp_median": med([s["exp_median"] for s in exp_ses if s["exp_median"] > 0]),
-        "notes_pct":  round(statistics.median(
+        "total_icav":        med([s["total_icav"] for s in ses]),
+        "act_wins":          med([s["act_wins"]   for s in act_ses]),
+        "act_icav":          med([s["act_icav"]   for s in act_ses]),
+        "act_median":        med([s["act_median"] for s in act_ses if s["act_median"] > 0]),
+        "exp_wins":          med([s["exp_wins"]   for s in exp_ses]),
+        "exp_icav":          med([s["exp_icav"]   for s in exp_ses]),
+        "exp_median":        med([s["exp_median"] for s in exp_ses if s["exp_median"] > 0]),
+        "exp_arr_total":     med([s["exp_arr_total"]       for s in arr_ses]),
+        "exp_mrr_delta_total": med([s["exp_mrr_delta_total"] for s in mrr_ses]),
+        "notes_pct":         round(statistics.median(
             [s["note_hv_covered"] / s["note_hv_total"] * 100 for s in notes_ses]
         )) if notes_ses else 0,
     }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { user, theme, sfTeam, sfPeriod } from '$lib/stores';
+  import { user, theme, sfTeam, sfPeriod, sfSubteam } from '$lib/stores';
   import { getSFSEs, getSFPeriods, fmt } from '$lib/api';
   import { tc, fc } from '$lib/colors';
 
@@ -16,7 +16,7 @@
   async function loadData(periodKey: string) {
     loading = true;
     const t = setTimeout(() => { if (loading) showLoading = true; }, 400);
-    const data = await getSFSEs($sfTeam, periodKey);
+    const data = await getSFSEs($sfTeam, periodKey, 0, $sfSubteam);
     clearTimeout(t);
     loading = false;
     showLoading = false;
@@ -108,6 +108,11 @@
   {@const expLabel = isAE ? 'Strategic' : 'Expansion'}
   {@const showAct = se.act_wins > 0 || se.act_icav > 0}
   {@const showExp = se.exp_wins > 0 || se.exp_icav > 0}
+  {@const tm = se.team_medians ?? {}}
+  {@const mrrDelta = se.exp_mrr_delta_total ?? 0}
+  {@const mrrUp    = mrrDelta > 0}
+  {@const mrrDown  = mrrDelta < 0}
+  {@const mrrColor = mrrUp ? ($theme==='twilio'?'#178742':'#10B981') : mrrDown ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}
   <div class="p5-panel" style="padding:24px;width:100%">
 
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
@@ -122,9 +127,8 @@
 
     <div style="height:2px;background:linear-gradient(90deg,var(--red),transparent);{$theme==='p5'?'transform:skewX(-20deg);transform-origin:left':'border-radius:1px'};margin-bottom:20px"></div>
 
-    <div style="display:grid;grid-template-columns:{showAct && showExp ? '1fr 1fr' : '1fr'};gap:8px;margin-bottom:20px">
+    <div style="display:grid;grid-template-columns:{isAE && se.exp_arr_total > 0 ? 'repeat(4, 1fr)' : showAct && showExp ? '1fr 1fr' : '1fr'};gap:8px;margin-bottom:20px">
       {#if showAct}
-      {@const tm = se.team_medians ?? {}}
       <div style="background:rgba(var(--act-rgb),0.08);border:1px solid rgba(var(--act-rgb),0.2);border-left:4px solid var(--act-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--act-color);margin-bottom:8px">{actLabel}</div>
         <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--act-glow);line-height:1">{fmt(se.act_icav)}</div>
@@ -136,7 +140,6 @@
       </div>
       {/if}
       {#if showExp}
-      {@const tm = se.team_medians ?? {}}
       <div style="background:rgba(var(--exp-rgb),0.08);border:1px solid rgba(var(--exp-rgb),0.2);border-left:4px solid var(--exp-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">{expLabel}{#if !isAE} · {se.exp_status ?? (se.exp_growing ? 'Growing' : 'Retaining')}{/if}</div>
         <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-glow);line-height:1">{fmt(se.exp_icav)}</div>
@@ -144,6 +147,25 @@
         <div style="border-top:1px solid rgba(var(--exp-rgb),0.15);padding-top:8px">
           <div style="font-size:12px;color:var(--text-muted)">{se.exp_wins} wins · Med {fmt(se.exp_median)}</div>
           {#if tm.exp_wins != null}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px">{tm.exp_wins} wins · {fmt(tm.exp_median)}</div>{/if}
+        </div>
+      </div>
+      {/if}
+
+      {#if isAE && se.exp_arr_total > 0}
+      <div style="background:rgba(var(--exp-rgb),0.08);border:1px solid rgba(var(--exp-rgb),0.2);border-left:4px solid var(--exp-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">Acct ARR</div>
+        <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-glow);line-height:1">{fmt(se.exp_arr_total)}</div>
+        {#if tm.exp_arr_total}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{fmt(tm.exp_arr_total)}</div>{:else}<div style="margin-bottom:8px"></div>{/if}
+        <div style="border-top:1px solid rgba(var(--exp-rgb),0.15);padding-top:8px">
+          <div style="font-size:12px;color:var(--text-muted)">{se.exp_account_detail?.length ?? 0} accts · {fmt(se.exp_mrr_quarter_total ?? 0)}/mo avg</div>
+        </div>
+      </div>
+      <div style="background:rgba(var(--exp-rgb),0.08);border:1px solid rgba(var(--exp-rgb),0.2);border-left:4px solid var(--exp-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">Qtr MRR Δ</div>
+        <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{mrrColor};line-height:1">{mrrUp ? '+' : ''}{fmt(mrrDelta)}<span style="font-size:13px;font-weight:700;opacity:0.7">/mo</span></div>
+        {#if tm.exp_mrr_delta_total}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{tm.exp_mrr_delta_total > 0 ? '+' : ''}{fmt(tm.exp_mrr_delta_total)}/mo</div>{:else}<div style="margin-bottom:8px"></div>{/if}
+        <div style="border-top:1px solid rgba(var(--exp-rgb),0.15);padding-top:8px">
+          <div style="font-size:12px;color:var(--text-muted)">{se.exp_mrr_pct_avg > 0 ? '+' : ''}{se.exp_mrr_pct_avg}% vs prior qtr</div>
         </div>
       </div>
       {/if}

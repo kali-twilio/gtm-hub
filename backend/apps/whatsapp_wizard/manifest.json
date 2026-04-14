@@ -1,8 +1,0 @@
-{
-  "id": "whatsapp_wizard",
-  "name": "WhatsApp Wizard",
-  "description": "Step-by-step ISV onboarding for WhatsApp Business via Twilio.",
-  "icon": "💬",
-  "path": "/whatsapp-wizard",
-  "status": "live"
-}

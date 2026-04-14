@@ -206,10 +206,6 @@
       <div style="width:1px;height:18px;background:rgba(255,255,255,0.1)"></div>
       <span style="font-size:13px;font-weight:600;color:#94a3b8;letter-spacing:-0.01em">GTM Hub</span>
     </div>
-    <div style="display:flex;align-items:center;gap:16px">
-      <span style="font-size:12px;color:#475569">{$user.email}</span>
-      <a href="/logout" style="font-size:12px;font-weight:700;color:#F22F46;text-decoration:none;text-transform:uppercase;letter-spacing:0.08em">Sign out</a>
-    </div>
   </div>
 
   <!-- Page heading -->

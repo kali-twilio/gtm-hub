@@ -1,26 +1,22 @@
 <script lang="ts">
   import { user } from '$lib/stores';
-  import { page } from '$app/stores';
 
   // inline=true: renders in normal flow (for use inside a header)
   // inline=false: fixed top-right overlay (default, for root layout)
-  // sfProfile=false: show only Google email — for apps that don't use Salesforce
-  let { inline = false, sfProfile = true }: { inline?: boolean; sfProfile?: boolean } = $props();
+  // dark=true: chip styled for dark-background headers
+  let { inline = false, dark = false }: { inline?: boolean; dark?: boolean } = $props();
 
-  const displayName = $derived(sfProfile ? ($user?.sf_display_name ?? $user?.email) : $user?.email);
+  // Always prefer SF display name when available; fall back to Google email.
+  const displayName = $derived($user?.sf_display_name ?? $user?.email);
 
   let open = $state(false);
 
-  // Fixed chip: hide on launcher (/) and on routes that provide their own header
-  const visible = $derived(
-    $user?.email && (
-      inline ||
-      (
-        $page.url.pathname !== '/' &&
-        !$page.url.pathname.startsWith('/se-scorecard-v2') &&
-        !$page.url.pathname.startsWith('/whatsapp-wizard')
-      )
-    )
+  const visible = $derived(!!$user?.email);
+
+  // Show SF profile rows only when at least one SF field is populated.
+  const hasSfData = $derived(
+    !!($user?.sf_display_name || $user?.sf_title || $user?.sf_department ||
+       $user?.sf_division || $user?.sf_role_name || $user?.sf_manager)
   );
 </script>
 
@@ -28,6 +24,7 @@
 <div
   class="chip-wrap"
   class:fixed={!inline}
+  class:dark
   onmouseenter={() => open = true}
   onmouseleave={() => open = false}
   role="status"
@@ -43,14 +40,14 @@
     <div class="t-header">
       <div class="t-avatar">{(displayName ?? '?')[0].toUpperCase()}</div>
       <div>
-        {#if sfProfile && $user!.sf_display_name}
+        {#if $user!.sf_display_name}
         <div class="t-name">{$user!.sf_display_name}</div>
         {/if}
         <div class="t-email">{$user!.email}</div>
       </div>
     </div>
 
-    {#if sfProfile}
+    {#if hasSfData}
     <div class="t-rows">
       {#if $user!.sf_title}
       <div class="t-row">
@@ -106,6 +103,7 @@
   z-index: 500;
 }
 
+/* ── Light chip (default) ── */
 .chip {
   display: flex;
   align-items: center;
@@ -121,20 +119,6 @@
 .chip-wrap:hover .chip {
   border-color: rgba(242,47,70,0.4);
   box-shadow: 0 2px 8px rgba(13,18,43,0.12);
-}
-
-.avatar {
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  background: #F22F46;
-  color: white;
-  font-size: 11px;
-  font-weight: 800;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
 }
 
 .name {
@@ -157,15 +141,52 @@
   color: #F22F46;
 }
 
+/* ── Dark chip variant ── */
+.chip-wrap.dark .chip {
+  background: rgba(255,255,255,0.07);
+  border-color: rgba(255,255,255,0.1);
+  box-shadow: none;
+}
+.chip-wrap.dark:hover .chip {
+  background: rgba(255,255,255,0.11);
+  border-color: rgba(242,47,70,0.45);
+  box-shadow: none;
+}
+.chip-wrap.dark .name {
+  color: rgba(255,255,255,0.75);
+}
+.chip-wrap.dark .caret {
+  color: rgba(255,255,255,0.3);
+}
+.chip-wrap.dark:hover .caret {
+  color: #F22F46;
+}
+
+/* ── Avatar (same in both themes) ── */
+.avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #F22F46;
+  color: white;
+  font-size: 11px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+/* ── Tooltip (always light) ── */
 .tooltip {
   position: absolute;
-  top: calc(100% - 6px); /* sits within the padding-bottom zone — no gap to cross */
+  top: calc(100% - 6px);
   right: 0;
   width: 268px;
   background: white;
   border: 1px solid rgba(13,18,43,0.1);
   border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(13,18,43,0.12);
+  box-shadow: 0 8px 24px rgba(13,18,43,0.14);
   overflow: hidden;
   z-index: 1;
 }

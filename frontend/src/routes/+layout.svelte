@@ -6,6 +6,11 @@
   import { page } from '$app/stores';
   import UserChip from '$lib/UserChip.svelte';
 
+  // Dark-background pages where the chip should use the dark variant.
+  const darkChip = $derived($page.url.pathname === '/');
+  // Apps that embed their own user chip (e.g. sidebar-based layouts).
+  const hideChip = $derived($page.url.pathname.startsWith('/se-assist'));
+
   let { children, data } = $props();
 
   // Runs on every navigation (load function re-fetches /api/me each time).
@@ -38,5 +43,5 @@
   });
 </script>
 
-<UserChip />
+{#if !hideChip}<UserChip dark={darkChip} />{/if}
 {@render children()}
