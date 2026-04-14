@@ -1,59 +1,74 @@
 <script lang="ts">
   import { user } from '$lib/stores';
+  import { page } from '$app/stores';
+
   let open = $state(false);
+
+  // Hide on the launcher (app selector) page
+  const visible = $derived($user?.email && $page.url.pathname !== '/');
 </script>
 
-{#if $user?.email}
+{#if visible}
 <div class="chip-wrap"
   onmouseenter={() => open = true}
   onmouseleave={() => open = false}
   role="status"
 >
   <div class="chip">
-    <span class="avatar">{($user.sf_display_name ?? $user.email)[0].toUpperCase()}</span>
-    <span class="name">{$user.sf_display_name ?? $user.email}</span>
+    <span class="avatar">{($user!.sf_display_name ?? $user!.email)[0].toUpperCase()}</span>
+    <span class="name">{$user!.sf_display_name ?? $user!.email}</span>
     <span class="caret">▾</span>
   </div>
 
   {#if open}
   <div class="tooltip" role="tooltip">
-    <!-- Header -->
     <div class="t-header">
-      <div class="t-avatar">{($user.sf_display_name ?? $user.email)[0].toUpperCase()}</div>
+      <div class="t-avatar">{($user!.sf_display_name ?? $user!.email)[0].toUpperCase()}</div>
       <div>
-        {#if $user.sf_display_name}
-        <div class="t-name">{$user.sf_display_name}</div>
+        {#if $user!.sf_display_name}
+        <div class="t-name">{$user!.sf_display_name}</div>
         {/if}
-        <div class="t-email">{$user.email}</div>
+        <div class="t-email">{$user!.email}</div>
       </div>
     </div>
 
-    <!-- SF Profile rows -->
     <div class="t-rows">
-      {#if $user.sf_title}
+      {#if $user!.sf_title}
       <div class="t-row">
         <span class="t-label">Title</span>
-        <span class="t-val">{$user.sf_title}</span>
+        <span class="t-val">{$user!.sf_title}</span>
       </div>
       {/if}
-      {#if $user.sf_role_name}
+      {#if $user!.sf_department}
+      <div class="t-row">
+        <span class="t-label">Department</span>
+        <span class="t-val">{$user!.sf_department}</span>
+      </div>
+      {/if}
+      {#if $user!.sf_division}
+      <div class="t-row">
+        <span class="t-label">Division</span>
+        <span class="t-val">{$user!.sf_division}</span>
+      </div>
+      {/if}
+      {#if $user!.sf_role_name}
       <div class="t-row">
         <span class="t-label">Role</span>
-        <span class="t-val">{$user.sf_role_name}</span>
+        <span class="t-val">{$user!.sf_role_name}</span>
       </div>
       {/if}
-      {#if $user.sf_team}
+      {#if $user!.sf_manager}
       <div class="t-row">
-        <span class="t-label">Team</span>
-        <span class="t-val">{$user.sf_team}</span>
+        <span class="t-label">Manager</span>
+        <span class="t-val">{$user!.sf_manager}</span>
       </div>
       {/if}
+      {#if $user!.sf_phone}
       <div class="t-row">
-        <span class="t-label">Access</span>
-        <span class="t-val {$user.sf_access === 'se_restricted' ? 'restricted' : 'full'}">
-          {$user.sf_access === 'se_restricted' ? 'SE (restricted)' : 'Full'}
-        </span>
+        <span class="t-label">Phone</span>
+        <span class="t-val">{$user!.sf_phone}</span>
       </div>
+      {/if}
     </div>
 
     <a href="/logout" class="t-signout">Sign out</a>
@@ -122,12 +137,11 @@
   color: #F22F46;
 }
 
-/* Tooltip */
 .tooltip {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  width: 260px;
+  width: 268px;
   background: white;
   border: 1px solid rgba(13,18,43,0.1);
   border-radius: 10px;
@@ -173,7 +187,7 @@
 }
 
 .t-rows {
-  padding: 8px 0;
+  padding: 6px 0;
 }
 
 .t-row {
@@ -199,8 +213,6 @@
   color: rgba(13,18,43,0.7);
   text-align: right;
 }
-.t-val.full  { color: #0aab6b; }
-.t-val.restricted { color: #F22F46; }
 
 .t-signout {
   display: block;

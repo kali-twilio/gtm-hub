@@ -107,6 +107,10 @@ def _enrich_session_from_sf(email: str) -> None:
     session["sf_role_name"]    = role_name
     session["sf_display_name"] = sf_user.get("Name")
     session["sf_title"]        = sf_user.get("Title")
+    session["sf_department"]   = sf_user.get("Department")
+    session["sf_phone"]        = sf_user.get("MobilePhone") or sf_user.get("Phone")
+    session["sf_manager"]      = (sf_user.get("Manager") or {}).get("Name")
+    session["sf_division"]     = sf_user.get("Division")
     session["sf_user_id"]      = sf_user.get("Id")
     session["sf_team"]         = _sf_role_to_team(role_name) if access == "se_restricted" else None
     log.info("SF profile loaded for %s: role=%r access=%s", email, role_name, access)

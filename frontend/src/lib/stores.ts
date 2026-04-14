@@ -1,11 +1,15 @@
 import { writable } from 'svelte/store';
 
 export interface User {
-  email: string;
+  email:           string;
   sf_access:       'full' | 'se_restricted';
-  sf_role_name:    string | null;
   sf_display_name: string | null;
   sf_title:        string | null;
+  sf_role_name:    string | null;
+  sf_department:   string | null;
+  sf_phone:        string | null;
+  sf_manager:      string | null;
+  sf_division:     string | null;
   sf_is_se:        boolean;
   sf_se_name:      string | null;
   sf_team:         string | null;
