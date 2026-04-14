@@ -12,6 +12,7 @@ export interface User {
   sf_is_se:        boolean;
   sf_se_name:      string | null;
   sf_team:         string | null;
+  sf_subteam:      string | null;
 }
 
 export const user = writable<User | null>(null);

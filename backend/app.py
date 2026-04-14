@@ -92,6 +92,20 @@ def _sf_role_to_team(role_name: str) -> str | None:
     if "latam"        in r: return "latam"
     return None
 
+def _sf_role_to_subteam(role_name: str) -> str | None:
+    """Map an IC SE's UserRole to a scorecard subteam key using the TEAMS config."""
+    import re as _re
+    try:
+        from apps.se_scorecard_v2.routes import TEAMS
+        for team in TEAMS.values():
+            for subteam in team.get("subteams", []):
+                roles = _re.findall(r"'([^']+)'", subteam["soql_filter"])
+                if role_name in roles:
+                    return subteam["key"]
+    except Exception:
+        pass
+    return None
+
 def _enrich_session_from_sf(email: str) -> None:
     """
     Look up the Salesforce User by email and store profile/access info in the
@@ -112,7 +126,9 @@ def _enrich_session_from_sf(email: str) -> None:
     session["sf_division"]     = sf_user.get("Division")
     session["sf_user_id"]      = sf_user.get("Id")
     session["sf_team"]         = _sf_role_to_team(role_name) if access == "se_restricted" else None
-    log.info("SF profile loaded for %s: role=%r access=%s", email, role_name, access)
+    session["sf_subteam"]      = _sf_role_to_subteam(role_name) if access == "se_restricted" else None
+    log.info("SF profile loaded for %s: role=%r access=%s subteam=%s",
+             email, role_name, access, session["sf_subteam"])
 
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -207,14 +223,14 @@ def enforce_auth():
     # Role-based access control for individual SE contributors
     if session.get("sf_access") == "se_restricted":
         p = request.path
-        # Block the full report and power rankings entirely
-        if p in ("/api/se-scorecard-v2/data/report", "/api/se-scorecard-v2/data/rankings"):
+        allowed_team = session.get("sf_team")
+        # Power rankings are manager-only
+        if p == "/api/se-scorecard-v2/data/rankings":
             return jsonify({"error": "Access denied"}), 403
-        # Restrict SE data queries to their own team only
-        if p == "/api/se-scorecard-v2/data/ses":
-            allowed = session.get("sf_team")
+        # Report and SE list: allow only for the SE's own team
+        if p in ("/api/se-scorecard-v2/data/report", "/api/se-scorecard-v2/data/ses"):
             requested = request.args.get("team", "")
-            if allowed and requested and requested != allowed:
+            if allowed_team and requested and requested != allowed_team:
                 return jsonify({"error": "Access denied"}), 403
 
 @app.after_request

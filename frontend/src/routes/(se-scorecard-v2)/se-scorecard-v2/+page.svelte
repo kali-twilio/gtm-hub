@@ -63,11 +63,12 @@
     ]);
     teams = teamsRes;
     periods = periodsData;
-    // For restricted SEs, force their team and lock it
+    // For restricted SEs, force their team and subteam from their SF role
     if (restricted && $user?.sf_team) {
       sfTeam.set($user.sf_team);
+      if ($user.sf_subteam) sfSubteam.set($user.sf_subteam);
     }
-    loadSummary($sfTeam, $sfPeriod);
+    loadSummary($sfTeam, $sfPeriod, $sfSubteam);
   });
 </script>
 

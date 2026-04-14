@@ -555,6 +555,7 @@ def enrich_me(email: str) -> dict:
         "sf_department":   session.get("sf_department"),
         "sf_manager":      session.get("sf_manager"),
         "sf_division":     session.get("sf_division"),
+        "sf_subteam":      session.get("sf_subteam"),
     }
 
     # Check cached team data to identify if this user is an SE (for My Stats page)
