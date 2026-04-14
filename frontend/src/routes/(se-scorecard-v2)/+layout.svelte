@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { theme } from '$lib/stores';
+  import UserChip from '$lib/UserChip.svelte';
 
   let { children } = $props();
 
@@ -29,8 +30,10 @@
     </a>
     <div style="width:1px;height:22px;background:rgba(13,18,43,0.12)"></div>
     <span style="font-size:13px;color:rgba(13,18,43,0.45);font-weight:600;letter-spacing:-0.01em">SE Scorecard V2</span>
-    <div style="width:1px;height:22px;background:rgba(13,18,43,0.12)"></div>
+  </div>
+  <div style="display:flex;align-items:center;gap:12px">
     <button onclick={() => theme.toggle()} style="background:rgba(242,47,70,0.07);border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;color:#F22F46;cursor:pointer;display:flex;align-items:center;gap:5px;letter-spacing:0.03em;text-transform:uppercase"><span>🎉</span> Fun Mode</button>
+    <UserChip inline={true} />
   </div>
 </div>
 {/if}

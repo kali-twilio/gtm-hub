@@ -2,14 +2,25 @@
   import { user } from '$lib/stores';
   import { page } from '$app/stores';
 
+  // inline=true: renders in normal flow (for use inside a header)
+  // inline=false: fixed top-right overlay (default, for root layout)
+  let { inline = false }: { inline?: boolean } = $props();
+
   let open = $state(false);
 
-  // Hide on the launcher (app selector) page
-  const visible = $derived($user?.email && $page.url.pathname !== '/');
+  // Fixed chip: hide on launcher (/) and on se-scorecard-v2 (has its own inline chip)
+  const visible = $derived(
+    $user?.email && (
+      inline ||
+      ($page.url.pathname !== '/' && !$page.url.pathname.startsWith('/se-scorecard-v2'))
+    )
+  );
 </script>
 
 {#if visible}
-<div class="chip-wrap"
+<div
+  class="chip-wrap"
+  class:fixed={!inline}
   onmouseenter={() => open = true}
   onmouseleave={() => open = false}
   role="status"
@@ -79,11 +90,17 @@
 
 <style>
 .chip-wrap {
+  position: relative;
+  display: inline-block;
+  user-select: none;
+  /* padding-bottom bridges the visual gap so mouseleave doesn't fire mid-travel */
+  padding-bottom: 8px;
+}
+.chip-wrap.fixed {
   position: fixed;
   top: 12px;
   right: 16px;
   z-index: 500;
-  user-select: none;
 }
 
 .chip {
@@ -139,7 +156,7 @@
 
 .tooltip {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% - 6px); /* sits within the padding-bottom zone — no gap to cross */
   right: 0;
   width: 268px;
   background: white;
@@ -147,6 +164,7 @@
   border-radius: 10px;
   box-shadow: 0 8px 24px rgba(13,18,43,0.12);
   overflow: hidden;
+  z-index: 1;
 }
 
 .t-header {
