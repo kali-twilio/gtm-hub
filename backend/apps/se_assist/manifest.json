@@ -1,8 +1,0 @@
-{
-  "id": "se-assist",
-  "name": "SE Assist",
-  "description": "AI-powered Gong call analysis for SFDC opportunity updates.",
-  "icon": "🎯",
-  "path": "/se-assist",
-  "status": "live"
-}

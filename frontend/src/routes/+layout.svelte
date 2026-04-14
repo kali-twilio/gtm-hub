@@ -8,8 +8,6 @@
 
   // Dark-background pages where the chip should use the dark variant.
   const darkChip = $derived($page.url.pathname === '/');
-  // Apps that embed their own user chip (e.g. sidebar-based layouts).
-  const hideChip = $derived($page.url.pathname.startsWith('/se-assist'));
 
   let { children, data } = $props();
 
@@ -43,5 +41,5 @@
   });
 </script>
 
-{#if !hideChip}<UserChip dark={darkChip} />{/if}
+<UserChip dark={darkChip} />
 {@render children()}
