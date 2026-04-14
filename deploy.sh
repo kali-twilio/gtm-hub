@@ -80,8 +80,10 @@ echo ""
 echo "Uploading files to S3..."
 tar -czf /tmp/backend.tar.gz  -C backend .
 tar -czf /tmp/frontend.tar.gz -C frontend/build .
-aws s3 cp /tmp/backend.tar.gz  s3://$BUCKET/backend.tar.gz  --profile "$PROFILE" --region "$REGION" --tagging "owner=kali"
-aws s3 cp /tmp/frontend.tar.gz s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION" --tagging "owner=kali"
+aws s3 cp /tmp/backend.tar.gz  s3://$BUCKET/backend.tar.gz  --profile "$PROFILE" --region "$REGION"
+aws s3 cp /tmp/frontend.tar.gz s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION"
+aws s3api put-object-tagging --bucket "$BUCKET" --key backend.tar.gz  --tagging 'TagSet=[{Key=owner,Value=kali}]' --profile "$PROFILE" --region "$REGION"
+aws s3api put-object-tagging --bucket "$BUCKET" --key frontend.tar.gz --tagging 'TagSet=[{Key=owner,Value=kali}]' --profile "$PROFILE" --region "$REGION"
 rm /tmp/backend.tar.gz /tmp/frontend.tar.gz
 
 # Write secrets to a temp file, upload to S3, then delete locally
@@ -99,7 +101,8 @@ SALESFORCE_ACCESS_TOKEN=${SALESFORCE_ACCESS_TOKEN:-}
 SECRETS
 aws s3 cp "$SECRETS_FILE" s3://$BUCKET/secrets.env \
   --profile "$PROFILE" --region "$REGION" \
-  --sse aws:kms --tagging "owner=kali"
+  --sse aws:kms
+aws s3api put-object-tagging --bucket "$BUCKET" --key secrets.env --tagging 'TagSet=[{Key=owner,Value=kali}]' --profile "$PROFILE" --region "$REGION"
 rm -f "$SECRETS_FILE"
 
 echo "Upload complete."
