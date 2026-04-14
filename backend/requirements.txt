@@ -3,3 +3,9 @@ gunicorn>=21.0.0
 google-auth>=2.0.0
 google-auth-oauthlib>=1.0.0
 requests>=2.20.0
+
+# SE Assist dependencies
+sqlalchemy>=2.0.36
+anthropic>=0.42.0
+beautifulsoup4>=4.12.3
+lxml>=5.3.0
