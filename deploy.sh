@@ -19,7 +19,7 @@ fi
 source deploy.env
 
 # Validate required vars
-for var in PROFILE REGION BUCKET SG_ID TAG_NAME EIP_ALLOC DOMAIN CERTBOT_EMAIL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL SALESFORCE_INSTANCE_URL SALESFORCE_CLIENT_ID SALESFORCE_CLIENT_SECRET SALESFORCE_REFRESH_TOKEN; do
+for var in PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN CERTBOT_EMAIL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL SALESFORCE_INSTANCE_URL SALESFORCE_CLIENT_ID SALESFORCE_CLIENT_SECRET SALESFORCE_REFRESH_TOKEN; do
   if [ -z "${!var}" ]; then
     echo "ERROR: $var is not set in deploy.env"
     exit 1
@@ -330,7 +330,7 @@ INSTANCE_ID=$(aws ec2 run-instances \
   --image-id "$AMI_ID" \
   --instance-type t3.micro \
   --security-group-ids "$SG_ID" \
-  --key-name se-scorecard-key \
+  --key-name "$KEY_NAME" \
   --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_NAME},{Key=owner,Value=kali}]" "ResourceType=volume,Tags=[{Key=owner,Value=kali}]" \
   --metadata-options HttpTokens=required,HttpEndpoint=enabled \
   --user-data "file://$USERDATA_FILE" \
