@@ -2,7 +2,7 @@
 
 Internal platform for Twilio Sales tools. Sign in with your `@twilio.com` Google account.
 
-**Live at:** https://gtm-hub.duckdns.org
+**Live at:** https://d2nm4d5qi0glko.cloudfront.net
 
 ---
 

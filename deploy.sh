@@ -1,7 +1,10 @@
 #!/bin/bash
-# Full deploy script for SE Scorecard
+# Full deploy script for GTM Hub
 # Usage: bash deploy.sh
 # Terminates any existing instance, uploads latest code, and launches a fresh one.
+#
+# HTTPS: Terminated by CloudFront (distribution kali-gtm-hub-cf / EHJS9BMWR6QG1).
+#        EC2 serves HTTP only on port 80 — no certs needed on the instance.
 #
 # SECURITY: Secrets are never interpolated into EC2 user-data.
 # They are uploaded to a private S3 object and fetched via a short-lived
@@ -19,7 +22,7 @@ fi
 source deploy.env
 
 # Validate required vars
-for var in PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN CERTBOT_EMAIL GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL SALESFORCE_INSTANCE_URL SALESFORCE_CLIENT_ID SALESFORCE_CLIENT_SECRET SALESFORCE_REFRESH_TOKEN; do
+for var in PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL SALESFORCE_INSTANCE_URL SALESFORCE_CLIENT_ID SALESFORCE_CLIENT_SECRET SALESFORCE_REFRESH_TOKEN; do
   if [ -z "${!var}" ]; then
     echo "ERROR: $var is not set in deploy.env"
     exit 1
@@ -112,18 +115,6 @@ BACKEND_URL_S3=$(aws s3 presign  s3://$BUCKET/backend.tar.gz   --profile "$PROFI
 FRONTEND_URL_S3=$(aws s3 presign s3://$BUCKET/frontend.tar.gz  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 SECRETS_URL_S3=$(aws s3 presign  s3://$BUCKET/secrets.env      --profile "$PROFILE" --region "$REGION" --expires-in $SECRETS_EXPIRES)
 
-# Cert: presign GET (restore existing) and PUT (save new) — reuse across deploys
-if aws s3 ls "s3://$BUCKET/letsencrypt.tar.gz" --profile "$PROFILE" --region "$REGION" > /dev/null 2>&1; then
-  CERT_URL_S3=$(aws s3 presign "s3://$BUCKET/letsencrypt.tar.gz" --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-  echo "Existing cert found in S3 — will attempt restore on boot."
-else
-  CERT_URL_S3=""
-  echo "No cert in S3 — will request fresh cert on boot."
-fi
-CERT_PUT_URL_S3=$(aws s3api generate-presigned-url \
-  --profile "$PROFILE" --region "$REGION" \
-  --bucket "$BUCKET" --key "letsencrypt.tar.gz" \
-  --http-method PUT --expires-in $EXPIRES 2>/dev/null || echo "")
 
 # ── 4. Build boot script (NO secret values — only a short-lived URL) ─────────
 USERDATA_FILE=$(mktemp /tmp/userdata.XXXXXX.sh)
@@ -135,8 +126,7 @@ set -ex
 # Let AL2023 startup processes (dnf makecache etc.) settle
 sleep 20
 
-yum install -y python3 python3-pip nginx augeas-libs
-pip3 install certbot certbot-nginx
+yum install -y python3 python3-pip nginx
 
 mkdir -p /app/outputs /var/www/scorecard
 cd /app
@@ -207,24 +197,10 @@ http {
 }
 NGINXCONF
 
-# ── Self-signed cert (fallback if certbot fails) ─────────────────────────────
-openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-  -keyout /etc/nginx/selfsigned.key \
-  -out /etc/nginx/selfsigned.crt \
-  -subj "/CN=${DOMAIN}" \
-  -addext "subjectAltName=DNS:${DOMAIN}"
-
-cat > /etc/nginx/conf.d/app.conf << EOF
+cat > /etc/nginx/conf.d/app.conf << 'EOF'
 server {
     listen 80;
-    server_name ${DOMAIN};
-    return 301 https://\\\$host\\\$request_uri;
-}
-server {
-    listen 443 ssl;
-    server_name ${DOMAIN};
-    ssl_certificate     /etc/nginx/selfsigned.crt;
-    ssl_certificate_key /etc/nginx/selfsigned.key;
+    server_name _;
     client_max_body_size 10M;
 
     add_header X-Content-Type-Options "nosniff" always;
@@ -235,15 +211,15 @@ server {
 
     location ~ ^/(api|auth|oauth2callback|logout|simulate) {
         proxy_pass         http://127.0.0.1:5000;
-        proxy_set_header   Host \\\$host;
-        proxy_set_header   X-Real-IP \\\$remote_addr;
-        proxy_set_header   X-Forwarded-Proto \\\$scheme;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-Proto https;
         proxy_read_timeout 120s;
     }
 
     location / {
         root /var/www/scorecard;
-        try_files \\\$uri \\\$uri.html \\\$uri/ =404;
+        try_files $uri $uri.html $uri/ =404;
     }
 }
 EOF
@@ -256,66 +232,6 @@ systemctl start app nginx
 # ── Debug log: keep gunicorn journal in nginx webroot for remote inspection ──
 echo '* * * * * root journalctl -u app --no-pager -n 300 > /var/www/scorecard/debug.txt 2>&1 && chmod 644 /var/www/scorecard/debug.txt' >> /etc/crontab
 
-# ── Cert: restore from S3 or request fresh (LE → ZeroSSL → self-signed) ─────
-set +e  # cert failures must not abort the script
-CERT_INSTALLED=false
-
-# 1. Try to restore saved cert from S3
-if [ -n '${CERT_URL_S3}' ]; then
-  if curl -sf '${CERT_URL_S3}' -o /tmp/letsencrypt.tar.gz 2>/dev/null; then
-    tar -xzf /tmp/letsencrypt.tar.gz -C /
-    rm -f /tmp/letsencrypt.tar.gz
-    CERT_FILE=/etc/letsencrypt/live/${DOMAIN}/fullchain.pem
-    # Valid if it has > 30 days remaining
-    if [ -f "\$CERT_FILE" ] && openssl x509 -checkend 2592000 -noout -in "\$CERT_FILE" 2>/dev/null; then
-      sed -i "s|ssl_certificate .*selfsigned.crt;|ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;|" /etc/nginx/conf.d/app.conf
-      sed -i "s|ssl_certificate_key .*selfsigned.key;|ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;|" /etc/nginx/conf.d/app.conf
-      nginx -t && systemctl reload nginx
-      echo "0 0,12 * * * root certbot renew --quiet" >> /etc/crontab
-      CERT_INSTALLED=true
-      echo "Cert restored from S3 — no new cert needed."
-    else
-      echo "S3 cert expired or invalid — requesting fresh cert."
-    fi
-  fi
-fi
-
-# 2. Request fresh cert if restore failed (Let's Encrypt first, ZeroSSL fallback)
-if [ "\$CERT_INSTALLED" = false ]; then
-  if certbot --nginx -d ${DOMAIN} \
-    --non-interactive --agree-tos -m ${CERTBOT_EMAIL} --redirect; then
-    echo "Let's Encrypt cert installed."
-    CERT_INSTALLED=true
-  else
-    echo "Let's Encrypt failed (rate limit?) — trying ZeroSSL..."
-    ZEROSSL_EAB=\$(curl -s -X POST "https://api.zerossl.com/acme/eab-credentials-email" -d "email=${CERTBOT_EMAIL}")
-    EAB_KID=\$(echo "\$ZEROSSL_EAB"  | python3 -c "import sys,json; print(json.load(sys.stdin)['eab_kid'])")
-    EAB_HMAC=\$(echo "\$ZEROSSL_EAB" | python3 -c "import sys,json; print(json.load(sys.stdin)['eab_hmac_key'])")
-    if certbot --nginx -d ${DOMAIN} \
-      --non-interactive --agree-tos -m ${CERTBOT_EMAIL} \
-      --server https://acme.zerossl.com/v2/DV90 \
-      --eab-kid "\$EAB_KID" --eab-hmac-key "\$EAB_HMAC" --redirect; then
-      echo "ZeroSSL cert installed."
-      CERT_INSTALLED=true
-    else
-      echo "All CAs failed — running with self-signed cert (Zscaler will block)."
-    fi
-  fi
-
-  # Save new cert to S3 so future deploys can reuse it
-  if [ "\$CERT_INSTALLED" = true ] && [ -n '${CERT_PUT_URL_S3}' ]; then
-    tar -czf /tmp/letsencrypt.tar.gz -C / etc/letsencrypt
-    curl -s -X PUT '${CERT_PUT_URL_S3}' \
-      --data-binary @/tmp/letsencrypt.tar.gz && echo "Cert saved to S3."
-    rm -f /tmp/letsencrypt.tar.gz
-  fi
-
-  if [ "\$CERT_INSTALLED" = true ]; then
-    echo "0 0,12 * * * root certbot renew --quiet" >> /etc/crontab
-  fi
-fi
-
-set -e  # restore strict mode
 echo "SETUP COMPLETE"
 USERDATA
 
