@@ -1,21 +1,25 @@
 <script lang="ts">
-  import { theme } from '$lib/stores';
-  import UserChip from '$lib/UserChip.svelte';
+  import { user } from '$lib/stores';
   let { children } = $props();
 </script>
 
-<!-- Header bar (always Twilio style) -->
-<div style="position:fixed;top:0;left:0;right:0;height:56px;background:white;border-bottom:1px solid rgba(13,18,43,0.1);z-index:100;display:flex;align-items:center;justify-content:space-between;padding:0 24px;box-shadow:0 1px 8px rgba(13,18,43,0.06)">
-  <div style="display:flex;align-items:center;gap:16px">
-    <a href="/" style="display:flex;align-items:center;text-decoration:none">
-      <img src="/Twilio-logo-red.svg.png" alt="Twilio" style="height:22px;width:auto">
-    </a>
-    <div style="width:1px;height:22px;background:rgba(13,18,43,0.12)"></div>
-    <span style="font-size:13px;color:rgba(13,18,43,0.45);font-weight:600;letter-spacing:-0.01em">WhatsApp Wizard</span>
+<div style="min-height:100vh;background:#0f1117;color:#e2e8f0;font-family:Inter,ui-sans-serif,system-ui,sans-serif">
+  <!-- Same header style as GTM Hub launcher -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 28px;border-bottom:1px solid rgba(255,255,255,0.06);background:#090c12">
+    <div style="display:flex;align-items:center;gap:14px">
+      <a href="/">
+        <img src="/Twilio-logo-red.svg.png" alt="Twilio" style="height:18px;width:auto;opacity:0.9">
+      </a>
+      <div style="width:1px;height:18px;background:rgba(255,255,255,0.1)"></div>
+      <span style="font-size:13px;font-weight:600;color:#94a3b8;letter-spacing:-0.01em">WhatsApp Wizard</span>
+    </div>
+    {#if $user}
+    <div style="display:flex;align-items:center;gap:16px">
+      <span style="font-size:12px;color:#475569">{$user.email}</span>
+      <a href="/logout" style="font-size:12px;font-weight:700;color:#F22F46;text-decoration:none;text-transform:uppercase;letter-spacing:0.08em">Sign out</a>
+    </div>
+    {/if}
   </div>
-  <UserChip inline={true} sfProfile={false} />
-</div>
 
-<div style="padding-top:56px">
   {@render children()}
 </div>

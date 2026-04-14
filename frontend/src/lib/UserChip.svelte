@@ -11,11 +11,15 @@
 
   let open = $state(false);
 
-  // Fixed chip: hide on launcher (/) and on se-scorecard-v2 (has its own inline chip)
+  // Fixed chip: hide on launcher (/) and on routes that provide their own header
   const visible = $derived(
     $user?.email && (
       inline ||
-      ($page.url.pathname !== '/' && !$page.url.pathname.startsWith('/se-scorecard-v2'))
+      (
+        $page.url.pathname !== '/' &&
+        !$page.url.pathname.startsWith('/se-scorecard-v2') &&
+        !$page.url.pathname.startsWith('/whatsapp-wizard')
+      )
     )
   );
 </script>
