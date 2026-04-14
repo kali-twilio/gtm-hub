@@ -58,7 +58,6 @@
     {h:'SE Notes',       show:hasNotesCol,   tip:'Opps with both Sales_Engineer_Notes__c and SE_Notes_History__c filled ÷ total TW Closed Won opps above the iACV floor. Avg entries = history entry count per opp.'},
     {h:'Emails',         show:hasEmailCol,   tip:`Salesforce Tasks (TaskSubtype = Email) sent to Opportunities during the period. Classified by opp owner role into ${motionLabels.act.toLowerCase()} vs ${motionLabels.exp.toLowerCase()}, and in-Q (closing this period) vs pipeline (future opps).`},
     {h:'Meetings',       show:hasMeetingCol, tip:`Salesforce Events linked to Opportunities during the period. Recurring series deduplicated — same series on the same opp counts once. In-Q vs pipeline split matches email logic.`},
-    {h:'Tier',           show:true,          tip:'Elite = top 20% · Strong = 21–50% · Steady = 51–75% · Develop = bottom 25%. Based on composite score rank within this team and period.'},
   ].filter(c => c.show) : []);
 
   const filteredRanked = $derived(data ? (() => {
@@ -441,7 +440,6 @@
         </thead>
         <tbody>
           {#each filteredRanked as se}
-          {@const colors = tc(se.tier, $theme)}
           {@const et = emailTotal(se)}
           {@const vActIcav = se.act_icav + (view==='all' ? (se.non_tw_act_icav ?? 0) : 0)}
           {@const vActWins = se.act_wins + (view==='all' ? (se.non_tw_act_wins ?? 0) : 0)}
@@ -508,7 +506,6 @@
             </td>
             {/if}
 
-            <td style="padding:10px 16px"><span style="display:inline-block;padding:2px 10px 2px 8px;font-size:10px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;letter-spacing:0.1em;background:{colors.bg};color:{colors.color};{$theme==='p5'?'clip-path:polygon(0 0,100% 0,calc(100% - 6px) 100%,0 100%)':'border-radius:4px'}">{se.tier}</span></td>
           </tr>
           {/each}
           {#if medians}
@@ -528,7 +525,6 @@
             {#if hasNotesCol}<td style="padding:10px 16px;font-size:12px;color:var(--text-muted)">{medians.note_hv_avg_entries > 0 ? medians.note_hv_avg_entries+' avg entries' : '—'}</td>{/if}
             {#if hasEmailCol}<td style="padding:10px 16px;font-weight:700;color:var(--text-muted)">{medians.emails > 0 ? medians.emails : '—'}</td>{/if}
             {#if hasMeetingCol}<td style="padding:10px 16px;font-weight:700;color:var(--text-muted)">{medians.meetings > 0 ? medians.meetings : '—'}</td>{/if}
-            <td style="padding:10px 16px">—</td>
           </tr>
           {/if}
         </tbody>
@@ -873,7 +869,6 @@
     </div>
     <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px">
       {#each filteredRanked as se}
-      {@const colors = tc(se.tier, $theme)}
       <div class="p5-panel" style="padding:16px;display:flex;flex-direction:column;gap:10px">
         <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
           <div>
@@ -881,7 +876,6 @@
               <span style="font-size:11px;color:var(--text-faint);font-style:{$theme==='p5'?'italic':'normal'}">#{se.rank}</span>
               <span style="font-size:14px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">{se.name}</span>
             </div>
-            <span style="display:inline-block;background:{colors.bg};color:{colors.color};border:1px solid {colors.color}40;padding:2px 10px 2px 8px;font-size:10px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;letter-spacing:0.12em;{$theme==='p5'?'clip-path:polygon(0 0,100% 0,calc(100% - 6px) 100%,0 100%)':'border-radius:4px'}">{se.tier}</span>
           </div>
           <div style="text-align:right;flex-shrink:0">
             <div style="font-size:18px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text);{$theme==='p5'?'text-shadow:1px 1px 0 var(--red)':''}">{fmt(se.total_icav)}</div>

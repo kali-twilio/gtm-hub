@@ -62,7 +62,6 @@
   {/if}
 
   {#if se}
-  {@const colors = tc(se.tier, $theme)}
   {@const isAE = se.team_motion === 'ae'}
   {@const actLabel = isAE ? 'New Business' : 'Activate'}
   {@const expLabel = isAE ? 'Strategic' : 'Expansion'}
@@ -73,7 +72,6 @@
     <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
       <div>
         <div style="font-size:24px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 rgba(232,0,61,0.5)':''}">{se.name}</div>
-        <span style="display:inline-block;background:{colors.bg};color:{colors.color};border:1px solid {colors.color}40;padding:2px 12px 2px 8px;font-size:10px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;letter-spacing:0.18em;{$theme==='p5'?'clip-path:polygon(0 0,100% 0,calc(100% - 8px) 100%,0 100%)':'border-radius:4px'};margin-top:4px">{se.tier}</span>
       </div>
       <div style="text-align:right">
         <div style="font-size:36px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};line-height:1;color:var(--text);{$theme==='p5'?'text-shadow:3px 3px 0 var(--red)':''}">{fmt(se.total_icav)}</div>
