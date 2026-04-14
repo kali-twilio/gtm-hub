@@ -108,8 +108,10 @@ def _sf_role_to_subteam(role_name: str) -> str | None:
 
 def _enrich_session_from_sf(email: str) -> None:
     """
-    Look up the Salesforce User by email and store profile/access info in the
-    session.  Falls back to full access silently if SF is unavailable.
+    Optionally enrich the session with Salesforce profile data.
+    This is best-effort: if Salesforce is not configured, or the user has no
+    SF account, the session gets sf_access='full' and all SF fields remain null.
+    Apps must not assume SF data is present — use session.get() with defaults.
     """
     sf_user = sf.get_user_by_email(email)
     if not sf_user:
