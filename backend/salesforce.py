@@ -10,6 +10,7 @@ Usage:
     record   = sf.get("/services/data/v59.0/sobjects/Account/001...")
 """
 
+from __future__ import annotations
 import os
 import logging
 from threading import Lock
