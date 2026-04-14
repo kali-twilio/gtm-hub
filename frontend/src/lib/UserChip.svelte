@@ -4,7 +4,10 @@
 
   // inline=true: renders in normal flow (for use inside a header)
   // inline=false: fixed top-right overlay (default, for root layout)
-  let { inline = false }: { inline?: boolean } = $props();
+  // sfProfile=false: show only Google email — for apps that don't use Salesforce
+  let { inline = false, sfProfile = true }: { inline?: boolean; sfProfile?: boolean } = $props();
+
+  const displayName = $derived(sfProfile ? ($user?.sf_display_name ?? $user?.email) : $user?.email);
 
   let open = $state(false);
 
@@ -26,23 +29,24 @@
   role="status"
 >
   <div class="chip">
-    <span class="avatar">{($user!.sf_display_name ?? $user!.email)[0].toUpperCase()}</span>
-    <span class="name">{$user!.sf_display_name ?? $user!.email}</span>
+    <span class="avatar">{(displayName ?? '?')[0].toUpperCase()}</span>
+    <span class="name">{displayName}</span>
     <span class="caret">▾</span>
   </div>
 
   {#if open}
   <div class="tooltip" role="tooltip">
     <div class="t-header">
-      <div class="t-avatar">{($user!.sf_display_name ?? $user!.email)[0].toUpperCase()}</div>
+      <div class="t-avatar">{(displayName ?? '?')[0].toUpperCase()}</div>
       <div>
-        {#if $user!.sf_display_name}
+        {#if sfProfile && $user!.sf_display_name}
         <div class="t-name">{$user!.sf_display_name}</div>
         {/if}
         <div class="t-email">{$user!.email}</div>
       </div>
     </div>
 
+    {#if sfProfile}
     <div class="t-rows">
       {#if $user!.sf_title}
       <div class="t-row">
@@ -75,6 +79,7 @@
       </div>
       {/if}
     </div>
+    {/if}
 
     <a href="/logout" class="t-signout">Sign out</a>
   </div>

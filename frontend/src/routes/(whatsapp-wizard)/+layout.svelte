@@ -13,7 +13,7 @@
     <div style="width:1px;height:22px;background:rgba(13,18,43,0.12)"></div>
     <span style="font-size:13px;color:rgba(13,18,43,0.45);font-weight:600;letter-spacing:-0.01em">WhatsApp Wizard</span>
   </div>
-  <UserChip inline={true} />
+  <UserChip inline={true} sfProfile={false} />
 </div>
 
 <div style="padding-top:56px">
