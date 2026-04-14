@@ -27,7 +27,7 @@ from collections import defaultdict
 from pathlib import Path
 from flask import Blueprint
 
-from flask import Flask, request, jsonify, redirect, url_for, session
+from flask import Flask, request, jsonify, redirect, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 from google_auth_oauthlib.flow import Flow
 import requests as http

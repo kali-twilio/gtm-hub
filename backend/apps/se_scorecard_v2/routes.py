@@ -5,8 +5,6 @@ Current quarter: 10-minute TTL. Historical quarters/years: 1-week TTL.
 """
 from __future__ import annotations
 
-import csv
-import io
 import json
 import logging
 import re
