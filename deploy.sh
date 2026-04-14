@@ -109,6 +109,19 @@ BACKEND_URL_S3=$(aws s3 presign  s3://$BUCKET/backend.tar.gz   --profile "$PROFI
 FRONTEND_URL_S3=$(aws s3 presign s3://$BUCKET/frontend.tar.gz  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 SECRETS_URL_S3=$(aws s3 presign  s3://$BUCKET/secrets.env      --profile "$PROFILE" --region "$REGION" --expires-in $SECRETS_EXPIRES)
 
+# Cert: presign GET (restore existing) and PUT (save new) — reuse across deploys
+if aws s3 ls "s3://$BUCKET/letsencrypt.tar.gz" --profile "$PROFILE" --region "$REGION" > /dev/null 2>&1; then
+  CERT_URL_S3=$(aws s3 presign "s3://$BUCKET/letsencrypt.tar.gz" --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
+  echo "Existing cert found in S3 — will attempt restore on boot."
+else
+  CERT_URL_S3=""
+  echo "No cert in S3 — will request fresh cert on boot."
+fi
+CERT_PUT_URL_S3=$(aws s3api generate-presigned-url \
+  --profile "$PROFILE" --region "$REGION" \
+  --bucket "$BUCKET" --key "letsencrypt.tar.gz" \
+  --http-method PUT --expires-in $EXPIRES 2>/dev/null || echo "")
+
 # ── 4. Build boot script (NO secret values — only a short-lived URL) ─────────
 USERDATA_FILE=$(mktemp /tmp/userdata.XXXXXX.sh)
 chmod 600 "$USERDATA_FILE"
@@ -237,24 +250,62 @@ systemctl daemon-reload
 systemctl enable app nginx
 systemctl start app nginx
 
-# ── Try certbot — replaces self-signed cert if successful ────────────────────
-# Uses ZeroSSL (separate rate limits from Let's Encrypt). Falls back gracefully.
-ZEROSSL_EAB=$(curl -s -X POST "https://api.zerossl.com/acme/eab-credentials-email" \
-  -d "email=${CERTBOT_EMAIL}")
-EAB_KID=$(echo "\$ZEROSSL_EAB"  | python3 -c "import sys,json; print(json.load(sys.stdin)['eab_kid'])")
-EAB_HMAC=$(echo "\$ZEROSSL_EAB" | python3 -c "import sys,json; print(json.load(sys.stdin)['eab_hmac_key'])")
+# ── Cert: restore from S3 or request fresh (LE → ZeroSSL → self-signed) ─────
+CERT_INSTALLED=false
 
-if certbot --nginx -d ${DOMAIN} \
-  --non-interactive --agree-tos \
-  -m ${CERTBOT_EMAIL} \
-  --server https://acme.zerossl.com/v2/DV90 \
-  --eab-kid "\$EAB_KID" \
-  --eab-hmac-key "\$EAB_HMAC" \
-  --redirect; then
-  echo "0 0,12 * * * root certbot renew --quiet" >> /etc/crontab
-  echo "Certbot: trusted ZeroSSL cert installed."
-else
-  echo "Certbot failed. Running with self-signed cert — site is up on HTTPS but browser will warn."
+# 1. Try to restore saved cert from S3
+if [ -n '${CERT_URL_S3}' ]; then
+  if curl -sf '${CERT_URL_S3}' -o /tmp/letsencrypt.tar.gz 2>/dev/null; then
+    tar -xzf /tmp/letsencrypt.tar.gz -C /
+    rm -f /tmp/letsencrypt.tar.gz
+    CERT_FILE=/etc/letsencrypt/live/${DOMAIN}/fullchain.pem
+    # Valid if it has > 30 days remaining
+    if [ -f "\$CERT_FILE" ] && openssl x509 -checkend 2592000 -noout -in "\$CERT_FILE" 2>/dev/null; then
+      sed -i "s|ssl_certificate .*selfsigned.crt;|ssl_certificate /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;|" /etc/nginx/conf.d/app.conf
+      sed -i "s|ssl_certificate_key .*selfsigned.key;|ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;|" /etc/nginx/conf.d/app.conf
+      nginx -t && systemctl reload nginx
+      echo "0 0,12 * * * root certbot renew --quiet" >> /etc/crontab
+      CERT_INSTALLED=true
+      echo "Cert restored from S3 — no new cert needed."
+    else
+      echo "S3 cert expired or invalid — requesting fresh cert."
+    fi
+  fi
+fi
+
+# 2. Request fresh cert if restore failed (Let's Encrypt first, ZeroSSL fallback)
+if [ "\$CERT_INSTALLED" = false ]; then
+  if certbot --nginx -d ${DOMAIN} \
+    --non-interactive --agree-tos -m ${CERTBOT_EMAIL} --redirect; then
+    echo "Let's Encrypt cert installed."
+    CERT_INSTALLED=true
+  else
+    echo "Let's Encrypt failed (rate limit?) — trying ZeroSSL..."
+    ZEROSSL_EAB=\$(curl -s -X POST "https://api.zerossl.com/acme/eab-credentials-email" -d "email=${CERTBOT_EMAIL}")
+    EAB_KID=\$(echo "\$ZEROSSL_EAB"  | python3 -c "import sys,json; print(json.load(sys.stdin)['eab_kid'])")
+    EAB_HMAC=\$(echo "\$ZEROSSL_EAB" | python3 -c "import sys,json; print(json.load(sys.stdin)['eab_hmac_key'])")
+    if certbot --nginx -d ${DOMAIN} \
+      --non-interactive --agree-tos -m ${CERTBOT_EMAIL} \
+      --server https://acme.zerossl.com/v2/DV90 \
+      --eab-kid "\$EAB_KID" --eab-hmac-key "\$EAB_HMAC" --redirect; then
+      echo "ZeroSSL cert installed."
+      CERT_INSTALLED=true
+    else
+      echo "All CAs failed — running with self-signed cert (Zscaler will block)."
+    fi
+  fi
+
+  # Save new cert to S3 so future deploys can reuse it
+  if [ "\$CERT_INSTALLED" = true ] && [ -n '${CERT_PUT_URL_S3}' ]; then
+    tar -czf /tmp/letsencrypt.tar.gz -C / etc/letsencrypt
+    curl -s -X PUT '${CERT_PUT_URL_S3}' \
+      --data-binary @/tmp/letsencrypt.tar.gz && echo "Cert saved to S3."
+    rm -f /tmp/letsencrypt.tar.gz
+  fi
+
+  if [ "\$CERT_INSTALLED" = true ]; then
+    echo "0 0,12 * * * root certbot renew --quiet" >> /etc/crontab
+  fi
 fi
 
 echo "SETUP COMPLETE"
