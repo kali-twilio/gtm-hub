@@ -7,7 +7,6 @@ export interface User {
   sf_title:        string | null;
   sf_role_name:    string | null;
   sf_department:   string | null;
-  sf_phone:        string | null;
   sf_manager:      string | null;
   sf_division:     string | null;
   sf_is_se:        boolean;

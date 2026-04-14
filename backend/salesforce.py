@@ -137,8 +137,7 @@ class SalesforceClient:
         try:
             safe = email.replace("'", "\\'")
             results = self.query(
-                f"SELECT Id, Name, Email, Title, Department, Phone, MobilePhone, "
-                f"Division, Manager.Name, UserRole.Name "
+                f"SELECT Id, Name, Email, Title, Department, Division, Manager.Name, UserRole.Name "
                 f"FROM User "
                 f"WHERE Email = '{safe}' AND IsActive = true "
                 f"LIMIT 1"

@@ -108,7 +108,6 @@ def _enrich_session_from_sf(email: str) -> None:
     session["sf_display_name"] = sf_user.get("Name")
     session["sf_title"]        = sf_user.get("Title")
     session["sf_department"]   = sf_user.get("Department")
-    session["sf_phone"]        = sf_user.get("MobilePhone") or sf_user.get("Phone")
     session["sf_manager"]      = (sf_user.get("Manager") or {}).get("Name")
     session["sf_division"]     = sf_user.get("Division")
     session["sf_user_id"]      = sf_user.get("Id")
