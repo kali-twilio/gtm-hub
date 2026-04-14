@@ -3,6 +3,7 @@ SE Scorecard V2 — data layer.
 Computes the same SE metrics as se_analysis.py but from live Salesforce opportunity records.
 Owl scores (Salesforce hygiene %) still come from a CSV upload.
 """
+from __future__ import annotations
 
 import statistics
 from datetime import date as _date

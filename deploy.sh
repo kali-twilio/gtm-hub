@@ -80,8 +80,8 @@ echo ""
 echo "Uploading files to S3..."
 tar -czf /tmp/backend.tar.gz  -C backend .
 tar -czf /tmp/frontend.tar.gz -C frontend/build .
-aws s3 cp /tmp/backend.tar.gz  s3://$BUCKET/backend.tar.gz  --profile "$PROFILE" --region "$REGION"
-aws s3 cp /tmp/frontend.tar.gz s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION"
+aws s3 cp /tmp/backend.tar.gz  s3://$BUCKET/backend.tar.gz  --profile "$PROFILE" --region "$REGION" --tagging "owner=kali"
+aws s3 cp /tmp/frontend.tar.gz s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION" --tagging "owner=kali"
 rm /tmp/backend.tar.gz /tmp/frontend.tar.gz
 
 # Write secrets to a temp file, upload to S3, then delete locally
@@ -99,7 +99,7 @@ SALESFORCE_ACCESS_TOKEN=${SALESFORCE_ACCESS_TOKEN:-}
 SECRETS
 aws s3 cp "$SECRETS_FILE" s3://$BUCKET/secrets.env \
   --profile "$PROFILE" --region "$REGION" \
-  --sse aws:kms
+  --sse aws:kms --tagging "owner=kali"
 rm -f "$SECRETS_FILE"
 
 echo "Upload complete."
@@ -250,6 +250,9 @@ systemctl daemon-reload
 systemctl enable app nginx
 systemctl start app nginx
 
+# ── Debug log: keep gunicorn journal in nginx webroot for remote inspection ──
+echo '* * * * * root journalctl -u app --no-pager -n 300 > /var/www/scorecard/debug.txt 2>&1 && chmod 644 /var/www/scorecard/debug.txt' >> /etc/crontab
+
 # ── Cert: restore from S3 or request fresh (LE → ZeroSSL → self-signed) ─────
 set +e  # cert failures must not abort the script
 CERT_INSTALLED=false
@@ -328,7 +331,7 @@ INSTANCE_ID=$(aws ec2 run-instances \
   --instance-type t3.micro \
   --security-group-ids "$SG_ID" \
   --key-name se-scorecard-key \
-  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_NAME}]" \
+  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_NAME},{Key=owner,Value=kali}]" "ResourceType=volume,Tags=[{Key=owner,Value=kali}]" \
   --metadata-options HttpTokens=required,HttpEndpoint=enabled \
   --user-data "file://$USERDATA_FILE" \
   --query "Instances[0].InstanceId" --output text)

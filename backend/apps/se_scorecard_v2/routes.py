@@ -493,7 +493,7 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
 
     ses    = [s for s in ses if s["act_wins"] + s["exp_wins"] > 0]
     if not ses:
-        return None, f"No closed won TW opportunities found for {display_label} in {info['label']}."
+        return [], None
     ranked = sf_analysis.rank_ses(ses)
     _save_cached(ranked, cache_key, period_key, icav_min, team.get("motion", "dsr"))
     log.info("Refreshed %s/%s (min $%s) SE data from Salesforce (%d opps, %d win-rate opps)",
