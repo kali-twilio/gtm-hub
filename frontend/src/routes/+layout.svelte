@@ -5,6 +5,7 @@
   import { getMe } from '$lib/api';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import UserChip from '$lib/UserChip.svelte';
 
   let { children } = $props();
 
@@ -28,4 +29,5 @@
   });
 </script>
 
+<UserChip />
 {@render children()}
