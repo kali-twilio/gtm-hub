@@ -453,7 +453,7 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
         return None, f"Salesforce query failed: {core_exc}"
 
     if not opps:
-        return None, f"No closed won opportunities found for {display_label} in {info['label']}."
+        return [], None
 
     ses = sf_analysis.build_ses(opps, team.get("motion", "dsr"), notes_floor=icav_min)
     sf_analysis.merge_win_rate(ses, win_rate_opps, team.get("motion", "dsr"))
@@ -707,8 +707,8 @@ def api_rankings():
         "Steady":  {"color": "#10B981", "bg": "#071a12", "label": "😤 GRINDING"},
         "Develop": {"color": "#EF4444", "bg": "#1a0a0a", "label": "💀 SEND HELP"},
     }
-    max_a = max(s["act_icav"] for s in ses_list) or 1
-    max_e = max(s["exp_icav"] for s in ses_list) or 1
+    max_a = max((s["act_icav"] for s in ses_list), default=0) or 1
+    max_e = max((s["exp_icav"] for s in ses_list), default=0) or 1
 
     return jsonify({
         "ranked": [{**s,
