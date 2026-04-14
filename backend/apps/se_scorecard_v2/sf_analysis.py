@@ -1232,7 +1232,8 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
                     "cat":   "REVENUE",
                     "title": f"{len(whale_dep)} SE{'s' if len(whale_dep)>1 else ''} whale-dependent — avg vs median gap signals outlier quarters",
                     "body":  (
-                        f"{'Their' if len(whale_dep)==1 else 'These SEs\''} quarters are propped up by one large deal. "
+                        ("Their" if len(whale_dep)==1 else "These SEs'") +
+                        " quarters are propped up by one large deal. "
                         "High avg/median ratio (≥2.5×) means a missed whale collapses the number. "
                         "Encourage consistent mid-size deal flow alongside the large pursuits."
                     ),
