@@ -108,15 +108,15 @@ This prevents both type errors (`?icav_min=abc` → 500) and parameter enumerati
 
 ### Infrastructure security
 
-- **HTTPS only** — Let's Encrypt SSL cert provisioned automatically on deploy. Nginx redirects all HTTP to HTTPS.
+- **HTTPS via CloudFront** — TLS is terminated by AWS CloudFront (`d2nm4d5qi0glko.cloudfront.net`, distribution `EHJS9BMWR6QG1`). EC2 serves plain HTTP on port 80 to CloudFront only — no certs on the instance.
+- **EC2 locked to CloudFront** — the security group allows port 80 only from the CloudFront managed prefix list (`pl-82a045eb`). Direct browser access to the EC2 IP is blocked.
 - **IMDSv2 required** — EC2 instance launched with `HttpTokens=required`. Blocks SSRF attacks that try to read instance metadata.
 - **Secrets never in user-data** — EC2 user-data contains no secret values. `deploy.sh` uploads an encrypted secrets file to a private S3 bucket, passes the instance a short-lived (30-minute) pre-signed URL, and the instance downloads, sources, and immediately deletes the file at boot. `deploy.sh` then deletes the S3 object once the instance is running. Querying `/latest/user-data` from the instance yields only an expired URL.
 - **Least privilege processes** — gunicorn runs as `ec2-user`, nginx as `nginx`. Neither runs as root.
 - **nginx server tokens off** — version number not exposed in response headers or error pages.
 - **Request size limit** — `client_max_body_size 10M` in nginx, `MAX_CONTENT_LENGTH = 10MB` in Flask. Prevents oversized upload attacks.
 - **Nginx security headers** — `Permissions-Policy: geolocation=(), microphone=(), camera=()` added at the proxy layer in addition to app-level headers.
-- **SSL auto-renewal** — certbot renew runs via cron at midnight and noon daily. Certs expire every 90 days; renewal is automatic.
-- **No SSH open** — the EC2 security group does not expose port 22. Access is via re-deploy only.
+- **No SSH open** — the EC2 security group does not expose port 22 to the internet. Access is via re-deploy only.
 
 ### Simulate endpoint (local dev only)
 
@@ -237,13 +237,24 @@ and recommended fixes."
 
 Only proceed if there are no Critical or High findings.
 
+### One-time Google OAuth Console setup
+
+For a new domain, add these to your OAuth 2.0 Client ID at [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Credentials:
+
+| Field | Value |
+|---|---|
+| Authorized JavaScript origins | `https://d2nm4d5qi0glko.cloudfront.net` |
+| Authorized redirect URIs | `https://d2nm4d5qi0glko.cloudfront.net/oauth2callback` |
+
+The redirect URI is built from `FRONTEND_URL` in `deploy.env` — if the domain ever changes, update both `deploy.env` and the Google Console.
+
 ### Deploy
 
 ```bash
 bash deploy.sh
 ```
 
-Builds the frontend, uploads backend + frontend to S3, terminates the existing instance, launches a fresh AL2023 EC2 t3.micro, bootstraps nginx + gunicorn + SSL, and associates the Elastic IP. ~7 minutes end to end.
+Builds the frontend, uploads backend + frontend to S3, terminates the existing instance, launches a fresh AL2023 EC2 t3.micro, bootstraps nginx + gunicorn, and associates the Elastic IP. HTTPS is handled by CloudFront — no certs needed on the instance. ~7 minutes end to end.
 
 Requires `deploy.env` with all secrets populated.
 
