@@ -15,6 +15,7 @@ Usage:
   gunicorn -b 0.0.0.0:5001 -w 2 app:app # production
 """
 
+from __future__ import annotations
 import os
 import sys
 import json

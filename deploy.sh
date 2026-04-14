@@ -211,15 +211,15 @@ server {
 
     location ~ ^/(api|auth|oauth2callback|logout|simulate) {
         proxy_pass         http://127.0.0.1:5000;
-        proxy_set_header   Host $host;
-        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   Host \$host;
+        proxy_set_header   X-Real-IP \$remote_addr;
         proxy_set_header   X-Forwarded-Proto https;
         proxy_read_timeout 120s;
     }
 
     location / {
         root /var/www/scorecard;
-        try_files $uri $uri.html $uri/ =404;
+        try_files \$uri \$uri.html \$uri/ =404;
     }
 }
 EOF
