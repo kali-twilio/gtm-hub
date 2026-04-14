@@ -238,14 +238,23 @@ systemctl enable app nginx
 systemctl start app nginx
 
 # ── Try certbot — replaces self-signed cert if successful ────────────────────
+# Uses ZeroSSL (separate rate limits from Let's Encrypt). Falls back gracefully.
+ZEROSSL_EAB=$(curl -s -X POST "https://api.zerossl.com/acme/eab-credentials-email" \
+  -d "email=${CERTBOT_EMAIL}")
+EAB_KID=$(echo "\$ZEROSSL_EAB"  | python3 -c "import sys,json; print(json.load(sys.stdin)['eab_kid'])")
+EAB_HMAC=$(echo "\$ZEROSSL_EAB" | python3 -c "import sys,json; print(json.load(sys.stdin)['eab_hmac_key'])")
+
 if certbot --nginx -d ${DOMAIN} \
   --non-interactive --agree-tos \
   -m ${CERTBOT_EMAIL} \
+  --server https://acme.zerossl.com/v2/DV90 \
+  --eab-kid "\$EAB_KID" \
+  --eab-hmac-key "\$EAB_HMAC" \
   --redirect; then
   echo "0 0,12 * * * root certbot renew --quiet" >> /etc/crontab
-  echo "Certbot: trusted cert installed."
+  echo "Certbot: trusted ZeroSSL cert installed."
 else
-  echo "Certbot failed (rate limit?). Running with self-signed cert — site is up on HTTPS but browser will warn."
+  echo "Certbot failed. Running with self-signed cert — site is up on HTTPS but browser will warn."
 fi
 
 echo "SETUP COMPLETE"
