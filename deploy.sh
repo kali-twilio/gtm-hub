@@ -22,10 +22,18 @@ fi
 source deploy.env
 
 # Validate required vars
-for var in PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL SALESFORCE_INSTANCE_URL SALESFORCE_CLIENT_ID SALESFORCE_CLIENT_SECRET SALESFORCE_REFRESH_TOKEN; do
+for var in PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL; do
   if [ -z "${!var}" ]; then
     echo "ERROR: $var is not set in deploy.env"
     exit 1
+  fi
+done
+
+# Warn if any app is missing its .env file
+for example in backend/apps/*/.env.example; do
+  env_file="${example%.example}"
+  if [ ! -f "$env_file" ]; then
+    echo "WARNING: $env_file not found — copy from $example and fill in values"
   fi
 done
 
@@ -89,19 +97,26 @@ aws s3api put-object-tagging --bucket "$BUCKET" --key backend.tar.gz  --tagging 
 aws s3api put-object-tagging --bucket "$BUCKET" --key frontend.tar.gz --tagging 'TagSet=[{Key=owner,Value=kali}]' --profile "$PROFILE" --region "$REGION"
 rm /tmp/backend.tar.gz /tmp/frontend.tar.gz
 
-# Write secrets to a temp file, upload to S3, then delete locally
+# Write secrets to a temp file, upload to S3, then delete locally.
+# Includes global vars + every backend/apps/*/.env file automatically —
+# no changes needed here when adding a new app.
 SECRETS_FILE=$(mktemp /tmp/secrets.XXXXXX.env)
 chmod 600 "$SECRETS_FILE"
 cat > "$SECRETS_FILE" << SECRETS
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
 SECRET_KEY=${SECRET_KEY}
-SALESFORCE_INSTANCE_URL=${SALESFORCE_INSTANCE_URL}
-SALESFORCE_CLIENT_ID=${SALESFORCE_CLIENT_ID}
-SALESFORCE_CLIENT_SECRET=${SALESFORCE_CLIENT_SECRET}
-SALESFORCE_REFRESH_TOKEN=${SALESFORCE_REFRESH_TOKEN}
-SALESFORCE_ACCESS_TOKEN=${SALESFORCE_ACCESS_TOKEN:-}
+FRONTEND_URL=https://${DOMAIN}
 SECRETS
+# Append each app's .env (skip lines that are comments or blank)
+for app_env in backend/apps/*/.env; do
+  if [ -f "$app_env" ]; then
+    app_name=$(basename "$(dirname "$app_env")")
+    echo "" >> "$SECRETS_FILE"
+    echo "# ${app_name}" >> "$SECRETS_FILE"
+    grep -v '^\s*#' "$app_env" | grep -v '^\s*$' >> "$SECRETS_FILE" || true
+  fi
+done
 aws s3 cp "$SECRETS_FILE" s3://$BUCKET/secrets.env \
   --profile "$PROFILE" --region "$REGION" \
   --sse aws:kms
@@ -148,37 +163,27 @@ chown -R nginx:nginx /var/www/scorecard
 SECRETS_TMP=\$(mktemp /tmp/secrets.XXXXXX.env)
 chmod 600 "\$SECRETS_TMP"
 curl -sL '${SECRETS_URL_S3}' -o "\$SECRETS_TMP"
-set -a; source "\$SECRETS_TMP"; set +a
-rm -f "\$SECRETS_TMP"  # delete immediately after sourcing
+# Install as /app/secrets.env (read by systemd EnvironmentFile — never in user-data)
+install -o root -g root -m 600 "\$SECRETS_TMP" /app/secrets.env
+rm -f "\$SECRETS_TMP"
 
-# ── Write systemd service with env vars from sourced file ────────────────────
-cat > /etc/systemd/system/app.service << EOF
+# ── Write systemd service — env vars loaded from /app/secrets.env at runtime ─
+# Adding a new app only requires adding its .env to the secrets bundle above.
+# No changes to this unit file are ever needed for new apps.
+cat > /etc/systemd/system/app.service << 'EOF'
 [Unit]
-Description=SE Scorecard API
+Description=GTM Hub API
 After=network.target
 [Service]
 User=ec2-user
 WorkingDirectory=/app
-Environment="GOOGLE_CLIENT_ID=\${GOOGLE_CLIENT_ID}"
-Environment="GOOGLE_CLIENT_SECRET=\${GOOGLE_CLIENT_SECRET}"
-Environment="SECRET_KEY=\${SECRET_KEY}"
-Environment="FRONTEND_URL=https://${DOMAIN}"
-Environment="SALESFORCE_INSTANCE_URL=\${SALESFORCE_INSTANCE_URL}"
-Environment="SALESFORCE_CLIENT_ID=\${SALESFORCE_CLIENT_ID}"
-Environment="SALESFORCE_CLIENT_SECRET=\${SALESFORCE_CLIENT_SECRET}"
-Environment="SALESFORCE_REFRESH_TOKEN=\${SALESFORCE_REFRESH_TOKEN}"
-Environment="SALESFORCE_ACCESS_TOKEN=\${SALESFORCE_ACCESS_TOKEN}"
+EnvironmentFile=/app/secrets.env
 ExecStart=/usr/local/bin/gunicorn -b 127.0.0.1:5000 -w 2 --timeout 120 app:app
 Restart=always
 RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
-
-# Clear secrets from shell environment
-unset GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY
-unset SALESFORCE_INSTANCE_URL SALESFORCE_CLIENT_ID SALESFORCE_CLIENT_SECRET
-unset SALESFORCE_REFRESH_TOKEN SALESFORCE_ACCESS_TOKEN
 
 # ── Nginx config ─────────────────────────────────────────────────────────────
 cat > /etc/nginx/nginx.conf << 'NGINXCONF'

@@ -163,9 +163,30 @@ def _rate_limited(ip: str) -> bool:
 
 _me_enrichers: list = []
 
+
+def _load_app_env(app_dir: Path) -> None:
+    """Load per-app .env file into os.environ (local dev convenience).
+    In production, vars come from the systemd EnvironmentFile instead."""
+    env_file = app_dir / ".env"
+    if not env_file.exists():
+        return
+    with env_file.open() as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:   # don't override values already set
+                os.environ[key] = val
+    log.info("Loaded env: %s/.env", app_dir.name)
+
+
 for _app_dir in sorted(APPS_DIR.iterdir()):
     if not _app_dir.is_dir() or not (_app_dir / "routes.py").exists():
         continue
+    _load_app_env(_app_dir)
     _mod = importlib.import_module(f"apps.{_app_dir.name}.routes")
     # Find any Blueprint in the module — no naming convention required
     _blueprints = [obj for _, obj in inspect.getmembers(_mod)
