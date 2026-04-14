@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getSFReport, fmt } from '$lib/api';
-  import { theme, sfTeam, sfPeriod, sfSubteam } from '$lib/stores';
+  import { theme, sfTeam, sfPeriod, sfSubteam, user } from '$lib/stores';
   import { tc, fc } from '$lib/colors';
 
   let data: any = $state(null);
@@ -286,7 +286,16 @@
   onMount(async () => { data = await getSFReport($sfTeam, $sfPeriod, icavMin, $sfSubteam); });
 </script>
 
-{#if !data}
+{#if $user?.sf_access === 'se_restricted'}
+<div class="min-h-screen flex items-center justify-center">
+  <div style="max-width:420px;width:100%;padding:32px 24px;text-align:center">
+    <div style="font-size:36px;margin-bottom:16px">🔒</div>
+    <div style="font-size:18px;font-weight:800;color:var(--text);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px">Access Denied</div>
+    <div style="font-size:13px;color:var(--text-muted);font-weight:500;margin-bottom:24px">The Full Report is only available to SE managers and leaders.</div>
+    <a href="/se-scorecard-v2/me" style="display:inline-block;padding:10px 24px;background:var(--red);color:white;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:0.08em;text-decoration:none;border-radius:4px">View My Stats instead</a>
+  </div>
+</div>
+{:else if !data}
 <div class="min-h-screen flex items-center justify-center">
   <div style="font-size:18px;font-weight:700;color:var(--text-muted)">Loading intel…</div>
 </div>

@@ -54,6 +54,8 @@
   }
 
 
+  const restricted = $derived($user?.sf_access === 'se_restricted');
+
   onMount(async () => {
     const [teamsRes, periodsData] = await Promise.all([
       fetch('/api/se-scorecard-v2/teams').then(r => r.ok ? r.json() : []),
@@ -61,6 +63,10 @@
     ]);
     teams = teamsRes;
     periods = periodsData;
+    // For restricted SEs, force their team and lock it
+    if (restricted && $user?.sf_team) {
+      sfTeam.set($user.sf_team);
+    }
     loadSummary($sfTeam, $sfPeriod);
   });
 </script>
@@ -78,6 +84,11 @@
   <div class="w-full hub-container mb-5 selectors-row">
     <div style="flex:1;min-width:0">
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--text-muted);margin-bottom:8px">Team</div>
+      {#if restricted}
+      <div style="padding:10px 14px;border:1px solid rgba(var(--red-rgb),0.15);border-radius:6px;font-size:13px;font-weight:600;color:var(--text);background:rgba(var(--red-rgb),0.03)">
+        {teams.find(t => t.key === $sfTeam)?.label ?? $sfTeam}
+      </div>
+      {:else}
       <div style="position:relative">
         <select onchange={onTeamChange} value={$sfTeam} style="padding-right:36px">
           {#each teams as t}
@@ -89,6 +100,7 @@
         </select>
         <div style="position:absolute;right:14px;top:50%;transform:translateY(-50%);color:var(--red);font-size:12px;pointer-events:none">▼</div>
       </div>
+      {/if}
     </div>
 
     {#if (teams.find(t => t.key === $sfTeam)?.subteams ?? []).length > 0}
@@ -185,6 +197,7 @@
 
   <!-- Nav — single column on mobile, 3-column on desktop -->
   <div class="w-full hub-container nav-grid" style="margin-bottom:24px">
+    {#if !restricted}
     <a href="/se-scorecard-v2/report" class="p5-menu-btn nav-card">
       <span style="font-size:24px">📊</span>
       <div style="flex:1">
@@ -201,6 +214,7 @@
       </div>
       <span style="color:var(--red);font-size:18px">▶</span>
     </a>
+    {/if}
     <a href="/se-scorecard-v2/me" class="p5-menu-btn nav-card">
       <span style="font-size:24px">👤</span>
       <div style="flex:1">

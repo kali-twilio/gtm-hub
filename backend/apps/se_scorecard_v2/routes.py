@@ -546,9 +546,18 @@ def _email_to_se_name(email: str, ses: list) -> str | None:
 # ---------------------------------------------------------------------------
 
 def enrich_me(email: str) -> dict:
-    """Called by /api/me — check all cached team files for this SE."""
+    """Called by /api/me — attach SF profile from session + SE identity from cache."""
+    from flask import session
+
+    out: dict = {
+        "sf_access":       session.get("sf_access", "full"),
+        "sf_role_name":    session.get("sf_role_name"),
+        "sf_display_name": session.get("sf_display_name"),
+        "sf_title":        session.get("sf_title"),
+    }
+
+    # Check cached team data to identify if this user is an SE (for My Stats page)
     for team_key in TEAMS:
-        # Search any cached period for this team
         for p in OUTPUT_DIR.glob(f"sf_se_data_{team_key}_*.json"):
             try:
                 cached = json.loads(p.read_text(encoding="utf-8"))
@@ -556,8 +565,15 @@ def enrich_me(email: str) -> dict:
                 continue
             se_name = _email_to_se_name(email, cached)
             if se_name:
-                return {"sf_is_se": True, "sf_se_name": se_name, "sf_team": team_key}
-    return {"sf_is_se": False, "sf_se_name": None, "sf_team": None}
+                out.update({"sf_is_se": True, "sf_se_name": se_name, "sf_team": team_key})
+                return out
+
+    out.update({
+        "sf_is_se":  False,
+        "sf_se_name": None,
+        "sf_team":    session.get("sf_team"),
+    })
+    return out
 
 
 # ---------------------------------------------------------------------------

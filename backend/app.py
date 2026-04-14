@@ -30,6 +30,7 @@ from flask import Flask, request, jsonify, redirect, url_for, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 from google_auth_oauthlib.flow import Flow
 import requests as http
+from salesforce import sf
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger(__name__)
@@ -65,6 +66,51 @@ SCOPES               = ["openid", "https://www.googleapis.com/auth/userinfo.emai
 
 if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
     raise RuntimeError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set.")
+
+# ── Salesforce role → access helpers ─────────────────────────────────────────
+
+def _sf_access_level(role_name: str) -> str:
+    """
+    'full'          — SE managers (FLM/SLM) and all non-SE roles.
+    'se_restricted' — Individual SE contributors (role starts with 'SE -').
+    """
+    if role_name.startswith(("SE FLM", "SE SLM")):
+        return "full"
+    if role_name.startswith("SE -"):
+        return "se_restricted"
+    return "full"
+
+def _sf_role_to_team(role_name: str) -> str | None:
+    """Map an IC SE's UserRole to a scorecard team key."""
+    r = role_name.lower()
+    if "self service" in r: return "digital_sales"
+    if "dorg"         in r: return "dorg"
+    if "namer"        in r: return "namer"
+    if "emea"         in r: return "emea"
+    if "apj"          in r: return "apj"
+    if "latam"        in r: return "latam"
+    return None
+
+def _enrich_session_from_sf(email: str) -> None:
+    """
+    Look up the Salesforce User by email and store profile/access info in the
+    session.  Falls back to full access silently if SF is unavailable.
+    """
+    sf_user = sf.get_user_by_email(email)
+    if not sf_user:
+        session.setdefault("sf_access", "full")
+        return
+    role_name = (sf_user.get("UserRole") or {}).get("Name") or ""
+    access    = _sf_access_level(role_name)
+    session["sf_access"]       = access
+    session["sf_role_name"]    = role_name
+    session["sf_display_name"] = sf_user.get("Name")
+    session["sf_title"]        = sf_user.get("Title")
+    session["sf_user_id"]      = sf_user.get("Id")
+    session["sf_team"]         = _sf_role_to_team(role_name) if access == "se_restricted" else None
+    log.info("SF profile loaded for %s: role=%r access=%s", email, role_name, access)
+
+# ─────────────────────────────────────────────────────────────────────────────
 
 APPS_DIR = Path(__file__).parent / "apps"
 
@@ -153,6 +199,19 @@ def enforce_auth():
     if _rate_limited(key):
         return jsonify({"error": "Too many requests"}), 429
 
+    # Role-based access control for individual SE contributors
+    if session.get("sf_access") == "se_restricted":
+        p = request.path
+        # Block the full report and power rankings entirely
+        if p in ("/api/se-scorecard-v2/data/report", "/api/se-scorecard-v2/data/rankings"):
+            return jsonify({"error": "Access denied"}), 403
+        # Restrict SE data queries to their own team only
+        if p == "/api/se-scorecard-v2/data/ses":
+            allowed = session.get("sf_team")
+            requested = request.args.get("team", "")
+            if allowed and requested and requested != allowed:
+                return jsonify({"error": "Access denied"}), 403
+
 @app.after_request
 def security_headers(response):
     response.headers["Cache-Control"] = "no-store"
@@ -204,6 +263,7 @@ def oauth2callback():
         if not email.endswith(f"@{ALLOWED_DOMAIN}"):
             return redirect(f"{_frontend_url}/?error=Access+restricted+to+%40{ALLOWED_DOMAIN}+accounts")
         session["user_email"] = email
+        _enrich_session_from_sf(email)
     except Exception:
         return redirect(f"{_frontend_url}/?error=Sign-in+failed")
     return redirect(f"{_frontend_url}/")

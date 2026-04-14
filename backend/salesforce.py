@@ -126,6 +126,26 @@ class SalesforceClient:
 
         return records
 
+    def get_user_by_email(self, email: str) -> dict | None:
+        """
+        Return the Salesforce User record for a given email, or None if not found / SF unavailable.
+        Used at login to determine role-based access level.
+        """
+        if not self.configured:
+            return None
+        try:
+            safe = email.replace("'", "\\'")
+            results = self.query(
+                f"SELECT Id, Name, Email, Title, UserRole.Name "
+                f"FROM User "
+                f"WHERE Email = '{safe}' AND IsActive = true "
+                f"LIMIT 1"
+            )
+            return results[0] if results else None
+        except Exception:
+            log.warning("SF user lookup failed for %s", email, exc_info=True)
+            return None
+
 
 # Shared singleton — import this in any app
 sf = SalesforceClient()

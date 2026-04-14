@@ -33,7 +33,12 @@
   <div style="display:flex;align-items:center;gap:16px">
     <button onclick={() => theme.toggle()} style="background:rgba(242,47,70,0.07);border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;color:#F22F46;cursor:pointer;display:flex;align-items:center;gap:5px;letter-spacing:0.03em;text-transform:uppercase"><span>🎉</span> Fun Mode</button>
     {#if $user?.email}
-    <span style="font-size:12px;color:rgba(13,18,43,0.45);font-weight:500">{$user.email}</span>
+    <div style="text-align:right">
+      <div style="font-size:12px;font-weight:600;color:rgba(13,18,43,0.7)">{$user.sf_display_name ?? $user.email}</div>
+      {#if $user.sf_title}
+      <div style="font-size:10px;color:rgba(13,18,43,0.4);font-weight:500;margin-top:1px">{$user.sf_title}</div>
+      {/if}
+    </div>
     <a href="/logout" style="font-size:12px;font-weight:700;color:#F22F46;text-decoration:none;text-transform:uppercase;letter-spacing:0.08em">Sign out</a>
     {/if}
   </div>
