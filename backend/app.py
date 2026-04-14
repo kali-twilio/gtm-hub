@@ -27,7 +27,7 @@ from collections import defaultdict
 from pathlib import Path
 from flask import Blueprint
 
-from flask import Flask, request, jsonify, redirect, session
+from flask import Flask, request, jsonify, redirect, url_for, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 from google_auth_oauthlib.flow import Flow
 import requests as http
@@ -168,7 +168,8 @@ def build_flow():
             "token_uri":     "https://oauth2.googleapis.com/token",
         }},
         scopes=SCOPES,
-        redirect_uri=f"{_frontend_url}/oauth2callback",
+        redirect_uri=(url_for("oauth2callback", _external=True) if _local_dev
+                      else f"{_frontend_url}/oauth2callback"),
     )
 
 @app.before_request
