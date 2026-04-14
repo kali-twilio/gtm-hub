@@ -191,10 +191,24 @@ http {
 }
 NGINXCONF
 
+# ── Self-signed cert (fallback if certbot fails) ─────────────────────────────
+openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
+  -keyout /etc/nginx/selfsigned.key \
+  -out /etc/nginx/selfsigned.crt \
+  -subj "/CN=${DOMAIN}" \
+  -addext "subjectAltName=DNS:${DOMAIN}"
+
 cat > /etc/nginx/conf.d/app.conf << EOF
 server {
     listen 80;
     server_name ${DOMAIN};
+    return 301 https://\\\$host\\\$request_uri;
+}
+server {
+    listen 443 ssl;
+    server_name ${DOMAIN};
+    ssl_certificate     /etc/nginx/selfsigned.crt;
+    ssl_certificate_key /etc/nginx/selfsigned.key;
     client_max_body_size 10M;
 
     add_header X-Content-Type-Options "nosniff" always;
@@ -223,12 +237,16 @@ systemctl daemon-reload
 systemctl enable app nginx
 systemctl start app nginx
 
-certbot --nginx -d ${DOMAIN} \
+# ── Try certbot — replaces self-signed cert if successful ────────────────────
+if certbot --nginx -d ${DOMAIN} \
   --non-interactive --agree-tos \
   -m ${CERTBOT_EMAIL} \
-  --redirect
-
-echo "0 0,12 * * * root certbot renew --quiet" >> /etc/crontab
+  --redirect; then
+  echo "0 0,12 * * * root certbot renew --quiet" >> /etc/crontab
+  echo "Certbot: trusted cert installed."
+else
+  echo "Certbot failed (rate limit?). Running with self-signed cert — site is up on HTTPS but browser will warn."
+fi
 
 echo "SETUP COMPLETE"
 USERDATA
