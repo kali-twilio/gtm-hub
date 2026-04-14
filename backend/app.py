@@ -168,7 +168,7 @@ def build_flow():
             "token_uri":     "https://oauth2.googleapis.com/token",
         }},
         scopes=SCOPES,
-        redirect_uri=url_for("oauth2callback", _external=True),
+        redirect_uri=f"{_frontend_url}/oauth2callback",
     )
 
 @app.before_request
