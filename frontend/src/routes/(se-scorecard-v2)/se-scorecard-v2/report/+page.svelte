@@ -10,7 +10,9 @@
   const notesFloorLabel = $derived(icavMin === 0 ? 'All deals' : `$${icavMin >= 1000 ? icavMin/1000 + 'K' : icavMin}+`);
   let rankCriteriaExpanded = $state(false);
   let colTipIdx = $state(-1);
+  let actColTipIdx = $state(-1);
   let notesFilter = $state(false);
+  let showActivity = $state(false);
 
   // Returns a copy of an SE with iACV/wins recalculated from only fully-documented
   // TW opps (both Sales_Engineer_Notes__c and SE_Notes_History__c filled).
@@ -25,15 +27,20 @@
       const s = [...arr].sort((a: any, b: any) => a.icav - b.icav);
       return s.length ? s[Math.floor(s.length / 2)].icav : 0;
     };
+    const act_wins   = actOpps.length;
+    const closed_lost = se.closed_lost ?? 0;
+    const wr_total    = act_wins + closed_lost;
     return {
       ...se,
-      act_icav,  act_wins: actOpps.length,
-      act_avg:    actOpps.length ? Math.round(act_icav / actOpps.length) : 0,
+      act_icav,  act_wins,
+      act_avg:    act_wins ? Math.round(act_icav / act_wins) : 0,
       act_median: medianOf(actOpps),
       exp_icav,  exp_wins: expOpps.length,
       exp_avg:    expOpps.length ? Math.round(exp_icav / expOpps.length) : 0,
       exp_median: medianOf(expOpps),
       total_icav: act_icav + exp_icav,
+      closed_won: act_wins,
+      win_rate:   wr_total > 0 ? Math.round(act_wins / wr_total * 100) : 0,
     };
   }
 
@@ -60,9 +67,10 @@
     const sorted = [...mapped].sort((a: any, b: any) => b.total_icav - a.total_icav);
     return sorted.map((se: any, i: number) => ({ ...se, rank: i + 1 }));
   })() : []);
-  const actSorted = $derived(notesFilter && data
-    ? [...filteredRanked].filter((s: any) => s.act_icav > 0).sort((a: any, b: any) => b.act_icav - a.act_icav)
-    : (data ? data.act_sorted : []));
+  const actKey    = (s: any) => s.act_icav + (view === 'all' ? (s.non_tw_act_icav ?? 0) : 0);
+  const actSorted = $derived(data
+    ? [...(notesFilter ? filteredRanked : data.ranked)].filter((s: any) => actKey(s) > 0).sort((a: any, b: any) => actKey(b) - actKey(a))
+    : []);
   const expSorted = $derived(notesFilter && data
     ? [...filteredRanked].filter((s: any) => s.exp_icav > 0).sort((a: any, b: any) => b.exp_icav - a.exp_icav)
     : (data ? data.exp_sorted : []));
@@ -79,20 +87,64 @@
   // When notes filter is on every remaining opp already has both fields filled → column is trivially 100%, hide it
   const hasNotesCol   = $derived(!notesFilter && filteredRanked.some((s: any) => (s.note_hv_total ?? 0) > 0));
   const hasWinRateCol = $derived(filteredRanked.some((s: any) => s.win_rate > 0));
-  const hasEmailCol   = $derived(filteredRanked.some((s: any) => emailTotal(s) > 0));
-  const hasMeetingCol = $derived(filteredRanked.some((s: any) => meetingTotal(s) > 0));
-  const actSes      = $derived(actSorted.filter((s: any) => s.act_icav > 0));
+  const hasEmailCol   = $derived(showActivity && filteredRanked.some((s: any) => emailTotal(s) > 0));
+  const hasMeetingCol = $derived(showActivity && filteredRanked.some((s: any) => meetingTotal(s) > 0));
+  const actSes      = $derived(actSorted.filter((s: any) => actKey(s) > 0));
   const expSes      = $derived(expSorted.filter((s: any) => s.exp_icav > 0));
   const actTotals   = $derived({
-    wins:      actSes.reduce((n: number, s: any) => n + s.act_wins, 0),
-    icav:      actSes.reduce((n: number, s: any) => n + s.act_icav, 0),
+    wins:      actSes.reduce((n: number, s: any) => n + s.act_wins + (view === 'all' ? (s.non_tw_act_wins ?? 0) : 0), 0),
+    icav:      actSes.reduce((n: number, s: any) => n + s.act_icav + (view === 'all' ? (s.non_tw_act_icav ?? 0) : 0), 0),
     avg:       actSes.length ? Math.round(actSes.reduce((n: number, s: any) => n + s.act_avg, 0) / actSes.length) : 0,
     inq:       actSes.reduce((n: number, s: any) => n + (s.email_act_inq ?? 0), 0),
     outq:      actSes.reduce((n: number, s: any) => n + (s.email_act_outq ?? 0), 0),
     outq_icav: actSes.reduce((n: number, s: any) => n + (s.email_act_outq_icav ?? 0), 0),
-    meet_inq:  actSes.reduce((n: number, s: any) => n + (s.meeting_act_inq ?? 0), 0),
-    meet_outq: actSes.reduce((n: number, s: any) => n + (s.meeting_act_outq ?? 0), 0),
+    meet_inq:       actSes.reduce((n: number, s: any) => n + (s.meeting_act_inq ?? 0), 0),
+    meet_outq:      actSes.reduce((n: number, s: any) => n + (s.meeting_act_outq ?? 0), 0),
+    meet_outq_icav: actSes.reduce((n: number, s: any) => n + (s.meeting_act_outq_icav ?? 0), 0),
   });
+  const actTeamStats = $derived((() => {
+    const wins = actSes.reduce((n: number, s: any) => n + s.act_wins, 0);
+    const icav = actSes.reduce((n: number, s: any) => n + s.act_icav, 0);
+    const actMots = new Set(['act', 'nb']);
+    const deals = actSes
+      .flatMap((s: any) => {
+        const base: any[] = s.tw_opps_detail ?? [];
+        const opps = notesFilter
+          ? base.filter((o: any) => o.has_notes && o.has_history && actMots.has(o.motion))
+          : base.filter((o: any) => actMots.has(o.motion));
+        return opps.map((o: any) => o.icav ?? 0);
+      })
+      .filter((v: number) => v > 0)
+      .sort((a: number, b: number) => a - b);
+    const m = Math.floor(deals.length / 2);
+    const deal_median = deals.length === 0 ? 0 : deals.length % 2 ? deals[m] : Math.round((deals[m-1] + deals[m]) / 2);
+    const closed_won  = actSes.reduce((n: number, s: any) => n + (s.closed_won  ?? 0), 0);
+    const closed_lost = actSes.reduce((n: number, s: any) => n + (s.closed_lost ?? 0), 0);
+    return {
+      avg: wins > 0 ? Math.round(icav / wins) : 0,
+      deal_median,
+      win_rate: (closed_won + closed_lost) > 0 ? Math.round(closed_won / (closed_won + closed_lost) * 100) : 0,
+      closed_won,
+      closed_lost,
+    };
+  })());
+  const actMedians = $derived(actSes.length ? (() => {
+    const m = (vals: number[]) => {
+      const v = [...vals].sort((a: number, b: number) => a - b);
+      if (!v.length) return 0;
+      const mid = Math.floor(v.length / 2);
+      return v.length % 2 ? v[mid] : Math.round((v[mid - 1] + v[mid]) / 2);
+    };
+    return {
+      wins:       m(actSes.map((s: any) => s.act_wins + (view === 'all' ? (s.non_tw_act_wins ?? 0) : 0))),
+      icav:       m(actSes.map((s: any) => s.act_icav + (view === 'all' ? (s.non_tw_act_icav ?? 0) : 0))),
+      win_rate:   m(actSes.filter((s: any) => s.win_rate > 0).map((s: any) => s.win_rate)),
+      email_inq:  m(actSes.map((s: any) => s.email_act_inq ?? 0)),
+      email_outq: m(actSes.map((s: any) => s.email_act_outq ?? 0)),
+      meet_inq:   m(actSes.map((s: any) => s.meeting_act_inq ?? 0)),
+      meet_outq:  m(actSes.map((s: any) => s.meeting_act_outq ?? 0)),
+    };
+  })() : null);
   const expTotals   = $derived({
     wins:           expSes.reduce((n: number, s: any) => n + s.exp_wins, 0),
     icav:           expSes.reduce((n: number, s: any) => n + s.exp_icav, 0),
@@ -104,6 +156,7 @@
     mrr_delta_total:filteredRanked.reduce((n: number, s: any) => n + (s.exp_mrr_delta_total ?? 0), 0),
     meet_inq:       filteredRanked.reduce((n: number, s: any) => n + (s.meeting_exp_inq ?? 0), 0),
     meet_outq:      filteredRanked.reduce((n: number, s: any) => n + (s.meeting_exp_outq ?? 0), 0),
+    meet_outq_icav: filteredRanked.reduce((n: number, s: any) => n + (s.meeting_exp_outq_icav ?? 0), 0),
   });
 
   function fmtMrrDelta(delta: number): string {
@@ -118,10 +171,10 @@
     {l:'Avg Deal',    v:fmt(expTotals.avg),        c:'var(--exp-color)'},
     ...(expTotals.arr_total > 0 ? [{l:'Account ARR', v:fmt(expTotals.arr_total), c:$theme==='twilio'?'#178742':'#10B981'}] : []),
     ...(expTotals.arr_total > 0 ? [{l:'Quarter MRR Δ', v:fmtMrrDelta(expTotals.mrr_delta_total), c:expTotals.mrr_delta_total > 0 ? ($theme==='twilio'?'#178742':'#10B981') : expTotals.mrr_delta_total < 0 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}] : []),
-    {l:'In-Q Emails', v:expTotals.inq > 0 ? String(expTotals.inq) : '—', c:'var(--exp-color)'},
-    {l:'Pipe Emails', v:expTotals.outq > 0 ? expTotals.outq + (expTotals.outq_icav > 0 ? ' · '+fmt(expTotals.outq_icav) : '') : '—', c:'var(--exp-color)'},
-    ...(expTotals.meet_inq > 0 || expTotals.meet_outq > 0 ? [{l:'In-Q Meets', v:expTotals.meet_inq > 0 ? String(expTotals.meet_inq) : '—', c:'var(--exp-color)'}] : []),
-    ...(expTotals.meet_outq > 0 ? [{l:'Pipe Meets', v:String(expTotals.meet_outq), c:'var(--exp-color)'}] : []),
+    ...(showActivity && expTotals.inq > 0  ? [{l:'In-Q Emails', v:String(expTotals.inq), c:'var(--exp-color)'}] : []),
+    ...(showActivity && expTotals.outq > 0 ? [{l:'Pipe Emails', v:expTotals.outq + (expTotals.outq_icav > 0 ? ' · '+fmt(expTotals.outq_icav) : ''), c:'var(--exp-color)'}] : []),
+    ...(showActivity && (expTotals.meet_inq > 0 || expTotals.meet_outq > 0) ? [{l:'In-Q Meets', v:expTotals.meet_inq > 0 ? String(expTotals.meet_inq) : '—', c:'var(--exp-color)'}] : []),
+    ...(showActivity && expTotals.meet_outq > 0 ? [{l:'Pipe Meets', v:expTotals.meet_outq + (expTotals.meet_outq_icav > 0 ? ' · '+fmt(expTotals.meet_outq_icav) : ''), c:'var(--exp-color)'}] : []),
   ] : []);
 
   const actStatCols = $derived(data ? [
@@ -161,9 +214,49 @@
     emails:              med(data.ranked.map((s: any) => emailTotal(s))),
     meetings:            med(data.ranked.map((s: any) => meetingTotal(s))),
     note_hv_avg_entries: med(data.ranked.map((s: any) => s.note_hv_avg_entries ?? 0)),
+    mrr_delta: (() => {
+      const vals = filteredRanked
+        .filter((s: any) => (s.exp_arr_total ?? 0) > 0)
+        .map((s: any) => s.exp_mrr_delta_total ?? 0)
+        .sort((a: number, b: number) => a - b);
+      if (!vals.length) return null;
+      const m = Math.floor(vals.length / 2);
+      return vals.length % 2 ? vals[m] : Math.round((vals[m - 1] + vals[m]) / 2);
+    })(),
   } : null);
 
   let expInfoVisible = $state(false);
+  let activeSection = $state('rankings');
+  let navHovered = $state(false);
+
+  const navSections = $derived(data ? [
+    { id: 'rankings',  label: 'Rankings' },
+    { id: 'activate',  label: motionLabels.act,  show: actSes.length > 0 },
+    { id: 'expansion', label: motionLabels.exp,  show: expSes.length > 0 },
+    { id: 'deals',     label: 'Largest Deals',   show: !!(data.deal_sorted?.length) },
+    { id: 'notes',     label: 'Notes Quality',   show: !notesFilter },
+    { id: 'trends',    label: 'Trends & Flags' },
+    { id: 'recs',      label: 'Recommendations', show: !!(data.recommendations?.length) },
+    { id: 'profiles',  label: 'SE Profiles' },
+  ].filter((s: any) => s.show !== false) : []);
+
+  $effect(() => {
+    if (!data || typeof window === 'undefined') return;
+    const ids = navSections.map((s: any) => s.id);
+    function onScroll() {
+      for (let i = ids.length - 1; i >= 0; i--) {
+        const el = document.getElementById(ids[i]);
+        if (el && el.getBoundingClientRect().top <= 100) {
+          activeSection = ids[i];
+          return;
+        }
+      }
+      if (ids.length) activeSection = ids[0];
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => window.removeEventListener('scroll', onScroll);
+  });
 
   const ICAV_PRESETS = [
     { label: 'All', value: 0 },
@@ -202,6 +295,28 @@
   <a href="/se-scorecard-v2" class="p5-back-btn">◀ Back</a>
 </div>
 
+<!-- Section nav -->
+{#if navSections.length > 1}
+<nav
+  onmouseenter={() => navHovered = true}
+  onmouseleave={() => navHovered = false}
+  style="position:fixed;right:20px;top:50%;transform:translateY(-50%);z-index:200;display:flex;flex-direction:column;align-items:flex-end;gap:2px"
+>
+  <!-- connecting line -->
+  <div style="position:absolute;right:4px;top:12px;bottom:12px;width:1px;background:rgba(var(--red-rgb),0.15);pointer-events:none"></div>
+  {#each navSections as sec}
+  {@const isActive = activeSection === sec.id}
+  <div
+    onclick={() => { const el = document.getElementById(sec.id); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 72, behavior: 'smooth' }); }}
+    style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;position:relative"
+  >
+    <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:{isActive?'var(--red)':'var(--text-muted)'};max-width:{navHovered||isActive?'140px':'0'};overflow:hidden;white-space:nowrap;transition:max-width 0.2s ease,opacity 0.15s;opacity:{navHovered||isActive?1:0}">{sec.label}</span>
+    <div style="width:{isActive?9:5}px;height:{isActive?9:5}px;border-radius:50%;background:{isActive?'var(--red)':'rgba(var(--red-rgb),0.3)'};border:1px solid {isActive?'var(--red)':'rgba(var(--red-rgb),0.4)'};transition:all 0.15s;flex-shrink:0"></div>
+  </div>
+  {/each}
+</nav>
+{/if}
+
 <div style="max-width:1200px;margin:0 auto;padding:60px 24px 40px">
 
   <div style="margin-bottom:28px">
@@ -224,8 +339,9 @@
     {/each}
   </div>
 
-  <!-- Controls row -->
-  <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start;margin-bottom:20px">
+  <!-- Controls row — sticky -->
+  <div style="position:sticky;top:68px;z-index:150;margin:0 -24px;padding:10px 24px;background:var(--bg);border-bottom:1px solid rgba(var(--red-rgb),0.1);backdrop-filter:blur(8px);margin-bottom:0">
+  <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
 
     <!-- View toggle -->
     <div>
@@ -251,6 +367,14 @@
       </div>
     </div>
 
+    <!-- Activity columns toggle -->
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Activity</div>
+      <button onclick={() => showActivity = !showActivity}
+        style="padding:5px 12px;font-size:12px;font-weight:700;border-radius:5px;border:1px solid {showActivity?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:{showActivity?'rgba(var(--red-rgb),0.1)':'transparent'};color:{showActivity?'var(--red)':'var(--text-muted)'};cursor:pointer"
+      >{showActivity ? '✓ Emails & Meetings' : 'Emails & Meetings'}</button>
+    </div>
+
     <!-- Notes filter -->
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Notes Filter</div>
@@ -260,9 +384,12 @@
     </div>
 
   </div>
+  </div>
+
+  <div style="margin-bottom:20px"></div>
 
   <!-- Overall Rankings -->
-  <div class="p5-panel" style="margin-bottom:20px">
+  <div id="rankings" class="p5-panel" style="margin-bottom:20px">
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
       <div style="display:flex;align-items:center;justify-content:space-between">
         <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Overall Rankings</h2>
@@ -389,7 +516,13 @@
             {#if hasActCol}<td style="padding:10px 16px"><div style="font-weight:700;color:var(--act-color);opacity:0.7">{fmt(medians.act_icav)}</div><div style="font-size:11px;color:var(--text-muted)">{medians.act_wins} wins</div></td>{/if}
             {#if hasExpCol}<td style="padding:10px 16px"><div style="font-weight:700;color:var(--exp-color);opacity:0.7">{fmt(medians.exp_icav)}</div><div style="font-size:11px;color:var(--text-muted)">{medians.exp_wins} wins</div></td>{/if}
             <td style="padding:10px 16px;font-weight:900;color:var(--text-muted)">{fmt(medians.total_icav)}</td>
-            {#if hasArrCol}<td style="padding:10px 16px;color:var(--text-faint)">—</td>{/if}
+            {#if hasArrCol}<td style="padding:10px 16px">
+              {#if medians.mrr_delta !== null}
+                <div style="font-weight:700;color:{medians.mrr_delta > 0 ? ($theme==='twilio'?'#178742':'#10B981') : medians.mrr_delta < 0 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'};opacity:0.7">{fmtMrrDelta(medians.mrr_delta)}</div>
+              {:else}
+                <span style="color:var(--text-faint)">—</span>
+              {/if}
+            </td>{/if}
             {#if hasNotesCol}<td style="padding:10px 16px;font-size:12px;color:var(--text-muted)">{medians.note_hv_avg_entries > 0 ? medians.note_hv_avg_entries+' avg entries' : '—'}</td>{/if}
             {#if hasEmailCol}<td style="padding:10px 16px;font-weight:700;color:var(--text-muted)">{medians.emails > 0 ? medians.emails : '—'}</td>{/if}
             {#if hasMeetingCol}<td style="padding:10px 16px;font-weight:700;color:var(--text-muted)">{medians.meetings > 0 ? medians.meetings : '—'}</td>{/if}
@@ -404,40 +537,48 @@
   <!-- Activate + Expansion -->
   <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:20px">
     {#if actSes.length > 0}
-    <div class="p5-panel">
+    <div id="activate" class="p5-panel">
       <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
         <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);margin-bottom:2px">{motionLabels.act}</h2>
         <p style="font-size:12px;color:var(--text-muted)">{motionLabels.actDesc}</p>
-      </div>
-      <!-- Activate totals summary -->
-      <div style="display:grid;grid-template-columns:repeat({actStatCols.length},1fr);gap:0;border-bottom:2px solid rgba(var(--act-rgb),0.2)">
-        {#each actStatCols as t}
-        <div style="padding:12px 16px;border-right:1px solid rgba(var(--red-rgb),0.08);last:border-none">
-          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--act-color);margin-bottom:4px">{t.l}</div>
-          <div style="font-size:16px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text)">{t.v}</div>
-        </div>
-        {/each}
       </div>
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead style="background:rgba(var(--red-rgb),0.06)"><tr>
             {#each [
-              {h:'#',show:true},{h:'SE',show:true},{h:'Wins',show:true},{h:'iACV',show:true},{h:'Avg',show:true},{h:'Median',show:true},
-              {h:'Win Rate',show:hasWinRateCol},
-              {h:'In-Q Emails',show:actTotals.inq>0},{h:'Pipe Emails',show:actTotals.outq>0},
-              {h:'In-Q Meets',show:actTotals.meet_inq>0},{h:'Pipe Meets',show:actTotals.meet_outq>0},
-            ].filter(c=>c.show) as {h}}
-            <th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>
+              {h:'#',show:true, tip:'Ranked by Activate iACV within this period, highest to lowest.'},
+              {h:'SE',show:true, tip:''},
+              {h:'Wins',show:true, tip:`Count of Technical Win Closed Won ${motionLabels.act} opps. ${motionLabels.actDesc}. Only TW opps count toward ranking.`},
+              {h:'iACV',show:true, tip:`Sum of iACV from Technical Win Closed Won ${motionLabels.act} opps. Incremental Annual Contract Value — the net new ARR committed on close.`},
+              {h:'Median',show:true, tip:`Median deal size (iACV) across this SE's ${motionLabels.act.toLowerCase()} wins. More robust than average — less skewed by a single large deal.`},
+              {h:'Win Rate',show:hasWinRateCol, tip:`Closed Won ÷ (Closed Won + Closed Lost) for ${motionLabels.act} opps. Only counts opps that reached a final stage this period.`},
+              {h:'In-Q Emails',show:showActivity && actTotals.inq>0, tip:`Salesforce Task emails sent to ${motionLabels.act} opps that closed this quarter. Measures engagement on deals that converted this period.`},
+              {h:'Pipe Emails',show:showActivity && actTotals.outq>0, tip:`Emails to ${motionLabels.act} opps closing a future quarter. Indicates early-stage pipeline development.`},
+              {h:'In-Q Meets',show:showActivity && actTotals.meet_inq>0, tip:`Meetings on ${motionLabels.act} opps closing this quarter. Recurring series deduplicated — same series on the same opp counts once.`},
+              {h:'Pipe Meets',show:showActivity && actTotals.meet_outq>0, tip:`Meetings on pipeline ${motionLabels.act} opps (future quarter). Shows investment in building future pipeline.`},
+            ].filter(c=>c.show) as {h, tip}, idx}
+            <th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap;position:relative"
+              onmouseenter={() => tip ? actColTipIdx = idx : null}
+              onmouseleave={() => actColTipIdx = -1}
+            >
+              <span style="{tip ? 'border-bottom:1px dashed rgba(var(--red-rgb),0.4);cursor:help;padding-bottom:1px' : ''}">{h}</span>
+              {#if actColTipIdx === idx && tip}
+              <div style="position:absolute;top:calc(100% + 4px);{idx > 5 ? 'right:0' : 'left:0'};z-index:400;width:280px;background:{$theme==='twilio'?'#fff':'#0f1117'};border:1px solid rgba(var(--red-rgb),0.2);border-radius:6px;padding:10px 12px;box-shadow:0 6px 24px rgba(0,0,0,0.2);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted);line-height:1.5;white-space:normal;pointer-events:none">
+                {tip}
+              </div>
+              {/if}
+            </th>
             {/each}
           </tr></thead>
           <tbody>
             {#each actSorted as se, i}
+            {@const vActWins = se.act_wins + (view === 'all' ? (se.non_tw_act_wins ?? 0) : 0)}
+            {@const vActIcav = se.act_icav + (view === 'all' ? (se.non_tw_act_icav ?? 0) : 0)}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
               <td style="padding:10px 16px;font-weight:700;color:var(--text)">{se.name}</td>
-              <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.act_wins}</td>
-              <td style="padding:10px 16px;color:var(--act-color);font-weight:700">{fmt(se.act_icav)}</td>
-              <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.act_avg)}</td>
+              <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{vActWins}</td>
+              <td style="padding:10px 16px;color:var(--act-color);font-weight:700">{fmt(vActIcav)}</td>
               <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.act_median)}</td>
               {#if hasWinRateCol}
               <td style="padding:10px 16px">
@@ -445,19 +586,43 @@
                 <div style="font-size:11px;color:var(--text-muted);margin-top:1px">{se.closed_won}W / {se.closed_lost}L</div>
               </td>
               {/if}
-              {#if actTotals.inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.email_act_inq ?? 0) > 0 ? se.email_act_inq : '—'}</td>{/if}
-              {#if actTotals.outq > 0}<td style="padding:10px 16px;color:var(--act-color);font-weight:700">{#if (se.email_act_outq ?? 0) > 0}{se.email_act_outq}{#if (se.email_act_outq_icav ?? 0) > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(se.email_act_outq_icav)}</span>{/if}{:else}—{/if}</td>{/if}
-              {#if actTotals.meet_inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.meeting_act_inq ?? 0) > 0 ? se.meeting_act_inq : '—'}</td>{/if}
-              {#if actTotals.meet_outq > 0}<td style="padding:10px 16px;color:var(--act-color);font-weight:700">{(se.meeting_act_outq ?? 0) > 0 ? se.meeting_act_outq : '—'}</td>{/if}
+              {#if showActivity && actTotals.inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.email_act_inq ?? 0) > 0 ? se.email_act_inq : '—'}</td>{/if}
+              {#if showActivity && actTotals.outq > 0}<td style="padding:10px 16px;color:var(--act-color);font-weight:700">{#if (se.email_act_outq ?? 0) > 0}{se.email_act_outq}{#if (se.email_act_outq_icav ?? 0) > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(se.email_act_outq_icav)}</span>{/if}{:else}—{/if}</td>{/if}
+              {#if showActivity && actTotals.meet_inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.meeting_act_inq ?? 0) > 0 ? se.meeting_act_inq : '—'}</td>{/if}
+              {#if showActivity && actTotals.meet_outq > 0}<td style="padding:10px 16px;color:var(--act-color);font-weight:700">{#if (se.meeting_act_outq ?? 0) > 0}{se.meeting_act_outq}{#if (se.meeting_act_outq_icav ?? 0) > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(se.meeting_act_outq_icav)}</span>{/if}{:else}—{/if}</td>{/if}
             </tr>
             {/each}
+            {#if actMedians}
+            <tr style="border-top:2px solid rgba(var(--act-rgb),0.2);background:rgba(var(--act-rgb),0.04)">
+              <td style="padding:10px 16px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--act-color)">MED</td>
+              <td style="padding:10px 16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--act-color)">Team Median</td>
+              <td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.wins} {actMedians.wins === 1 ? 'win' : 'wins'}</td>
+              <td style="padding:10px 16px;font-weight:900;color:var(--act-color);opacity:0.8">{fmt(actMedians.icav)}</td>
+              <td style="padding:10px 16px;color:var(--act-color);font-size:11px;opacity:0.8">
+                {#if actTeamStats.deal_median > 0}
+                <div style="font-weight:700">{fmt(actTeamStats.deal_median)}</div>
+                {:else}<span style="color:var(--text-faint)">—</span>{/if}
+              </td>
+              {#if hasWinRateCol}
+              <td style="padding:10px 16px">
+                {#if actMedians.win_rate > 0}
+                <div style="font-weight:700;color:{actMedians.win_rate >= 50 ? 'var(--exp-color)' : 'var(--text-muted)'};opacity:0.8">{actMedians.win_rate}%</div>
+                {:else}<span style="color:var(--text-faint)">—</span>{/if}
+              </td>
+              {/if}
+              {#if showActivity && actTotals.inq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.email_inq > 0 ? actMedians.email_inq : '—'}</td>{/if}
+              {#if showActivity && actTotals.outq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.email_outq > 0 ? actMedians.email_outq : '—'}</td>{/if}
+              {#if showActivity && actTotals.meet_inq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.meet_inq > 0 ? actMedians.meet_inq : '—'}</td>{/if}
+              {#if showActivity && actTotals.meet_outq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.meet_outq > 0 ? actMedians.meet_outq : '—'}</td>{/if}
+            </tr>
+            {/if}
           </tbody>
         </table>
       </div>
     </div>
     {/if}
     {#if expSes.length > 0}
-    <div class="p5-panel">
+    <div id="expansion" class="p5-panel">
       <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12);position:relative">
         <div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:2px"
           onmouseenter={() => expInfoVisible = true}
@@ -501,8 +666,8 @@
               {#each [
                 {h:'#',show:true},{h:'SE',show:true},{h:'Wins',show:true},{h:'iACV',show:true},{h:'Avg',show:true},{h:'Median',show:true},{h:'Status',show:true},
                 {h:'Account ARR',show:expTotals.arr_total>0},{h:'Quarter MRR Δ',show:expTotals.arr_total>0},
-                {h:'In-Q Emails',show:expTotals.inq>0},{h:'Pipe Emails',show:expTotals.outq>0},
-                {h:'In-Q Meets',show:expTotals.meet_inq>0},{h:'Pipe Meets',show:expTotals.meet_outq>0},
+                {h:'In-Q Emails',show:showActivity && expTotals.inq>0},{h:'Pipe Emails',show:showActivity && expTotals.outq>0},
+                {h:'In-Q Meets',show:showActivity && expTotals.meet_inq>0},{h:'Pipe Meets',show:showActivity && expTotals.meet_outq>0},
               ].filter(c=>c.show) as {h}}
               <th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>
               {/each}
@@ -547,10 +712,10 @@
                 {/if}
               </td>
               {/if}
-              {#if expTotals.inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.email_exp_inq ?? 0) > 0 ? se.email_exp_inq : '—'}</td>{/if}
-              {#if expTotals.outq > 0}<td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{#if (se.email_exp_outq ?? 0) > 0}{se.email_exp_outq}{#if (se.email_exp_outq_icav ?? 0) > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(se.email_exp_outq_icav)}</span>{/if}{:else}—{/if}</td>{/if}
-              {#if expTotals.meet_inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.meeting_exp_inq ?? 0) > 0 ? se.meeting_exp_inq : '—'}</td>{/if}
-              {#if expTotals.meet_outq > 0}<td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{(se.meeting_exp_outq ?? 0) > 0 ? se.meeting_exp_outq : '—'}</td>{/if}
+              {#if showActivity && expTotals.inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.email_exp_inq ?? 0) > 0 ? se.email_exp_inq : '—'}</td>{/if}
+              {#if showActivity && expTotals.outq > 0}<td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{#if (se.email_exp_outq ?? 0) > 0}{se.email_exp_outq}{#if (se.email_exp_outq_icav ?? 0) > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(se.email_exp_outq_icav)}</span>{/if}{:else}—{/if}</td>{/if}
+              {#if showActivity && expTotals.meet_inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.meeting_exp_inq ?? 0) > 0 ? se.meeting_exp_inq : '—'}</td>{/if}
+              {#if showActivity && expTotals.meet_outq > 0}<td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{#if (se.meeting_exp_outq ?? 0) > 0}{se.meeting_exp_outq}{#if (se.meeting_exp_outq_icav ?? 0) > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(se.meeting_exp_outq_icav)}</span>{/if}{:else}—{/if}</td>{/if}
             </tr>
             {/each}
           </tbody>
@@ -586,7 +751,7 @@
 
   <!-- Largest Deals -->
   {#if data.deal_sorted?.length}
-  <div class="p5-panel" style="margin-bottom:20px">
+  <div id="deals" class="p5-panel" style="margin-bottom:20px">
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)"><h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Largest Deals</h2></div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -613,7 +778,7 @@
 
   <!-- Notes Quality — hidden when notes filter is on (all shown opps are already fully documented) -->
   {#if !notesFilter}
-  <div class="p5-panel" style="margin-bottom:20px">
+  <div id="notes" class="p5-panel" style="margin-bottom:20px">
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
       <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);margin-bottom:2px">SE Notes Quality</h2>
       <p style="font-size:12px;color:var(--text-muted)">Coverage = both Solutions Team Notes fields filled · Entries counted from [Date: Name] timestamps in history</p>
@@ -653,7 +818,7 @@
   {/if}
 
   <!-- Trends -->
-  <div class="p5-panel" style="margin-bottom:20px">
+  <div id="trends" class="p5-panel" style="margin-bottom:20px">
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)"><h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Trends &amp; Flags</h2></div>
     <div style="padding:16px;display:flex;flex-direction:column;gap:8px">
       {#each data.trends as [cat, msg]}
@@ -668,7 +833,7 @@
 
   <!-- Recommendations -->
   {#if data.recommendations?.length}
-  <div class="p5-panel" style="margin-bottom:20px">
+  <div id="recs" class="p5-panel" style="margin-bottom:20px">
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
       <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);margin-bottom:2px">Recommendations</h2>
       <p style="font-size:12px;color:var(--text-muted)">Data-driven actions to increase iACV and revenue — derived from deal mix, email/meeting activity, notes hygiene, and win rates</p>
@@ -699,7 +864,7 @@
   {/if}
 
   <!-- SE Profiles grid -->
-  <div>
+  <div id="profiles">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px">
       <div class="p5-badge">SE Profiles</div>
       <div style="flex:1;height:1px;background:rgba(var(--red-rgb),0.15)"></div>

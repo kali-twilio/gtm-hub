@@ -234,7 +234,7 @@ def _build_soql(team_filter: str, start: str, end: str, icav_min: int = 0) -> st
         f"Technical_Lead__r.Name, Technical_Lead__r.Email, "
         f"Owner.Name, Owner.UserRole.Name, "
         f"Sales_Engineer_Notes__c, SE_Notes_History__c, "
-        f"Account.Name, "
+        f"Account.Name, Account.Owner.Name, "
         f"Account.Current_ARR_Based_on_Last_6_Months__c, "
         f"Account.Average_Amortized_Usage_Last_3_Months__c, "
         # Monthly amortized usage snapshots — used to compute quarter-anchored MRR delta
@@ -268,7 +268,7 @@ def _build_soql(team_filter: str, start: str, end: str, icav_min: int = 0) -> st
 def _build_win_rate_soql(team_filter: str, start: str, end: str) -> str:
     """Lightweight: all Closed Won + Closed Lost per SE for win rate. No iACV threshold."""
     return (
-        f"SELECT Technical_Lead__r.Name, StageName, Owner.UserRole.Name "
+        f"SELECT Technical_Lead__r.Name, StageName, Owner.UserRole.Name, Account.Owner.Name "
         f"FROM Opportunity "
         f"WHERE StageName IN ('Closed Won', 'Closed Lost') "
         f"AND {team_filter} "

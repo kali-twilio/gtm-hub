@@ -154,14 +154,17 @@ def _owner_role(opp: dict) -> str:
 
 def _is_activate(opp: dict) -> bool:
     """DSR motion: Activate = owner's role contains 'Activation'.
-    Fallback to FY_16_Owner_Team__c when owner has changed since close."""
+    Fallback to FY_16_Owner_Team__c when owner has changed since close.
+    Self-service-owned accounts are also definitionally Activate."""
     role = _owner_role(opp)
     if "Activation" in role:
         return True
     if "Expansion" in role:
         return False
     team = _team(opp)
-    return "DSR" in team and "Expansion" not in team
+    if "DSR" in team and "Expansion" not in team:
+        return True
+    return _is_self_service_account(opp)
 
 
 def _is_expansion(opp: dict) -> bool:
@@ -174,6 +177,15 @@ def _is_expansion(opp: dict) -> bool:
         return False
     team = _team(opp)
     return "Expansion" in team
+
+
+def _is_self_service_account(opp: dict) -> bool:
+    """True when the account is owned by the self-service channel.
+    Self-service-owned accounts are definitionally Activate — they have no expansion opps."""
+    acct  = opp.get("Account") or {}
+    owner = acct.get("Owner") or {}
+    name  = (owner.get("Name") or "").strip()
+    return "Self" in name  # matches "Self-Service", "Self Service"
 
 
 def _is_new_business(opp: dict) -> bool:
@@ -502,11 +514,15 @@ def merge_win_rate(ses: list, win_rate_opps: list, motion: str = "dsr"):
             lookup[name]["lost"] += 1
 
     for se in ses:
-        wr              = lookup.get(se["name"], {"won": 0, "lost": 0})
-        total           = wr["won"] + wr["lost"]
-        se["closed_won"]  = wr["won"]
-        se["closed_lost"] = wr["lost"]
-        se["win_rate"]    = round(wr["won"] / total * 100) if total > 0 else 0
+        wr = lookup.get(se["name"], {"won": 0, "lost": 0})
+        # closed_won = act_wins (TW CW, respects iACV floor) so Wins column and win rate
+        # numerator are always the same number. closed_lost still comes from the win rate query.
+        closed_won  = se["act_wins"]
+        closed_lost = wr["lost"]
+        total       = closed_won + closed_lost
+        se["closed_won"]  = closed_won
+        se["closed_lost"] = closed_lost
+        se["win_rate"]    = round(closed_won / total * 100) if total > 0 else 0
 
 
 # ---------------------------------------------------------------------------
