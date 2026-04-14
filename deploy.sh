@@ -251,6 +251,7 @@ systemctl enable app nginx
 systemctl start app nginx
 
 # ── Cert: restore from S3 or request fresh (LE → ZeroSSL → self-signed) ─────
+set +e  # cert failures must not abort the script
 CERT_INSTALLED=false
 
 # 1. Try to restore saved cert from S3
@@ -308,6 +309,7 @@ if [ "\$CERT_INSTALLED" = false ]; then
   fi
 fi
 
+set -e  # restore strict mode
 echo "SETUP COMPLETE"
 USERDATA
 
