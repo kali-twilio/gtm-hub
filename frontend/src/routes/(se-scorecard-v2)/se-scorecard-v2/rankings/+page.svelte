@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { getSFRankings, fmt } from '$lib/api';
+  import { getSFRankings, fmt, fmtMrr } from '$lib/api';
   import { theme, sfTeam, sfPeriod, sfSubteam, user } from '$lib/stores';
 
   let data: any = $state(null);
@@ -196,12 +196,12 @@
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.3em;color:var(--act-color);margin-bottom:10px">⚡ Live Salesforce · {data.quarter}</div>
       <h1 style="font-size:clamp(2.5rem,8vw,4rem);font-weight:800;letter-spacing:-0.03em;line-height:1;color:var(--text)">Power Rankings</h1>
       <div style="width:48px;height:3px;background:var(--red);margin:16px auto;border-radius:2px"></div>
-      <p style="color:var(--text-muted);font-size:12px;letter-spacing:.1em;text-transform:uppercase">DSR Sales Engineering · {data.total} SEs</p>
+      <p style="color:var(--text-muted);font-size:12px;letter-spacing:.1em;text-transform:uppercase">{data.team_label} · {data.total} SEs</p>
     {:else}
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.3em;color:#3B82F6;margin-bottom:14px">⚡ Live Salesforce · {data.quarter}</div>
       <h1 style="font-size:clamp(3rem,12vw,6rem);font-weight:900;letter-spacing:-.04em;line-height:.9;text-transform:uppercase;background:linear-gradient(135deg,#fff 0%,#FFB800 40%,#fff 60%,#64748b 100%);background-size:300% auto;-webkit-background-clip:text;-webkit-text-fill-color:transparent">Power<br>Rankings</h1>
       <div style="width:80px;height:4px;background:linear-gradient(90deg,#3B82F6,#8b5cf6,#FFB800);margin:18px auto;border-radius:2px"></div>
-      <p style="color:#334155;font-size:12px;letter-spacing:.1em;text-transform:uppercase">DSR Sales Engineering · {data.total} SEs</p>
+      <p style="color:#334155;font-size:12px;letter-spacing:.1em;text-transform:uppercase">{data.team_label} · {data.total} SEs</p>
     {/if}
   </div>
 
@@ -226,6 +226,12 @@
     {@const isHovered = hoveredIdx === idx}
     {@const totalEmails = (se.email_act_inq ?? 0) + (se.email_exp_inq ?? 0) + (se.email_act_outq ?? 0) + (se.email_exp_outq ?? 0)}
     {@const notesCov = (se.note_hv_total ?? 0) > 0 ? Math.round((se.note_hv_covered ?? 0) / se.note_hv_total * 100) : null}
+    {@const motion = data.motion ?? 'dsr'}
+    {@const isAE = motion === 'ae'}
+    {@const actLabel = isAE ? 'New Business' : 'Activate'}
+    {@const expLabel = isAE ? 'Strategic' : 'Expansion'}
+    {@const teamHasAct = data.ranked.some((s: any) => (s.act_icav ?? 0) > 0)}
+    {@const teamHasExp = data.ranked.some((s: any) => (s.exp_icav ?? 0) > 0)}
     <div
       style="animation:{enter} 0.6s cubic-bezier(.22,1,.36,1) {delay}ms both;transition:transform 0.2s cubic-bezier(.22,1,.36,1),box-shadow 0.2s;transform:{isHovered?'scale(1.04) translateY(-4px)':'scale(1) translateY(0)'}"
       onmouseenter={() => { hoveredIdx = idx; if (i === 1) burstConfetti(); }}
@@ -240,6 +246,7 @@
             <div>
               <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.15em;color:{c.color};margin-bottom:6px">{['🥇','🥈','🥉'][i-1] ?? ''} {c.label}</div>
               <div style="font-size:clamp(1.1rem,3vw,1.4rem);font-weight:900;color:{$theme==='twilio'?'var(--text)':'#fff'};letter-spacing:-.02em">{se.name}</div>
+              {#if teamHasExp}
               <div style="margin-top:7px">
                 {#if se.exp_growing}
                   <span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:800;letter-spacing:.08em;background:{$theme==='twilio'?'#F0FDF4':'#10B98118'};color:{$theme==='twilio'?'#178742':'#10B981'};border:1px solid {$theme==='twilio'?'#86EFAC':'#10B98140'}">📈 GROWING</span>
@@ -247,6 +254,7 @@
                   <span style="display:inline-block;padding:2px 8px;border-radius:4px;font-size:10px;font-weight:800;letter-spacing:.08em;background:{$theme==='twilio'?'#F4F4F6':'#fff08'};color:{$theme==='twilio'?'#6B7280':'#6b7280'};border:1px solid {$theme==='twilio'?'rgba(13,18,43,0.15)':'#fff1'}">😐 RETAINING</span>
                 {/if}
               </div>
+              {/if}
             </div>
             <div style="text-align:right;flex-shrink:0">
               <div style="font-size:clamp(1.4rem,4vw,2rem);font-weight:900;color:{$theme==='twilio'?'var(--text)':'#fff'};line-height:1">{fmt(se.total)}</div>
@@ -254,23 +262,40 @@
             </div>
           </div>
           <div style="font-size:12px;color:color-mix(in srgb,{c.color} 70%,{$theme==='twilio'?'#374151':'#aaa'});font-style:italic;margin-bottom:14px;padding:8px 12px;border-radius:8px;border-left:2px solid {c.color}50;background:{c.bg}">{se._roast}</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+          <div style="display:grid;grid-template-columns:{teamHasAct && teamHasExp ? '1fr 1fr' : '1fr'};gap:8px;margin-bottom:10px">
+            {#if teamHasAct}
             <div style="background:{$theme==='twilio'?'#F8FAFF':'rgba(255,255,255,0.04)'};border:1px solid {$theme==='twilio'?'rgba(0,110,255,0.15)':'rgba(255,255,255,0.06)'};border-radius:10px;padding:11px 13px">
-              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-muted);margin-bottom:4px">🎯 Activate</div>
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-muted);margin-bottom:4px">🎯 {actLabel}</div>
               <div style="font-size:1.05rem;font-weight:800;color:var(--act-color);line-height:1.2">{fmt(se.act_icav)}</div>
               <div style="font-size:10px;color:var(--text-muted);margin-top:2px;margin-bottom:7px">{se.act_wins} wins · med {fmt(se.act_median)}</div>
               <div style="background:{$theme==='twilio'?'rgba(0,110,255,0.1)':'rgba(255,255,255,0.06)'};border-radius:99px;height:3px;overflow:hidden">
                 <div style="height:3px;border-radius:99px;background:var(--act-color);width:0;animation:barFill .9s cubic-bezier(.34,1.56,.64,1) {delay+500}ms forwards;--w:{se._aw}%"></div>
               </div>
             </div>
+            {/if}
+            {#if teamHasExp}
+            {@const expArr = se.exp_arr_total ?? 0}
+            {@const expMrr = se.exp_mrr_delta_total ?? 0}
+            {@const expMrrUp = expMrr > 0}
+            {@const expMrrDown = expMrr < 0}
+            {@const expMrrColor = expMrrUp ? ($theme==='twilio'?'#178742':'#10B981') : expMrrDown ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}
             <div style="background:{$theme==='twilio'?'#F0FDF4':'rgba(255,255,255,0.04)'};border:1px solid {$theme==='twilio'?'rgba(23,135,66,0.15)':'rgba(255,255,255,0.06)'};border-radius:10px;padding:11px 13px">
-              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-muted);margin-bottom:4px">📈 Expansion</div>
+              <div style="font-size:9px;text-transform:uppercase;letter-spacing:.12em;color:var(--text-muted);margin-bottom:4px">📈 {expLabel}</div>
               <div style="font-size:1.05rem;font-weight:800;color:var(--exp-color);line-height:1.2">{fmt(se.exp_icav)}</div>
-              <div style="font-size:10px;color:var(--text-muted);margin-top:2px;margin-bottom:7px">{se.exp_wins} wins · med {fmt(se.exp_median)}</div>
+              <div style="font-size:10px;color:var(--text-muted);margin-top:2px;margin-bottom:{expArr > 0 ? '5px' : '7px'}">{se.exp_wins} wins · med {fmt(se.exp_median)}</div>
+              {#if expArr > 0}
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:7px">
+                <span style="font-size:10px;font-weight:700;color:{$theme==='twilio'?'#178742':'#10B981'}">ARR {fmt(expArr)}</span>
+                {#if expMrr !== 0}
+                <span style="font-size:10px;font-weight:700;color:{expMrrColor}">{expMrrUp ? '↑' : '↓'} {fmtMrr(Math.abs(expMrr))}/mo</span>
+                {/if}
+              </div>
+              {/if}
               <div style="background:{$theme==='twilio'?'rgba(23,135,66,0.1)':'rgba(255,255,255,0.06)'};border-radius:99px;height:3px;overflow:hidden">
                 <div style="height:3px;border-radius:99px;background:var(--exp-color);width:0;animation:barFill .9s cubic-bezier(.34,1.56,.64,1) {delay+600}ms forwards;--w:{se._ew}%"></div>
               </div>
             </div>
+            {/if}
           </div>
 
           <!-- Emails + Notes hygiene -->

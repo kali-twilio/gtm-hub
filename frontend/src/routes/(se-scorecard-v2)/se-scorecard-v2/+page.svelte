@@ -132,10 +132,7 @@
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--text-muted);margin-bottom:8px">Period</div>
     <div style="display:flex;flex-wrap:wrap;gap:6px">
       {#each periods as p}
-      <button
-        onclick={() => onPeriodChange(p.key)}
-        style="padding:6px 14px;font-size:12px;font-weight:700;border-radius:6px;border:1px solid {$sfPeriod === p.key ? 'var(--red)' : 'rgba(var(--red-rgb),0.2)'};background:{$sfPeriod === p.key ? 'rgba(var(--red-rgb),0.12)' : 'transparent'};color:{$sfPeriod === p.key ? 'var(--red)' : 'var(--text-muted)'};cursor:pointer;transition:all 0.15s;letter-spacing:0.04em"
-      >{p.label}</button>
+      <button onclick={() => onPeriodChange(p.key)} class="p5-ctrl {$sfPeriod === p.key ? 'active' : ''}">{p.label}</button>
       {/each}
     </div>
   </div>
@@ -195,11 +192,11 @@
     { label: 'TW Closed Won', val: String(summary.team_wins) },
     { label: 'SEs',           val: String(summary.total) },
   ]}
-  <div class="w-full hub-container" style="display:grid;grid-template-columns:repeat({summaryStats.length}, 1fr);gap:10px;margin-bottom:20px">
+  <div class="w-full hub-container" style="display:grid;grid-template-columns:repeat({summaryStats.length}, 1fr);gap:8px;margin-bottom:20px">
     {#each summaryStats as s}
-    <div class="p5-panel" style="padding:18px 20px;text-align:center">
-      <div style="font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:0.15em;margin-bottom:8px">{s.label}</div>
-      <div style="font-size:26px;font-weight:900;color:var(--text)">{s.val}</div>
+    <div class="p5-stat-chip" style="text-align:center">
+      <div style="font-size:9px;color:var(--red);font-weight:800;text-transform:uppercase;letter-spacing:0.2em;margin-bottom:6px">{s.label}</div>
+      <div style="font-size:26px;font-weight:900;color:var(--text);line-height:1">{s.val}</div>
     </div>
     {/each}
   </div>

@@ -393,11 +393,11 @@ const actStatCols = $derived(data ? [
     <p style="font-size:13px;color:var(--text-muted);font-weight:600;margin-top:2px">{data.total} SEs · Live data from Salesforce</p>
   </div>
 
-  <div style="display:grid;grid-template-columns:repeat({summaryCards.length},1fr);gap:12px;margin-bottom:24px">
+  <div style="display:grid;grid-template-columns:repeat({summaryCards.length},1fr);gap:8px;margin-bottom:24px">
     {#each summaryCards as s}
-    <div class="p5-panel" style="padding:18px 20px">
-      <div style="font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:0.18em;font-style:{$theme==='p5'?'italic':'normal'};margin-bottom:6px">{s.label}</div>
-      <div style="font-size:28px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{s.color ?? 'var(--text)'};{$theme==='p5'?'text-shadow:2px 2px 0 var(--red)':''}">{s.val}</div>
+    <div class="p5-stat-chip">
+      <div style="font-size:9px;color:var(--red);font-weight:800;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};margin-bottom:6px">{s.label}</div>
+      <div style="font-size:28px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{s.color ?? 'var(--text)'};{$theme==='p5'?'text-shadow:2px 2px 0 rgba(var(--red-rgb),0.4)':''};line-height:1">{s.val}</div>
     </div>
     {/each}
   </div>
@@ -411,9 +411,7 @@ const actStatCols = $derived(data ? [
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Show</div>
       <div style="display:flex;gap:6px">
         {#each [{key:'tw',label:'Technical Wins'},{key:'all',label:'All Closed Won'}] as opt}
-        <button onclick={() => view = opt.key as 'tw' | 'all'}
-          style="padding:5px 12px;font-size:12px;font-weight:700;border-radius:5px;border:1px solid {view===opt.key?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:{view===opt.key?'rgba(var(--red-rgb),0.1)':'transparent'};color:{view===opt.key?'var(--red)':'var(--text-muted)'};cursor:pointer"
-        >{opt.label}</button>
+        <button onclick={() => view = opt.key as 'tw' | 'all'} class="p5-ctrl {view === opt.key ? 'active' : ''}">{opt.label}</button>
         {/each}
       </div>
     </div>
@@ -435,17 +433,13 @@ const actStatCols = $derived(data ? [
     <!-- Activity columns toggle -->
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Activity</div>
-      <button onclick={() => showActivity = !showActivity}
-        style="padding:5px 12px;font-size:12px;font-weight:700;border-radius:5px;border:1px solid {showActivity?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:{showActivity?'rgba(var(--red-rgb),0.1)':'transparent'};color:{showActivity?'var(--red)':'var(--text-muted)'};cursor:pointer"
-      >{showActivity ? '✓ Emails & Meetings' : 'Emails & Meetings'}</button>
+      <button onclick={() => showActivity = !showActivity} class="p5-ctrl {showActivity ? 'active' : ''}">{showActivity ? '✓ Emails & Meetings' : 'Emails & Meetings'}</button>
     </div>
 
     <!-- Notes filter -->
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Notes Filter</div>
-      <button onclick={() => notesFilter = !notesFilter}
-        style="padding:5px 12px;font-size:12px;font-weight:700;border-radius:5px;border:1px solid {notesFilter?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:{notesFilter?'rgba(var(--red-rgb),0.1)':'transparent'};color:{notesFilter?'var(--red)':'var(--text-muted)'};cursor:pointer"
-      >{notesFilter ? '✓ Documented Only' : 'Documented Only'}</button>
+      <button onclick={() => notesFilter = !notesFilter} class="p5-ctrl {notesFilter ? 'active' : ''}">{notesFilter ? '✓ Documented Only' : 'Documented Only'}</button>
     </div>
 
     <!-- Title filter -->
@@ -478,14 +472,11 @@ const actStatCols = $derived(data ? [
   <!-- Overall Rankings (multi-motion only) -->
   {#if !singleMotion}
   <div id="rankings" class="p5-panel" style="margin-bottom:20px">
-    <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
-      <div style="display:flex;align-items:center;justify-content:space-between">
-        <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Standings</h2>
-        <button
-          onclick={() => rankCriteriaExpanded = !rankCriteriaExpanded}
-          style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);background:transparent;border:1px solid rgba(var(--red-rgb),0.2);border-radius:4px;padding:4px 10px;cursor:pointer"
-        >Ranking Criteria {rankCriteriaExpanded ? '▲' : '▼'}</button>
-      </div>
+    <div class="p5-panel-header">
+      <h2 class="p5-panel-header-title">Standings</h2>
+      <button onclick={() => rankCriteriaExpanded = !rankCriteriaExpanded} class="p5-ctrl {rankCriteriaExpanded ? 'active' : ''}">Criteria {rankCriteriaExpanded ? '▲' : '▼'}</button>
+    </div>
+    <div>
       {#if rankCriteriaExpanded}
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px">
         {#each [
@@ -626,10 +617,10 @@ const actStatCols = $derived(data ? [
   <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:20px">
     {#if actSes.length > 0}
     <div id="activate" class="p5-panel">
-      <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
-        <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);margin-bottom:2px">{motionLabels.act}</h2>
-        <p style="font-size:12px;color:var(--text-muted)">{motionLabels.actDesc}</p>
+      <div class="p5-panel-header">
+        <h2 class="p5-panel-header-title">{motionLabels.act}</h2>
       </div>
+      <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">{motionLabels.actDesc}</div>
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead style="background:rgba(var(--red-rgb),0.06)"><tr>
@@ -711,8 +702,8 @@ const actStatCols = $derived(data ? [
     {/if}
     {#if expSes.length > 0}
     <div id="expansion" class="p5-panel">
-      <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
-        <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">{motionLabels.exp}</h2>
+      <div class="p5-panel-header">
+        <h2 class="p5-panel-header-title">{motionLabels.exp}</h2>
       </div>
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -814,13 +805,11 @@ const actStatCols = $derived(data ? [
   <!-- Single-motion merged table -->
   {#if singleMotion}
   <div id="rankings" class="p5-panel" style="margin-bottom:20px">
-    <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
-      <div style="display:flex;align-items:center;justify-content:space-between">
-        <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Standings</h2>
-        <button onclick={() => rankCriteriaExpanded = !rankCriteriaExpanded}
-          style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);background:transparent;border:1px solid rgba(var(--red-rgb),0.2);border-radius:4px;padding:4px 10px;cursor:pointer"
-        >Ranking Criteria {rankCriteriaExpanded ? '▲' : '▼'}</button>
-      </div>
+    <div class="p5-panel-header">
+      <h2 class="p5-panel-header-title">Standings</h2>
+      <button onclick={() => rankCriteriaExpanded = !rankCriteriaExpanded} class="p5-ctrl {rankCriteriaExpanded ? 'active' : ''}">Criteria {rankCriteriaExpanded ? '▲' : '▼'}</button>
+    </div>
+    <div>
       {#if rankCriteriaExpanded}
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px">
         {#each [
@@ -996,7 +985,7 @@ const actStatCols = $derived(data ? [
   <!-- Largest Deals -->
   {#if dealSorted.length > 0}
   <div id="deals" class="p5-panel" style="margin-bottom:20px">
-    <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)"><h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Largest Deals</h2></div>
+    <div class="p5-panel-header"><h2 class="p5-panel-header-title">Largest Deals</h2></div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['#','SE','Value','Motion','AE','Account','Product'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'}">{h}</th>{/each}</tr></thead>
@@ -1025,10 +1014,10 @@ const actStatCols = $derived(data ? [
   <!-- Notes Quality — hidden when notes filter is on (all shown opps are already fully documented) -->
   {#if !notesFilter}
   <div id="notes" class="p5-panel" style="margin-bottom:20px">
-    <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
-      <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);margin-bottom:2px">SE Notes Quality</h2>
-      <p style="font-size:12px;color:var(--text-muted)">Coverage = both Solutions Team Notes fields filled · Entries counted from [Date: Name] timestamps in history</p>
+    <div class="p5-panel-header">
+      <h2 class="p5-panel-header-title">SE Notes Quality</h2>
     </div>
+    <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">Coverage = both Solutions Team Notes fields filled · Entries counted from [Date: Name] timestamps in history</div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead style="background:rgba(var(--red-rgb),0.06)">
@@ -1065,7 +1054,7 @@ const actStatCols = $derived(data ? [
 
   <!-- Trends -->
   <div id="trends" class="p5-panel" style="margin-bottom:20px">
-    <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)"><h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Trends &amp; Flags</h2></div>
+    <div class="p5-panel-header"><h2 class="p5-panel-header-title">Trends &amp; Flags</h2></div>
     <div style="padding:16px;display:flex;flex-direction:column;gap:8px">
       {#each data.trends as [cat, msg]}
       {@const color = fc(cat, $theme)}
@@ -1080,10 +1069,10 @@ const actStatCols = $derived(data ? [
   <!-- Recommendations -->
   {#if data.recommendations?.length}
   <div id="recs" class="p5-panel" style="margin-bottom:20px">
-    <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
-      <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);margin-bottom:2px">Recommendations</h2>
-      <p style="font-size:12px;color:var(--text-muted)">Data-driven actions to increase iACV and revenue — derived from deal sizing, expansion MRR signals, notes quality, and AE/DSR partner breadth</p>
+    <div class="p5-panel-header">
+      <h2 class="p5-panel-header-title">Recommendations</h2>
     </div>
+    <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">Data-driven actions to increase iACV and revenue — derived from deal sizing, expansion MRR signals, notes quality, and AE/DSR partner breadth</div>
     <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
       {#each data.recommendations as rec}
       {@const recColor =

@@ -100,11 +100,7 @@
     <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--text-muted);margin-bottom:8px">Period</div>
     <div style="display:flex;flex-wrap:wrap;gap:6px">
       {#each periods as p}
-      <button
-        onclick={() => onPeriodChange(p.key)}
-        disabled={loading}
-        style="padding:6px 14px;font-size:12px;font-weight:700;border-radius:6px;border:1px solid {$sfPeriod === p.key ? 'var(--red)' : 'rgba(var(--red-rgb),0.2)'};background:{$sfPeriod === p.key ? 'rgba(var(--red-rgb),0.12)' : 'transparent'};color:{$sfPeriod === p.key ? 'var(--red)' : 'var(--text-muted)'};cursor:{loading ? 'default' : 'pointer'};opacity:{loading && $sfPeriod !== p.key ? '0.5' : '1'};transition:all 0.15s;letter-spacing:0.04em"
-      >{p.label}</button>
+      <button onclick={() => onPeriodChange(p.key)} disabled={loading} class="p5-ctrl {$sfPeriod === p.key ? 'active' : ''}" style="opacity:{loading && $sfPeriod !== p.key ? '0.5' : '1'}">{p.label}</button>
       {/each}
     </div>
   </div>
@@ -246,67 +242,81 @@
   {@const expAcctMap = Object.fromEntries((se.exp_account_detail ?? []).map((a: any) => [a.opp_name, a]))}
   {@const actOpps = sortOpps(rawActOpps, actSortKey, actSortAsc)}
   {@const expOpps = sortOpps(rawExpOpps, expSortKey, expSortAsc, expAcctMap)}
+  {@const expGrouped = (() => {
+    const map = new Map<string, any[]>();
+    for (const opp of expOpps) {
+      const a = oppAccount(opp.name);
+      if (!map.has(a)) map.set(a, []);
+      map.get(a)!.push(opp);
+    }
+    return [...map.entries()].map(([acct, opps]) => ({
+      acct,
+      opps,
+      acctData: opps.map((o: any) => expAcctMap[o.name]).find((a: any) => a != null) ?? null,
+    }));
+  })()}
 
   <!-- New Business / Activate table -->
   {#if actOpps.length > 0}
-  <div class="p5-panel" style="padding:14px 20px;width:100%;margin-top:14px">
-    <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-      <div class="p5-badge" style="font-size:9px;padding:2px 8px;background:rgba(var(--act-rgb),0.12);color:var(--act-color);border-color:rgba(var(--act-rgb),0.3)">{actLabel} · TW Closed Won</div>
-      <div style="flex:1;height:1px;background:rgba(var(--act-rgb),0.15)"></div>
-      <span style="font-size:10px;font-weight:700;color:var(--act-color)">{actOpps.length} opp{actOpps.length !== 1 ? 's' : ''}</span>
+  <div class="p5-panel" style="width:100%;margin-top:14px">
+    <div style="padding:14px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div class="p5-badge" style="font-size:9px;padding:2px 8px;background:rgba(var(--act-rgb),0.12);color:var(--act-color)">{actLabel} · TW Closed Won</div>
+      <span style="font-size:10px;font-weight:700;color:var(--text-muted)">{actOpps.length} opp{actOpps.length !== 1 ? 's' : ''}</span>
     </div>
-    <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:11px">
-        <thead>
-          <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.1)">
-            {#each [
-              {key:'account',    label:'Account',  align:'left',  pad:'4px 8px 6px 0'},
-              {key:'product',    label:'Product',  align:'left',  pad:'4px 8px 6px'},
-              {key:'owner',      label:'AE',       align:'left',  pad:'4px 8px 6px'},
-              {key:'close_date', label:'Date',     align:'right', pad:'4px 8px 6px'},
-              {key:'icav',       label:'iACV',     align:'right', pad:'4px 8px 6px'},
-              {key:'has_notes',  label:'Notes',    align:'right', pad:'4px 0 6px 8px'},
-            ] as col}
-            <th onclick={() => setActSort(col.key)}
-              style="text-align:{col.align};padding:{col.pad};font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:{actSortKey===col.key?'var(--red)':'var(--text-muted)'};white-space:nowrap;cursor:pointer;user-select:none">
-              {col.label}{actSortKey===col.key ? (actSortAsc ? ' ▲' : ' ▼') : ''}
-            </th>
+    <div style="padding:0 20px 14px">
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:11px">
+          <thead>
+            <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.1)">
+              {#each [
+                {key:'account',    label:'Account',  align:'left',  pad:'4px 8px 6px 0'},
+                {key:'product',    label:'Product',  align:'left',  pad:'4px 8px 6px'},
+                {key:'owner',      label:'AE',       align:'left',  pad:'4px 8px 6px'},
+                {key:'close_date', label:'Date',     align:'right', pad:'4px 8px 6px'},
+                {key:'icav',       label:'iACV',     align:'right', pad:'4px 8px 6px'},
+                {key:'has_notes',  label:'Notes',    align:'right', pad:'4px 0 6px 8px'},
+              ] as col}
+              <th onclick={() => setActSort(col.key)}
+                style="text-align:{col.align};padding:{col.pad};font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:{actSortKey===col.key?'var(--red)':'var(--text-muted)'};white-space:nowrap;cursor:pointer;user-select:none">
+                {col.label}{actSortKey===col.key ? (actSortAsc ? ' ▲' : ' ▼') : ''}
+              </th>
+              {/each}
+            </tr>
+          </thead>
+          <tbody>
+            {#each actOpps as opp, i}
+            {@const notesOk = opp.has_notes && opp.has_history}
+            {@const notesPartial = opp.has_notes || opp.has_history}
+            {@const notesColor = notesOk ? ($theme==='twilio'?'#178742':'#10B981') : notesPartial ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')}
+            <tr style="border-bottom:{i < actOpps.length-1 ? '1px solid rgba(var(--red-rgb),0.05)' : 'none'}">
+              <td style="padding:5px 8px 5px 0;color:var(--text);font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={oppAccount(opp.name)}>{oppAccount(opp.name)}</td>
+              <td style="padding:5px 8px;color:var(--text-muted);white-space:nowrap">{opp.product || '—'}</td>
+              <td style="padding:5px 8px;color:var(--text-muted);white-space:nowrap">{opp.owner}</td>
+              <td style="padding:5px 8px;color:var(--text-muted);text-align:right;white-space:nowrap">{opp.close_date}</td>
+              <td style="padding:5px 8px;font-weight:700;color:var(--act-color);text-align:right;white-space:nowrap">{fmt(opp.icav)}</td>
+              <td style="padding:5px 0 5px 8px;text-align:right;white-space:nowrap">
+                <span style="color:{notesColor};font-weight:700">{notesOk ? '✓' : notesPartial ? '△' : '✗'}</span>
+                {#if opp.note_entries > 0}<span style="color:var(--text-muted);margin-left:3px;font-size:10px">{opp.note_entries}</span>{/if}
+              </td>
+            </tr>
             {/each}
-          </tr>
-        </thead>
-        <tbody>
-          {#each actOpps as opp, i}
-          {@const notesOk = opp.has_notes && opp.has_history}
-          {@const notesPartial = opp.has_notes || opp.has_history}
-          {@const notesColor = notesOk ? ($theme==='twilio'?'#178742':'#10B981') : notesPartial ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')}
-          <tr style="border-bottom:{i < actOpps.length-1 ? '1px solid rgba(var(--red-rgb),0.05)' : 'none'}">
-            <td style="padding:5px 8px 5px 0;color:var(--text);font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={oppAccount(opp.name)}>{oppAccount(opp.name)}</td>
-            <td style="padding:5px 8px;color:var(--text-muted);white-space:nowrap">{opp.product || '—'}</td>
-            <td style="padding:5px 8px;color:var(--text-muted);white-space:nowrap">{opp.owner}</td>
-            <td style="padding:5px 8px;color:var(--text-muted);text-align:right;white-space:nowrap">{opp.close_date}</td>
-            <td style="padding:5px 8px;font-weight:700;color:var(--act-color);text-align:right;white-space:nowrap">{fmt(opp.icav)}</td>
-            <td style="padding:5px 0 5px 8px;text-align:right;white-space:nowrap">
-              <span style="color:{notesColor};font-weight:700">{notesOk ? '✓' : notesPartial ? '△' : '✗'}</span>
-              {#if opp.note_entries > 0}<span style="color:var(--text-muted);margin-left:3px;font-size:10px">{opp.note_entries}</span>{/if}
-            </td>
-          </tr>
-          {/each}
-        </tbody>
-      </table>
+          </tbody>
+        </table>
+      </div>
     </div>
   </div>
   {/if}
 
   <!-- Strategic / Expansion table -->
   {#if expOpps.length > 0}
-  <div class="p5-panel" style="padding:20px 24px;width:100%;margin-top:14px">
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
-      <div class="p5-badge" style="font-size:10px;background:rgba(var(--exp-rgb),0.12);color:var(--exp-color);border-color:rgba(var(--exp-rgb),0.3)">{expLabel} · TW Closed Won</div>
-      <div style="flex:1;height:1px;background:rgba(var(--exp-rgb),0.2)"></div>
-      <span style="font-size:11px;font-weight:700;color:var(--exp-color)">{expOpps.length} opp{expOpps.length !== 1 ? 's' : ''}</span>
+  <div class="p5-panel" style="width:100%;margin-top:14px">
+    <div style="padding:14px 20px;display:flex;align-items:center;justify-content:space-between;gap:12px">
+      <div class="p5-badge" style="font-size:9px;padding:2px 8px;background:rgba(var(--exp-rgb),0.12);color:var(--exp-color)">{expLabel} · TW Closed Won</div>
+      <span style="font-size:10px;font-weight:700;color:var(--text-muted)">{expOpps.length} opp{expOpps.length !== 1 ? 's' : ''}</span>
     </div>
-    <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <div style="padding:0 24px 20px">
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12px">
         <thead>
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.12)">
             {#each [
@@ -326,29 +336,39 @@
           </tr>
         </thead>
         <tbody>
-          {#each expOpps as opp, i}
-          {@const acct = expAcctMap[opp.name] ?? null}
+          {#each expGrouped as group, gi}
+          {@const isMulti = group.opps.length > 1}
+          {#each group.opps as opp, oi}
+          {@const isFirst = oi === 0}
+          {@const isLastRow = oi === group.opps.length - 1}
+          {@const isLastGroup = gi === expGrouped.length - 1}
           {@const notesOk = opp.has_notes && opp.has_history}
           {@const notesPartial = opp.has_notes || opp.has_history}
           {@const notesColor = notesOk ? ($theme==='twilio'?'#178742':'#10B981') : notesPartial ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')}
-          {@const trendUp = acct?.mrr_delta > 0}
-          {@const trendDown = acct?.mrr_delta < 0}
+          {@const trendUp = isFirst && (group.acctData?.mrr_delta ?? 0) > 0}
+          {@const trendDown = isFirst && (group.acctData?.mrr_delta ?? 0) < 0}
           {@const trendColor = trendUp ? ($theme==='twilio'?'#178742':'#10B981') : trendDown ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}
-          {@const mrrPct = acct?.mrr_pct ?? 0}
-          <tr style="border-bottom:{i < expOpps.length-1 ? '1px solid rgba(var(--red-rgb),0.06)' : 'none'}">
-            <td style="padding:8px 8px 8px 0;color:var(--text);font-weight:600;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={oppAccount(opp.name)}>{oppAccount(opp.name)}</td>
+          {@const mrrPct = group.acctData?.mrr_pct ?? 0}
+          <tr style="border-bottom:{isLastRow && isLastGroup ? 'none' : isLastRow ? '1px solid rgba(var(--red-rgb),0.1)' : '1px solid rgba(var(--exp-rgb),0.06)'};{isMulti ? `background:rgba(var(--exp-rgb),0.02)` : ''}">
+            <td style="padding:8px 8px 8px 0;color:var(--text);font-weight:{isFirst?'600':'400'};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={group.acct}>
+              {#if isFirst}{group.acct}{:else}<span style="padding-left:12px;color:var(--text-faint)">↳</span>{/if}
+            </td>
             <td style="padding:8px;color:var(--text-muted);white-space:nowrap;vertical-align:top">{opp.product || '—'}</td>
             <td style="padding:8px;color:var(--text-muted);white-space:nowrap;vertical-align:top">{opp.owner}</td>
             <td style="padding:8px;font-weight:700;color:{opp.icav > 0 ? 'var(--exp-color)' : 'var(--text-muted)'};text-align:right;white-space:nowrap;vertical-align:top">{opp.icav > 0 ? fmt(opp.icav) : '$0'}</td>
             <td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:top">
-              {#if acct?.arr > 0}<span style="font-weight:700;color:{$theme==='twilio'?'#178742':'#10B981'}">{fmt(acct.arr)}</span>{:else}<span style="color:var(--text-faint)">—</span>{/if}
+              {#if isFirst}
+                {#if group.acctData?.arr > 0}<span style="font-weight:700;color:{$theme==='twilio'?'#178742':'#10B981'}">{fmt(group.acctData.arr)}</span>{:else}<span style="color:var(--text-faint)">—</span>{/if}
+              {/if}
             </td>
             <td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:top">
-              {#if acct}
-                {#if acct.mrr_delta !== 0}
-                <span style="font-weight:700;color:{trendColor}">{trendUp ? '↑' : '↓'} {fmtMrr(Math.abs(acct.mrr_delta))}/mo{#if mrrPct !== 0} <span style="font-size:10px;font-weight:600">({mrrPct > 0 ? '+' : ''}{mrrPct}%)</span>{/if}</span>
-                {:else}<span style="color:var(--text-faint)">→ flat</span>{/if}
-              {:else}<span style="color:var(--text-faint)">—</span>{/if}
+              {#if isFirst}
+                {#if group.acctData}
+                  {#if group.acctData.mrr_delta !== 0}
+                  <span style="font-weight:700;color:{trendColor}">{trendUp ? '↑' : '↓'} {fmtMrr(Math.abs(group.acctData.mrr_delta))}/mo{#if mrrPct !== 0} <span style="font-size:10px;font-weight:600">({mrrPct > 0 ? '+' : ''}{mrrPct}%)</span>{/if}</span>
+                  {:else}<span style="color:var(--text-faint)">→ flat</span>{/if}
+                {:else}<span style="color:var(--text-faint)">—</span>{/if}
+              {/if}
             </td>
             <td style="padding:8px 0 8px 8px;text-align:right;white-space:nowrap;vertical-align:top">
               <span style="color:{notesColor};font-weight:700">{notesOk ? '✓' : notesPartial ? '△' : '✗'}</span>
@@ -356,8 +376,10 @@
             </td>
           </tr>
           {/each}
+          {/each}
         </tbody>
-      </table>
+        </table>
+      </div>
     </div>
   </div>
   {/if}

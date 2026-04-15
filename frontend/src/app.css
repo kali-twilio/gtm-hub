@@ -274,3 +274,93 @@ select option { background: var(--panel); color: var(--text); }
 .theme-toggle:hover {
   background: rgba(var(--red-rgb), 0.3);
 }
+
+/* ── P5 panel header — red banner at top of p5-panel ────────────────────── */
+.p5-panel-header {
+  padding: 10px 20px 10px 16px;
+  background: var(--red);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.p5-panel-header-title {
+  font-size: 12px;
+  font-weight: 900;
+  font-style: italic;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: #fff;
+  margin: 0;
+}
+[data-theme="twilio"] .p5-panel-header {
+  background: transparent;
+  padding: 14px 20px;
+  border-bottom: 1px solid rgba(13,18,43,0.1);
+}
+[data-theme="twilio"] .p5-panel-header-title {
+  font-style: normal;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0;
+}
+
+/* ── P5 stat chip — angular parallelogram stat card ─────────────────────── */
+.p5-stat-chip {
+  background: var(--panel);
+  border-left: 4px solid var(--red);
+  clip-path: polygon(0 0, calc(100% - 12px) 0, 100% 100%, 0 100%);
+  padding: 16px 28px 16px 16px;
+  position: relative;
+  overflow: hidden;
+}
+.p5-stat-chip::before {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  border-style: solid;
+  border-width: 0 14px 14px 0;
+  border-color: transparent var(--dark) transparent transparent;
+  z-index: 1;
+}
+[data-theme="twilio"] .p5-stat-chip {
+  clip-path: none;
+  border-left: none;
+  border: 1px solid rgba(13,18,43,0.1);
+  border-radius: 10px;
+  box-shadow: 0 1px 4px rgba(13,18,43,0.08);
+}
+[data-theme="twilio"] .p5-stat-chip::before { display: none; }
+
+/* ── P5 control button — angular toggle / filter button ─────────────────── */
+.p5-ctrl {
+  padding: 5px 14px;
+  font-size: 11px;
+  font-weight: 800;
+  font-style: italic;
+  font-family: inherit;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  background: transparent;
+  border: 1px solid rgba(var(--red-rgb), 0.25);
+  color: var(--text-muted);
+  cursor: pointer;
+  clip-path: polygon(6px 0, 100% 0, calc(100% - 6px) 100%, 0 100%);
+  transition: background 0.1s, color 0.1s, border-color 0.1s;
+}
+.p5-ctrl.active {
+  background: var(--red);
+  color: #fff;
+  border-color: var(--red);
+}
+.p5-ctrl:hover:not(:disabled):not(.active) {
+  background: rgba(var(--red-rgb), 0.1);
+  color: var(--text);
+}
+.p5-ctrl:disabled { opacity: 0.4; cursor: default; }
+[data-theme="twilio"] .p5-ctrl {
+  clip-path: none;
+  border-radius: 5px;
+  font-style: normal;
+}

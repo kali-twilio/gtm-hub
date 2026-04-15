@@ -1435,31 +1435,51 @@ def _roast(se, ranked, motion: str = "dsr"):
     total_icavs   = [s["total_icav"] for s in ranked]
     team_icav     = sum(total_icavs)
     median_icav   = round(statistics.median(total_icavs))
-    max_icav      = max(total_icavs)
 
     act_ses       = [s for s in ranked if s["act_wins"] > 0]
     max_act_wins  = max(s["act_wins"] for s in ranked) if ranked else 0
     min_act_wins  = min(s["act_wins"] for s in act_ses) if act_ses else 0
 
-    exp_ses        = [s for s in ranked if s["exp_wins"] > 0]
-    max_exp_wins   = max(s["exp_wins"] for s in ranked) if ranked else 0
-    max_exp_icav   = max(s["exp_icav"] for s in ranked) if ranked else 0
-    max_act_icav   = max(s["act_icav"] for s in ranked) if ranked else 0
+    max_exp_wins  = max(s["exp_wins"] for s in ranked) if ranked else 0
+    max_exp_icav  = max(s["exp_icav"] for s in ranked) if ranked else 0
+    max_act_icav  = max(s["act_icav"] for s in ranked) if ranked else 0
 
-    pipe_totals    = [s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ranked]
-    max_pipe       = max(pipe_totals) if pipe_totals else 0
-    se_pipe        = se.get("email_act_outq", 0) + se.get("email_exp_outq", 0)
+    pipe_totals   = [s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ranked]
+    max_pipe      = max(pipe_totals) if pipe_totals else 0
+    se_pipe       = se.get("email_act_outq", 0) + se.get("email_exp_outq", 0)
 
-    notes_pcts     = [round(s["note_hv_covered"] / s["note_hv_total"] * 100)
-                      for s in ranked if s["note_hv_total"] > 0]
-    max_notes_pct  = max(notes_pcts) if notes_pcts else 0
-    se_notes_pct   = round(se["note_hv_covered"] / se["note_hv_total"] * 100) if se["note_hv_total"] > 0 else 0
+    se_arr        = se.get("exp_arr_total", 0)
+    se_mrr        = se.get("exp_mrr_delta_total", 0)
+    se_mrr_pct    = se.get("exp_mrr_pct_avg", 0)
+    max_arr       = max((s.get("exp_arr_total", 0) for s in ranked), default=0)
+    max_mrr       = max((s.get("exp_mrr_delta_total", 0) for s in ranked), default=0)
 
-    total_wins     = se["act_wins"] + se["exp_wins"]
-    max_total_wins = max(s["act_wins"] + s["exp_wins"] for s in ranked) if ranked else 0
+    notes_pcts    = [round(s["note_hv_covered"] / s["note_hv_total"] * 100)
+                     for s in ranked if s["note_hv_total"] > 0]
+    max_notes_pct = max(notes_pcts) if notes_pcts else 0
+    se_notes_pct  = round(se["note_hv_covered"] / se["note_hv_total"] * 100) if se["note_hv_total"] > 0 else 0
 
-    act_lbl = "new business" if motion == "ae" else "activate"
-    exp_lbl = "strategic"    if motion == "ae" else "expansion"
+    total_wins    = se["act_wins"] + se["exp_wins"]
+    act_lbl       = "new business" if motion == "ae" else "activate"
+    exp_lbl       = "strategic"    if motion == "ae" else "expansion"
+
+    # ── TW Closed Won opp context ─────────────────────────────────────────────
+    def _acct(name: str) -> str:
+        a = (name.split(" - ")[0] or name).strip()
+        return a if len(a) <= 22 else a[:20] + "…"
+
+    tw_opps     = se.get("tw_opps_detail", [])
+    act_opps_tw = sorted([o for o in tw_opps if o.get("motion") in ("act", "nb")],
+                         key=lambda x: x.get("icav", 0), reverse=True)
+    exp_opps_tw = sorted([o for o in tw_opps if o.get("motion") in ("exp", "strat")],
+                         key=lambda x: x.get("icav", 0), reverse=True)
+    top_act_acct = _acct(act_opps_tw[0]["name"]) if act_opps_tw else None
+    top_exp_acct = _acct(exp_opps_tw[0]["name"]) if exp_opps_tw else None
+    top_acct     = top_act_acct or top_exp_acct
+
+    exp_accts    = sorted(se.get("exp_account_detail", []),
+                          key=lambda a: a.get("arr", 0), reverse=True)
+    top_arr_acct = _acct(exp_accts[0]["opp_name"]) if exp_accts else top_exp_acct
 
     # ── Unique-stat checks (priority order) ──────────────────────────────────
 
@@ -1467,96 +1487,148 @@ def _roast(se, ranked, motion: str = "dsr"):
     if rank == 1 and n > 1:
         pct = round(se["total_icav"] / team_icav * 100) if team_icav else 0
         gap = fmt(se["total_icav"] - ranked[1]["total_icav"])
+        deal_str = f" {top_acct} was the headline." if top_acct else ""
         if pct >= 30:
-            return f"Carrying {pct}% of the team's quarter on their back. 🐐"
-        return f"Led the board by {gap} over #2. Comfortable at the top. 🏆"
+            return f"Carrying {pct}% of the team's quarter — {fmt(se['total_icav'])} total.{deal_str} 🐐"
+        return f"Led the board by {gap} over #2 with {fmt(se['total_icav'])} total.{deal_str} 🏆"
 
     # Dead last
     if rank == n and n > 1:
-        return f"Last on the board this quarter. Not the final chapter. 📈"
+        icav_str = f" {fmt(se['total_icav'])} on the board." if se["total_icav"] > 0 else ""
+        return f"Last place this quarter.{icav_str} Not the final chapter. 📈"
 
     # Volume leader — dominating win count
     if se["act_wins"] == max_act_wins and max_act_wins >= 5:
         others = sum(s["act_wins"] for s in ranked) - se["act_wins"]
-        return f"{se['act_wins']} wins while the other {n-1} combined for {others}. Not the same sport. 🏭"
+        acct_str = f" {top_act_acct} was just one of them." if top_act_acct else ""
+        return f"{se['act_wins']} wins while the other {n-1} combined for {others}.{acct_str} Not the same sport. 🏭"
 
-    # Rank 2 — chasing the top
+    # Rank 2
     if rank == 2:
         gap = fmt(ranked[0]["total_icav"] - se["total_icav"])
-        return f"Only {gap} behind #1. Hunting. 🔥"
+        acct_str = f" {top_acct} pushed the number." if top_acct else ""
+        return f"Only {gap} behind #1.{acct_str} Hunting. 🔥"
 
     # Rank 3
     if rank == 3:
-        return f"Top 3 and not done building. The podium suits them. 🔥"
+        acct_str = f" {top_acct} put them there." if top_acct else ""
+        return f"Top 3 with {fmt(se['total_icav'])}.{acct_str} The podium suits them. 🔥"
 
-    # Expansion king by wins
-    if se["exp_wins"] == max_exp_wins and max_exp_wins >= 15 and se["exp_wins"] > se["act_wins"]:
-        return f"Doesn't chase new logos — turns every existing account into a bigger one. ♟️"
+    # AE motion: ARR + MRR leadership
+    if motion == "ae":
+        if se_arr > 0 and se_arr == max_arr:
+            arr_accts = ", ".join(_acct(a["opp_name"]) for a in exp_accts[:2]) if exp_accts else ""
+            if se_mrr > 0:
+                pct_str  = f" +{se_mrr_pct}% vs prior" if se_mrr_pct > 0 else ""
+                acct_str = f" ({arr_accts})" if arr_accts else ""
+                return f"Carries {fmt(se_arr)} in account ARR{acct_str} and grew it {fmt(se_mrr)}/mo{pct_str}. That's a growing book. 📊"
+            acct_str = f" — {arr_accts} anchor the book" if arr_accts else ""
+            return f"Tops the team with {fmt(se_arr)} in account ARR{acct_str}. The accounts trust the name. 🏦"
+        if se_mrr > 0 and se_mrr == max_mrr:
+            pct_str  = f" (+{se_mrr_pct}% vs prior)" if se_mrr_pct > 0 else ""
+            acct_str = f" {top_arr_acct} led the charge." if top_arr_acct else ""
+            return f"Top MRR growth this quarter — {fmt(se_mrr)}/mo in new recurring revenue{pct_str}.{acct_str} The install base is compounding. 📈"
 
-    # Expansion king by iACV
-    if se["exp_icav"] == max_exp_icav and max_exp_icav > 0 and se["exp_wins"] >= 5:
-        return f"Owns the install base. {fmt(se['exp_icav'])} says the accounts trust them. 🔒"
+    # DSR: Expansion king by wins
+    if motion != "ae" and se["exp_wins"] == max_exp_wins and max_exp_wins >= 15 and se["exp_wins"] > se["act_wins"]:
+        acct_str = f" {top_exp_acct} was just one account." if top_exp_acct else ""
+        return f"{se['exp_wins']} expansion wins.{acct_str} Doesn't chase new logos — grows every one they touch. ♟️"
 
-    # Highest act iACV
+    # Expansion / Strategic king by iACV
+    if se["exp_icav"] == max_exp_icav and max_exp_icav > 0 and se["exp_wins"] >= (3 if motion == "ae" else 5):
+        if motion == "ae" and se_arr > 0:
+            acct_str = f" {top_arr_acct} was the big one." if top_arr_acct else ""
+            return f"Led {exp_lbl} iACV at {fmt(se['exp_icav'])} with {fmt(se_arr)} in account ARR.{acct_str} The accounts are committing. 🔒"
+        acct_str = f" {top_exp_acct} anchored it." if top_exp_acct else ""
+        return f"Owns the install base — {fmt(se['exp_icav'])} in {exp_lbl} iACV.{acct_str} The accounts trust them. 🔒"
+
+    # Highest act / new-business iACV
     if se["act_icav"] == max_act_icav and max_act_icav > 0 and se["act_icav"] > median_icav:
-        return f"Closes the deals that move the number. Top {act_lbl} producer on the team. 💥"
+        acct_str = f" {top_act_acct} was the biggest." if top_act_acct else ""
+        return f"Top {act_lbl} producer — {fmt(se['act_icav'])} in new revenue.{acct_str} Closes the deals that move the number. 💥"
 
     # Heavily concentrated quarter
     if se["conc"] >= 70:
-        return f"One deal. One meeting that changed the quarter. {fmt(se['largest_deal_value'])} later, here we are. 🎲"
+        deal_acct = _acct(se["largest_deal"]) if se.get("largest_deal") else None
+        deal_str  = f"{deal_acct}: " if deal_acct else ""
+        return f"{deal_str}{fmt(se['largest_deal_value'])} — one deal changed the quarter. Everything else was secondary. 🎲"
 
     # Moderate concentration with big deal
     if se["conc"] >= 50 and se["largest_deal_value"] >= 200_000:
-        return f"Bet big on one deal and won. That's how {fmt(se['largest_deal_value'])} quarters get built. 🎯"
+        deal_acct = _acct(se["largest_deal"]) if se.get("largest_deal") else None
+        deal_str  = f"{deal_acct} alone was " if deal_acct else ""
+        return f"{deal_str}{fmt(se['largest_deal_value'])}. Bet big and won. That's how quarters like this get built. 🎯"
 
     # Whale-dependent
     if se["act_wins"] >= 4 and se["act_median"] > 0 and se["act_avg"] / se["act_median"] >= 2.5:
-        return f"One whale propped up the whole quarter. Skilled or lucky — the board doesn't care. 🐋"
+        acct_str = f" {top_act_acct} was the whale." if top_act_acct else ""
+        return f"{se['act_wins']} wins but one deal did the heavy lifting.{acct_str} Skilled or lucky — the board doesn't care. 🐋"
 
     # Consistent closer
     if se["act_wins"] >= 5 and se["act_median"] > 0 and se["act_avg"] / se["act_median"] < 1.15 and se["act_median"] >= 40_000:
-        return f"No spikes, no dry spells — {se['act_wins']} wins at {fmt(se['act_median'])} median. The model of consistency. 📐"
+        range_str = (f" {top_act_acct} to {_acct(act_opps_tw[-1]['name'])} — all in range."
+                     if len(act_opps_tw) >= 2 else "")
+        return f"No spikes, no dry spells — {se['act_wins']} wins at {fmt(se['act_median'])} median.{range_str} The model of consistency. 📐"
 
     # Top pipeline builder
     if se_pipe == max_pipe and max_pipe >= 10 and n > 1:
-        return f"While everyone else closed this quarter, they were already building next one. 📬"
+        return f"{se_pipe} pipeline opps while closing {total_wins} this quarter. Already building the next one. 📬"
 
     # Perfect notes discipline
     if se_notes_pct == 100 and se["note_hv_total"] >= 5 and se_notes_pct == max_notes_pct:
-        return f"Every deal documented, every note filed. Cleanest record on the team. 📋"
+        return f"Every deal documented — {se['note_hv_total']} opps covered, zero gaps. Cleanest record on the team. 📋"
 
     # High win rate
     if se.get("win_rate", 0) >= 75 and (se.get("closed_won", 0) + se.get("closed_lost", 0)) >= 6:
-        return f"{se['win_rate']}% win rate. Doesn't chase deals they can't close. 🎯"
+        won  = se.get("closed_won", 0)
+        lost = se.get("closed_lost", 0)
+        return f"{se['win_rate']}% win rate ({won}W / {lost}L). Doesn't chase deals they can't close. 🎯"
 
-    # High volume, modest iACV — small deal factory
+    # High volume, modest iACV
     if total_wins >= 12 and se["total_icav"] < median_icav:
-        return f"{total_wins} wins on the board — needs bigger deals to match the effort. ⚙️"
+        return f"{total_wins} wins, {fmt(se['total_icav'])} total — needs bigger deals to match the effort. ⚙️"
 
     # Fewest wins
     if se["act_wins"] == min_act_wins and min_act_wins > 0 and se["act_wins"] <= 2 and n > 3:
-        return f"Fewest wins on the team this quarter. The work is there — the board isn't catching up yet. 🕰️"
+        icav_str = f" {fmt(se['total_icav'])} from {total_wins} win{'s' if total_wins != 1 else ''}."
+        return f"Fewest {act_lbl} wins on the team.{icav_str} The work is there — the board isn't catching up yet. 🕰️"
+
+    # AE motion: MRR movement (mid-table)
+    if motion == "ae" and se_mrr < 0 and se_arr > 0:
+        acct_str = f" — {top_arr_acct} is a watch item." if top_arr_acct else ""
+        return f"Install base showing {fmt(abs(se_mrr))}/mo in MRR contraction{acct_str}. {fmt(se_arr)} in ARR needs attention. ⚠️"
+    if motion == "ae" and se_mrr > 0 and se_mrr_pct >= 10:
+        acct_str = f" {top_arr_acct} is the standout." if top_arr_acct else ""
+        return f"Accounts growing {se_mrr_pct}% QoQ in MRR — {fmt(se_mrr)}/mo added.{acct_str} That's what strategic development looks like. 📈"
+    if motion == "ae" and se_arr > 0 and se["exp_wins"] >= 2:
+        acct_str = f" {top_exp_acct} was the marquee." if top_exp_acct else ""
+        return f"{se['exp_wins']} strategic wins, {fmt(se_arr)} in ARR.{acct_str} Solid footing. 🏛️"
 
     # Well above median
     if se["total_icav"] >= median_icav * 1.5:
-        return f"Running well above the pack. Pulls the team average up just by being on it. 📊"
+        gap = fmt(se["total_icav"] - median_icav)
+        return f"{fmt(se['total_icav'])} total — {gap} above team median. Pulls the average up just by being on it. 📊"
 
     # Right at median
     if abs(se["total_icav"] - median_icav) / max(median_icav, 1) <= 0.20:
-        return f"Right at team median — solid, consistent, reliable. The definition of dependable. 🧱"
+        acct_str = f" {top_acct} was the anchor." if top_acct else ""
+        return f"{fmt(se['total_icav'])} — right at team median.{acct_str} Solid, consistent, dependable. 🧱"
 
-    # Below median, upper half of table
+    # Below median, upper half
     if se["total_icav"] < median_icav and rank <= n // 2:
-        return f"Just below the median but trending the right direction. 💪"
+        gap = fmt(median_icav - se["total_icav"])
+        return f"{fmt(se['total_icav'])} total — {gap} off the median but in the top half. Trending the right direction. 💪"
 
     # Below median, lower half
     if se["total_icav"] < median_icav:
-        gap = fmt(median_icav - se["total_icav"])
-        return f"{gap} off the team median. That gap is closable. 💪"
+        gap      = fmt(median_icav - se["total_icav"])
+        wins_str = f"{total_wins} win{'s' if total_wins != 1 else ''}"
+        return f"{wins_str}, {fmt(se['total_icav'])} — {gap} off the team median. That gap is closable. 💪"
 
-    # Tier-based fallback with win count for differentiation
+    # Tier-based fallback
     wins_str = f"{total_wins} win{'s' if total_wins != 1 else ''}"
-    return {"Elite":   f"Elite tier. {wins_str} and still finding ways to push higher. 👑",
-            "Strong":  f"Strong quarter — {wins_str}, no shortcuts taken. 🔥",
-            "Steady":  f"{wins_str} and holding steady. The backbone of the team. 🧱",
-            "Develop": f"{wins_str} this quarter. The comeback starts here. 🙏"}.get(t, f"{wins_str} this quarter. 📋")
+    icav_str = fmt(se["total_icav"])
+    return {"Elite":   f"Elite tier — {wins_str}, {icav_str}. Still finding ways to push higher. 👑",
+            "Strong":  f"{wins_str}, {icav_str}. Strong quarter, no shortcuts taken. 🔥",
+            "Steady":  f"{wins_str}, {icav_str}. Solid quarter, backbone of the team. 🧱",
+            "Develop": f"{wins_str}, {icav_str} this quarter. The comeback starts here. 🙏"}.get(t, f"{wins_str}, {icav_str} this quarter. 📋")

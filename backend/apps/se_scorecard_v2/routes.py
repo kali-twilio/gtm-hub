@@ -76,7 +76,7 @@ TEAMS = {
     },
     "dorg": {
         "label":            "DORG",
-        "description":      "Digital Organization SE team",
+        "description":      ".ORG SE team",
         "motion":           "ae",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
@@ -744,4 +744,5 @@ def api_rankings():
         "team_total":  sum(s["total_icav"] for s in ses_list),
         "quarter":     period["label"],
         "team_label":  team_label,
+        "motion":      team.get("motion", "dsr"),
     })
