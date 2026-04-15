@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { user, theme, sfTeam, sfPeriod, sfSubteam } from '$lib/stores';
-  import { getSFSEs, getSFPeriods, fmt } from '$lib/api';
+  import { getSFSEs, getSFPeriods, fmt, fmtMrr } from '$lib/api';
   import { page } from '$app/stores';
   import { tc, fc } from '$lib/colors';
 
@@ -159,8 +159,8 @@
       </div>
       <div style="background:rgba(var(--exp-rgb),0.08);border:1px solid rgba(var(--exp-rgb),0.2);border-left:4px solid var(--exp-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">Qtr MRR Δ</div>
-        <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{mrrColor};line-height:1">{mrrUp ? '+' : ''}{fmt(mrrDelta)}<span style="font-size:13px;font-weight:700;opacity:0.7">/mo</span></div>
-        {#if tm.exp_mrr_delta_total}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{tm.exp_mrr_delta_total > 0 ? '+' : ''}{fmt(tm.exp_mrr_delta_total)}/mo</div>{:else}<div style="margin-bottom:8px"></div>{/if}
+        <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{mrrColor};line-height:1">{mrrUp ? '+' : ''}{fmtMrr(mrrDelta)}<span style="font-size:13px;font-weight:700;opacity:0.7">/mo</span></div>
+        {#if tm.exp_mrr_delta_total}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{tm.exp_mrr_delta_total > 0 ? '+' : ''}{fmtMrr(tm.exp_mrr_delta_total)}/mo</div>{:else}<div style="margin-bottom:8px"></div>{/if}
         <div style="border-top:1px solid rgba(var(--exp-rgb),0.15);padding-top:8px">
           <div style="font-size:12px;color:var(--text-muted)">{se.exp_mrr_pct_avg > 0 ? '+' : ''}{se.exp_mrr_pct_avg}% vs prior qtr</div>
           {#if tm.exp_mrr_pct_avg}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px">{tm.exp_mrr_pct_avg > 0 ? '+' : ''}{tm.exp_mrr_pct_avg}%</div>{/if}
@@ -295,7 +295,7 @@
             <td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:top">
               {#if acct}
                 {#if acct.mrr_delta !== 0}
-                <span style="font-weight:700;color:{trendColor}">{trendUp ? '↑' : '↓'} {fmt(Math.abs(acct.mrr_delta))}/mo{#if mrrPct !== 0} <span style="font-size:10px;font-weight:600">({mrrPct > 0 ? '+' : ''}{mrrPct}%)</span>{/if}</span>
+                <span style="font-weight:700;color:{trendColor}">{trendUp ? '↑' : '↓'} {fmtMrr(Math.abs(acct.mrr_delta))}/mo{#if mrrPct !== 0} <span style="font-size:10px;font-weight:600">({mrrPct > 0 ? '+' : ''}{mrrPct}%)</span>{/if}</span>
                 {:else}
                 <span style="color:var(--text-faint)">→ flat{#if mrrPct === 0} (0%){/if}</span>
                 {/if}

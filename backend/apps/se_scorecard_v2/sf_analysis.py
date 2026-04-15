@@ -1034,41 +1034,46 @@ def compute_team_medians(ses: list) -> dict:
     }
 
 
-def collect_team_trends(ses):
+def collect_team_trends(ses, motion: str = "dsr"):
     trends = []
     n = len(ses)
 
-    # EXPANSION
+    act_cat = "NEW BUSINESS" if motion == "ae" else "ACTIVATE"
+    exp_cat = "STRATEGIC"    if motion == "ae" else "EXPANSION"
+    act_lbl = "new business" if motion == "ae" else "activate"
+    exp_lbl = "strategic"    if motion == "ae" else "expansion"
+
+    # EXPANSION / STRATEGIC
     growing   = [se for se in ses if se["exp_growing"]]
     retaining = [se for se in ses if not se["exp_growing"] and se["exp_wins"] > 0]
     flat      = [se for se in ses if se["exp_wins"] == 0]
-    trends.append(("EXPANSION", (
-        f"{len(growing)} of {n} SEs show a positive expansion median — accounts genuinely upselling. "
-        f"{len(retaining)} retaining at $0 median. {len(flat)} with no expansion contribution."
+    trends.append((exp_cat, (
+        f"{len(growing)} of {n} SEs show a positive {exp_lbl} median — accounts genuinely upselling. "
+        f"{len(retaining)} retaining at $0 median. {len(flat)} with no {exp_lbl} contribution."
     )))
 
-    # ACTIVATE — deal quality + volume issues
-    act_ses    = [se for se in ses if se["act_wins"] > 0]
+    # ACTIVATE / NEW BUSINESS — deal quality + volume issues
+    act_ses = [se for se in ses if se["act_wins"] > 0 and se["act_icav"] > 0]
     if act_ses:
-        act_medians      = [se["act_median"] for se in act_ses if se["act_median"] > 0]
-        team_act_median  = round(statistics.median(act_medians)) if act_medians else 0
-        low_floor        = [se for se in act_ses if se["act_wins"] >= 5 and se["act_median"] < ACT_AVG_SIZE_WARNING]
-        whale_dep        = [se for se in act_ses if se["act_wins"] >= 4 and se["act_median"] > 0
-                            and se["act_avg"] / se["act_median"] >= 2.5]
-        msg = f"Team activate median {fmt(team_act_median)}."
+        act_medians     = [se["act_median"] for se in act_ses if se["act_median"] > 0]
+        team_act_median = round(statistics.median(act_medians)) if act_medians else 0
+        low_floor       = [se for se in act_ses if se["act_wins"] >= 5 and se["act_median"] < ACT_AVG_SIZE_WARNING]
+        whale_dep       = [se for se in act_ses if se["act_wins"] >= 4 and se["act_median"] > 0
+                           and se["act_avg"] / se["act_median"] >= 2.5]
+        msg = f"Team {act_lbl} median {fmt(team_act_median)}."
         if low_floor:
             msg += f" {len(low_floor)} SE{'s' if len(low_floor) > 1 else ''} closing high volume below the ${ACT_AVG_SIZE_WARNING//1000}K floor."
         if whale_dep:
             msg += f" {len(whale_dep)} SE{'s' if len(whale_dep) > 1 else ''} with high avg/median variance — whale-dependent quarters."
-        trends.append(("ACTIVATE", msg))
+        trends.append((act_cat, msg))
 
     # MOTION
     act_only = [se for se in ses if se["total_icav"] > 0 and se["act_icav"] / se["total_icav"] > 0.85 and se["act_icav"] > 200_000]
     exp_only = [se for se in ses if se["total_icav"] > 0 and se["exp_icav"] / se["total_icav"] > 0.85 and se["exp_icav"] > 200_000]
     if act_only or exp_only:
         trends.append(("MOTION", (
-            f"{len(act_only)} SE{'s' if len(act_only) != 1 else ''} running activate-only (>85% from new logos). "
-            f"{len(exp_only)} SE{'s' if len(exp_only) != 1 else ''} expansion-only."
+            f"{len(act_only)} SE{'s' if len(act_only) != 1 else ''} running {act_lbl}-only (>85% from new logos). "
+            f"{len(exp_only)} SE{'s' if len(exp_only) != 1 else ''} {exp_lbl}-only."
         )))
 
     # RISK — revenue concentration + notes gap

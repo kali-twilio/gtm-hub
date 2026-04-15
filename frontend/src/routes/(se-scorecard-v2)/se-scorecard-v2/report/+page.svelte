@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getSFReport, fmt } from '$lib/api';
+  import { getSFReport, fmt, fmtMrr } from '$lib/api';
   import { theme, sfTeam, sfPeriod, sfSubteam, user } from '$lib/stores';
   import { tc, fc } from '$lib/colors';
 
@@ -162,7 +162,7 @@
   function fmtMrrDelta(delta: number): string {
     if (delta === 0) return '→ flat';
     const sign = delta > 0 ? '↑' : '↓';
-    return `${sign} ${fmt(Math.abs(delta))}/mo`;
+    return `${sign} ${fmtMrr(Math.abs(delta))}/mo`;
   }
 
   const stratOnly     = $derived(teamExpIcav > 0 && teamActIcav === 0);
