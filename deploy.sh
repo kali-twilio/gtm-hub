@@ -229,7 +229,11 @@ server {
 
     location / {
         root /var/www/scorecard;
-        try_files \$uri \$uri.html \$uri/ =404;
+        try_files \$uri \$uri.html \$uri/ @fallback;
+    }
+
+    location @fallback {
+        return 302 /;
     }
 }
 EOF
