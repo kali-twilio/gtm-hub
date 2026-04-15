@@ -52,7 +52,7 @@
   );
   const colDefs = $derived(data ? [
     {h:'#',              show:true,          tip:`Rank by composite score: 85% iACV · 8% MRR% · 5% ARR · 2% notes. Each metric percentile-ranked 0–100 within the team.`},
-    {h:'SE',             show:true,          tip:''},
+    {h:'SE',             show:true,          tip:seLevelTip},
     {h:motionLabels.act, show:hasActCol,     tip:`Sum of iACV from Technical Win Closed Won opps classified as ${motionLabels.act}. ${motionLabels.actDesc}. Only TW opps count toward ranking.`},
     {h:motionLabels.exp, show:hasExpCol,     tip:`Sum of iACV from Technical Win Closed Won opps classified as ${motionLabels.exp}. ${motionLabels.expDesc}. Only TW opps count toward ranking.`},
     {h:'Total iACV',     show:true,          tip:`${motionLabels.act} + ${motionLabels.exp} iACV combined (TW only). In "All Closed Won" view the non-TW delta is shown inline.`},
@@ -97,6 +97,18 @@
     const sorted = [...mapped].sort((a: any, b: any) => b.total_icav - a.total_icav);
     return sorted.map((se: any, i: number) => ({ ...se, rank: i + 1 }));
   })() : []);
+  const seLevelTip = $derived(filteredRanked.length ? (() => {
+    const counts: Record<number, number> = {};
+    for (const s of filteredRanked as any[]) {
+      const lvl = titleLevel((s as any).title || '');
+      counts[lvl] = (counts[lvl] ?? 0) + 1;
+    }
+    const n = filteredRanked.length;
+    const parts = Object.entries(counts)
+      .sort(([a], [b]) => +b - +a)
+      .map(([lvl, c]) => `${+lvl > 0 ? `L${lvl}` : 'SE'}: ${c}`);
+    return `${n} SE${n !== 1 ? 's' : ''} · ${parts.join(' · ')}`;
+  })() : '');
   const actKey    = (s: any) => s.act_icav + (view === 'all' ? (s.non_tw_act_icav ?? 0) : 0);
   const actSorted = $derived(filteredRanked.filter((s: any) => actKey(s) > 0).sort((a: any, b: any) => actKey(b) - actKey(a)));
   const expSorted = $derived([...filteredRanked].filter((s: any) => s.exp_wins > 0).sort((a: any, b: any) => b.exp_icav - a.exp_icav));
@@ -525,7 +537,7 @@ const actStatCols = $derived(data ? [
           {@const vExpWins = se.exp_wins + (view==='all' ? (se.non_tw_exp_wins ?? 0) : 0)}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
             <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{se.rank}</td>
-            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
 
             {#if hasActCol}
             <td style="padding:10px 16px">
@@ -626,7 +638,7 @@ const actStatCols = $derived(data ? [
           <thead style="background:rgba(var(--red-rgb),0.06)"><tr>
             {#each [
               {h:'#',show:true, tip:'Ranked by Activate iACV within this period, highest to lowest.'},
-              {h:'SE',show:true, tip:''},
+              {h:'SE',show:true, tip:seLevelTip},
               {h:'Wins',show:true, tip:`Count of Technical Win Closed Won ${motionLabels.act} opps. ${motionLabels.actDesc}. Only TW opps count toward ranking.`},
               {h:'iACV',show:true, tip:`Sum of iACV from Technical Win Closed Won ${motionLabels.act} opps. Incremental Annual Contract Value — the net new ARR committed on close.`},
               {h:'Median',show:true, tip:`Median deal size (iACV) across this SE's ${motionLabels.act.toLowerCase()} wins. More robust than average — less skewed by a single large deal.`},
@@ -655,7 +667,7 @@ const actStatCols = $derived(data ? [
             {@const vActIcav = se.act_icav + (view === 'all' ? (se.non_tw_act_icav ?? 0) : 0)}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
-              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{vActWins}</td>
               <td style="padding:10px 16px;color:var(--act-color);font-weight:700">{fmt(vActIcav)}</td>
               <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.act_median)}</td>
@@ -711,7 +723,7 @@ const actStatCols = $derived(data ? [
             <tr>
               {#each [
                 {h:'#',          tip:'',                                                                                                                                                                                        show:true},
-                {h:'SE',         tip:'',                                                                                                                                                                                        show:true},
+                {h:'SE',         tip:seLevelTip,                                                                                                                                                                            show:true},
                 {h:'Wins',       tip:`Count of Technical Win Closed Won ${motionLabels.exp} opps. ${motionLabels.expDesc}. Only TW opps count toward ranking.`,                                                                 show:true},
                 {h:'iACV',       tip:`Net new ARR committed on close — sum of Comms_Segment_Combined_iACV__c across this SE's TW ${motionLabels.exp.toLowerCase()} wins.`,                                                      show:true},
                 {h:'Acct ARR',   tip:`Current_ARR_Based_on_Last_6_Months__c on each expansion account. Each account counted once even if the SE has multiple opps on it.`,                                                      show:expTotals.arr_total>0},
@@ -742,7 +754,7 @@ const actStatCols = $derived(data ? [
             {@const expStColor = expStatusColor(expSt)}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
-              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.exp_wins}</td>
               <td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{fmt(se.exp_icav)}</td>
               {#if expTotals.arr_total > 0}
@@ -835,7 +847,7 @@ const actStatCols = $derived(data ? [
         <thead style="background:rgba(var(--red-rgb),0.06)"><tr>
           {#each (stratOnly ? [
             {h:'#',           tip:'', show:true},
-            {h:'SE',          tip:'', show:true},
+            {h:'SE',          tip:seLevelTip, show:true},
             {h:'Wins',        tip:`Count of TW Closed Won ${motionLabels.exp} opps.`, show:true},
             {h:'iACV',        tip:`Net new ARR committed on close across this SE's TW ${motionLabels.exp.toLowerCase()} wins.`, show:true},
             {h:'Acct ARR',    tip:`Current ARR on each ${motionLabels.exp.toLowerCase()} account. Each account counted once.`, show:expTotals.arr_total>0},
@@ -848,7 +860,7 @@ const actStatCols = $derived(data ? [
             {h:'Status',      tip:`Growing — net MRR increase. Expanding — new iACV, flat MRR. Mixed — new iACV but MRR declining. Contracting — MRR dropping, no new wins. Retaining — no growth signal.`, show:true},
           ] : [
             {h:'#',           tip:'', show:true},
-            {h:'SE',          tip:'', show:true},
+            {h:'SE',          tip:seLevelTip, show:true},
             {h:'Wins',        tip:`Count of TW Closed Won ${motionLabels.act} opps.`, show:true},
             {h:'iACV',        tip:`Net new ARR committed on close across this SE's TW ${motionLabels.act.toLowerCase()} wins.`, show:true},
             {h:'Median',      tip:`Median deal size (iACV) — less skewed by a single large deal.`, show:true},
@@ -880,7 +892,7 @@ const actStatCols = $derived(data ? [
             {@const mrrPct = se.exp_mrr_pct_avg ?? 0}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{se.rank ?? i+1}</td>
-              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.exp_wins}</td>
               <td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{fmt(se.exp_icav)}</td>
               {#if expTotals.arr_total > 0}
@@ -935,7 +947,7 @@ const actStatCols = $derived(data ? [
             {@const vActIcav = se.act_icav + (view === 'all' ? (se.non_tw_act_icav ?? 0) : 0)}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{se.rank ?? i+1}</td>
-              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{vActWins}</td>
               <td style="padding:10px 16px;color:var(--act-color);font-weight:700">{fmt(vActIcav)}</td>
               <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.act_median)}</td>
@@ -988,12 +1000,12 @@ const actStatCols = $derived(data ? [
     <div class="p5-panel-header"><h2 class="p5-panel-header-title">Largest Deals</h2></div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['#','SE','Value','Motion','AE','Account','Product'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'}">{h}</th>{/each}</tr></thead>
+        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['#','SE','Value','Motion','AE','Account','Product'] as h}<th title={h==='SE'?seLevelTip:undefined} style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};{h==='SE'&&seLevelTip?'cursor:help;border-bottom:1px dashed rgba(var(--red-rgb),0.4)':''}">{h}</th>{/each}</tr></thead>
         <tbody>
           {#each dealSorted as se, i}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
             <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
-            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
             <td style="padding:10px 16px;color:{$theme==='twilio'?'#B45309':'var(--yellow)'};font-weight:900;font-style:{$theme==='p5'?'italic':'normal'}">{fmt(se.largest_deal_value)}</td>
             <td style="padding:10px 16px">
               {#if se.largest_deal_motion}
@@ -1021,13 +1033,14 @@ const actStatCols = $derived(data ? [
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
         <thead style="background:rgba(var(--red-rgb),0.06)">
-          <tr>{#each ['SE', notesFloorLabel+' TW Opps','Both Fields Covered','Coverage %','Total Entries','Avg Entries / Opp'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>{/each}</tr>
+          <tr>{#each ['#', 'SE', notesFloorLabel+' TW Opps','Both Fields Covered','Coverage %','Total Entries','Avg Entries / Opp'] as h}<th title={h==='SE'?seLevelTip:undefined} style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap;{h==='SE'&&seLevelTip?'cursor:help;border-bottom:1px dashed rgba(var(--red-rgb),0.4)':''}">{h}</th>{/each}</tr>
         </thead>
         <tbody>
-          {#each [...filteredRanked].filter((s: any) => (s.note_hv_total ?? 0) > 0).sort((a: any, b: any) => (b.note_hv_covered / b.note_hv_total) - (a.note_hv_covered / a.note_hv_total) || b.note_hv_avg_entries - a.note_hv_avg_entries) as se}
+          {#each [...filteredRanked].filter((s: any) => (s.note_hv_total ?? 0) > 0).sort((a: any, b: any) => (b.note_hv_covered / b.note_hv_total) - (a.note_hv_covered / a.note_hv_total) || b.note_hv_avg_entries - a.note_hv_avg_entries) as se, i}
           {@const pct = se.note_hv_total > 0 ? Math.round(se.note_hv_covered / se.note_hv_total * 100) : 0}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
-            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+            <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;text-align:center;width:32px">{i + 1}</td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
             <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.note_hv_total}</td>
             <td style="padding:10px 16px;font-weight:700;color:{se.note_hv_covered === se.note_hv_total ? 'var(--exp-color)' : se.note_hv_covered > 0 ? 'var(--text)' : 'var(--red)'}">{se.note_hv_covered}</td>
             <td style="padding:10px 16px">
@@ -1042,7 +1055,8 @@ const actStatCols = $derived(data ? [
           {/each}
           {#each [...filteredRanked].filter((s: any) => (s.note_hv_total ?? 0) === 0) as se}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05);opacity:0.4">
-            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+            <td style="padding:10px 16px;text-align:center;width:32px">—</td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
             <td colspan="5" style="padding:10px 16px;font-size:11px;color:var(--text-faint)">No closed won opps ≥ {notesFloorLabel} this period</td>
           </tr>
           {/each}

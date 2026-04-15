@@ -453,7 +453,7 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     if not opps:
         return [], None
 
-    ses = sf_analysis.build_ses(opps, team.get("motion", "dsr"), notes_floor=icav_min)
+    ses = sf_analysis.build_ses(opps, team.get("motion", "dsr"), notes_floor=icav_min, period_key=period_key)
     sf_analysis.merge_win_rate(ses, win_rate_opps, team.get("motion", "dsr"))
 
     # Build opp motion map from closed-won + pipeline opps, then merge email activity

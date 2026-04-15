@@ -224,10 +224,11 @@ def _is_strategic(opp: dict) -> bool:
 # Build SE records from raw Salesforce opportunity records
 # ---------------------------------------------------------------------------
 
-def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
+def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key: str = "") -> list:
     """
-    opps   — list of Salesforce Closed Won Opportunity dicts (TW and non-TW)
-    motion — 'dsr' (Activate/Expansion) or 'ae' (New Business/Strategic)
+    opps       — list of Salesforce Closed Won Opportunity dicts (TW and non-TW)
+    motion     — 'dsr' (Activate/Expansion) or 'ae' (New Business/Strategic)
+    period_key — e.g. '2025_Q2' or '2025_FY'. Full-year periods anchor MRR to Q4 of that year.
     Returns list of SE dicts. Ranking uses TW opps only; non-TW stats are supplemental.
     """
     by_se: dict[str, dict] = {}
@@ -364,9 +365,16 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
             mrr_3m    = _acct_num(acct.get("Average_Amortized_Usage_Last_3_Months__c"))
 
             # Quarter-anchored MRR delta: avg usage in opp's quarter vs avg of 3 months prior.
-            # Falls back to rolling 3mo avg vs ARR/12 baseline if snapshots aren't available
-            # (e.g. data older than 14 months, or fields missing for this account).
-            q_avg, pre_avg, mrr_delta = _quarter_mrr_delta(acct, e_opp.get("CloseDate") or "")
+            # For full-year periods all accounts use Q4 of that year as the anchor so every
+            # account is measured on the same time window (Q4 avg vs Q3 avg). Using each opp's
+            # own close quarter would mix deltas across Q1-Q4, producing an incoherent sum.
+            # Falls back to rolling 3mo avg vs ARR/12 baseline if snapshots aren't available.
+            if period_key.endswith("_FY"):
+                fy_year = int(period_key.split("_")[0])
+                mrr_anchor = f"{fy_year}-12-01"
+            else:
+                mrr_anchor = e_opp.get("CloseDate") or ""
+            q_avg, pre_avg, mrr_delta = _quarter_mrr_delta(acct, mrr_anchor)
             if q_avg == 0 and mrr_delta == 0:
                 # Fallback: rolling 3-month avg vs 6-month ARR baseline
                 pre_avg   = round(arr / 12) if arr else 0

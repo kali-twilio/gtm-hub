@@ -3,8 +3,12 @@
 # Usage: bash deploy.sh
 # Terminates any existing instance, uploads latest code, and launches a fresh one.
 #
-# HTTPS: Terminated by CloudFront (distribution kali-gtm-hub-cf / EHJS9BMWR6QG1).
-#        EC2 serves HTTP only on port 80 — no certs needed on the instance.
+# FIRST TIME SETUP: Copy deploy.env.example → deploy.env and fill in your values.
+# Use your Twilio username wherever you see [username] in the example — it is used
+# to tag every AWS resource you create with {Key=owner,Value=your-username} so
+# resources can be attributed and cleaned up per person.
+#
+# HTTPS: Terminated by CloudFront. EC2 serves HTTP only on port 80.
 #
 # SECURITY: Secrets are never interpolated into EC2 user-data.
 # They are uploaded to a private S3 object and fetched via a short-lived
@@ -22,7 +26,7 @@ fi
 source deploy.env
 
 # Validate required vars
-for var in PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL; do
+for var in OWNER PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL; do
   if [ -z "${!var}" ]; then
     echo "ERROR: $var is not set in deploy.env"
     exit 1
@@ -93,13 +97,11 @@ tar -czf /tmp/backend.tar.gz  -C backend .
 tar -czf /tmp/frontend.tar.gz -C frontend/build .
 aws s3 cp /tmp/backend.tar.gz  s3://$BUCKET/backend.tar.gz  --profile "$PROFILE" --region "$REGION"
 aws s3 cp /tmp/frontend.tar.gz s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION"
-aws s3api put-object-tagging --bucket "$BUCKET" --key backend.tar.gz  --tagging 'TagSet=[{Key=owner,Value=kali}]' --profile "$PROFILE" --region "$REGION"
-aws s3api put-object-tagging --bucket "$BUCKET" --key frontend.tar.gz --tagging 'TagSet=[{Key=owner,Value=kali}]' --profile "$PROFILE" --region "$REGION"
+aws s3api put-object-tagging --bucket "$BUCKET" --key backend.tar.gz  --tagging "TagSet=[{Key=owner,Value=$OWNER}]" --profile "$PROFILE" --region "$REGION"
+aws s3api put-object-tagging --bucket "$BUCKET" --key frontend.tar.gz --tagging "TagSet=[{Key=owner,Value=$OWNER}]" --profile "$PROFILE" --region "$REGION"
 rm /tmp/backend.tar.gz /tmp/frontend.tar.gz
 
 # Write secrets to a temp file, upload to S3, then delete locally.
-# Includes global vars + every backend/apps/*/.env file automatically —
-# no changes needed here when adding a new app.
 SECRETS_FILE=$(mktemp /tmp/secrets.XXXXXX.env)
 chmod 600 "$SECRETS_FILE"
 cat > "$SECRETS_FILE" << SECRETS
@@ -125,7 +127,7 @@ done
 aws s3 cp "$SECRETS_FILE" s3://$BUCKET/secrets.env \
   --profile "$PROFILE" --region "$REGION" \
   --sse aws:kms
-aws s3api put-object-tagging --bucket "$BUCKET" --key secrets.env --tagging 'TagSet=[{Key=owner,Value=kali}]' --profile "$PROFILE" --region "$REGION"
+aws s3api put-object-tagging --bucket "$BUCKET" --key secrets.env --tagging "TagSet=[{Key=owner,Value=$OWNER}]" --profile "$PROFILE" --region "$REGION"
 rm -f "$SECRETS_FILE"
 
 echo "Upload complete."
@@ -172,9 +174,7 @@ curl -sL '${SECRETS_URL_S3}' -o "\$SECRETS_TMP"
 install -o root -g root -m 600 "\$SECRETS_TMP" /app/secrets.env
 rm -f "\$SECRETS_TMP"
 
-# ── Write systemd service — env vars loaded from /app/secrets.env at runtime ─
-# Adding a new app only requires adding its .env to the secrets bundle above.
-# No changes to this unit file are ever needed for new apps.
+# ── Write systemd service ────────────────────────────────────────────────────
 cat > /etc/systemd/system/app.service << 'EOF'
 [Unit]
 Description=GTM Hub API
@@ -264,7 +264,7 @@ INSTANCE_ID=$(aws ec2 run-instances \
   --instance-type t3.micro \
   --security-group-ids "$SG_ID" \
   --key-name "$KEY_NAME" \
-  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_NAME},{Key=owner,Value=kali}]" "ResourceType=volume,Tags=[{Key=owner,Value=kali}]" \
+  --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=$TAG_NAME},{Key=owner,Value=$OWNER}]" "ResourceType=volume,Tags=[{Key=owner,Value=$OWNER}]" \
   --metadata-options HttpTokens=required,HttpEndpoint=enabled \
   --user-data "file://$USERDATA_FILE" \
   --query "Instances[0].InstanceId" --output text)

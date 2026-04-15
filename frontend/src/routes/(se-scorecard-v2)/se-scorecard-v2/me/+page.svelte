@@ -152,6 +152,7 @@
 
     <div style="margin-bottom:20px">
       <div style="font-size:24px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 rgba(232,0,61,0.5)':''}">{se.name}</div>
+      {#if se.title}<div style="font-size:11px;font-weight:600;color:var(--text-muted);margin-top:4px;letter-spacing:0.04em">{se.title}</div>{/if}
     </div>
 
     <div style="height:2px;background:linear-gradient(90deg,var(--red),transparent);{$theme==='p5'?'transform:skewX(-20deg);transform-origin:left':'border-radius:1px'};margin-bottom:20px"></div>
