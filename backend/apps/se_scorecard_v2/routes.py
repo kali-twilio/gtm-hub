@@ -229,7 +229,7 @@ def _build_soql(team_filter: str, start: str, end: str, icav_min: int = 0) -> st
     icav_clause = f"AND {_ICAV_FIELD} >= {icav_min} " if icav_min > 0 else ""
     return (
         f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, {_TEAM_FIELD}, Presales_Stage__c, "
-        f"Technical_Lead__r.Name, Technical_Lead__r.Email, "
+        f"Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.Title, "
         f"Owner.Name, Owner.UserRole.Name, "
         f"Sales_Engineer_Notes__c, SE_Notes_History__c, "
         f"Account.Name, Account.Owner.Name, "

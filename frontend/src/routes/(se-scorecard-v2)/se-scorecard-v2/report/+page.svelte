@@ -14,6 +14,7 @@
   let expColTipIdx = $state(-1);
   let notesFilter = $state(false);
   let showActivity = $state(false);
+  let titleFilter = $state('');
 
   // Returns a copy of an SE with iACV/wins recalculated from only fully-documented
   // TW opps (both Sales_Engineer_Notes__c and SE_Notes_History__c filled).
@@ -61,19 +62,48 @@
     {h:'Meetings',       show:hasMeetingCol, tip:`Salesforce Events linked to Opportunities during the period. Recurring series deduplicated — same series on the same opp counts once. In-Q vs pipeline split matches email logic.`},
   ].filter(c => c.show) : []);
 
+  function titleLevel(t: string): number {
+    const l = t.toLowerCase();
+    if (l.includes('flex strategic') || l.includes('senior presales architect')) return 6;
+    if (l.includes('presales architect') || l.includes('solutions architect')) return 5;
+    if (l.includes('principal')) return 4;
+    if (l.includes('senior presales engineer')) return 3;
+    return 0;
+  }
+  const titleGroups = $derived(data ? (() => {
+    const titles = [...new Set<string>(data.ranked.map((s: any) => s.title || '').filter(Boolean))];
+    const byLevel: Record<number, string[]> = {};
+    for (const t of titles) {
+      const lvl = titleLevel(t);
+      if (!byLevel[lvl]) byLevel[lvl] = [];
+      byLevel[lvl].push(t);
+    }
+    for (const lvl of Object.keys(byLevel)) byLevel[+lvl].sort((a, b) => a.localeCompare(b));
+    return Object.entries(byLevel)
+      .sort(([a], [b]) => +b - +a)
+      .map(([lvl, titles]) => ({ level: +lvl, label: +lvl > 0 ? `Level ${lvl}` : 'Other', titles }));
+  })() : []);
+
+  function titleMatchesFilter(t: string, f: string): boolean {
+    if (!f) return true;
+    if (f.startsWith('level:')) return titleLevel(t) === +f.slice(6);
+    return t === f;
+  }
+
   const filteredRanked = $derived(data ? (() => {
-    if (!notesFilter) return data.ranked;
-    const mapped = data.ranked.map(_notesFiltered);
+    let base = titleFilter ? data.ranked.filter((s: any) => titleMatchesFilter(s.title || '', titleFilter)) : data.ranked;
+    if (!notesFilter) return base;
+    const mapped = base.map(_notesFiltered);
     const sorted = [...mapped].sort((a: any, b: any) => b.total_icav - a.total_icav);
     return sorted.map((se: any, i: number) => ({ ...se, rank: i + 1 }));
   })() : []);
   const actKey    = (s: any) => s.act_icav + (view === 'all' ? (s.non_tw_act_icav ?? 0) : 0);
-  const actSorted = $derived(data
-    ? [...(notesFilter ? filteredRanked : data.ranked)].filter((s: any) => actKey(s) > 0).sort((a: any, b: any) => actKey(b) - actKey(a))
-    : []);
-  const expSorted = $derived(notesFilter && data
-    ? [...filteredRanked].filter((s: any) => s.exp_icav > 0).sort((a: any, b: any) => b.exp_icav - a.exp_icav)
-    : (data ? data.exp_sorted : []));
+  const actSorted = $derived(filteredRanked.filter((s: any) => actKey(s) > 0).sort((a: any, b: any) => actKey(b) - actKey(a)));
+  const expSorted = $derived([...filteredRanked].filter((s: any) => s.exp_wins > 0).sort((a: any, b: any) => b.exp_icav - a.exp_icav));
+  const dealSorted = $derived(data ? (titleFilter
+    ? (data.deal_sorted ?? []).filter((s: any) => titleMatchesFilter(s.title || '', titleFilter))
+    : (data.deal_sorted ?? [])
+  ) : []);
   const maxActIcav = $derived(actSorted.length ? Math.max(...actSorted.map((s: any) => s.act_icav)) : 1);
   const maxExpIcav = $derived(expSorted.length ? Math.max(...expSorted.map((s: any) => s.exp_icav)) : 1);
   const teamActIcav   = $derived(filteredRanked.reduce((s: number, se: any) => s + se.act_icav + (view === 'all' ? (se.non_tw_act_icav ?? 0) : 0), 0));
@@ -90,7 +120,7 @@
   const hasEmailCol   = $derived(showActivity && filteredRanked.some((s: any) => emailTotal(s) > 0));
   const hasMeetingCol = $derived(showActivity && filteredRanked.some((s: any) => meetingTotal(s) > 0));
   const actSes      = $derived(actSorted.filter((s: any) => actKey(s) > 0));
-  const expSes      = $derived(expSorted.filter((s: any) => s.exp_icav > 0));
+  const expSes      = $derived(expSorted.filter((s: any) => s.exp_wins > 0));
   const actTotals   = $derived({
     wins:      actSes.reduce((n: number, s: any) => n + s.act_wins + (view === 'all' ? (s.non_tw_act_wins ?? 0) : 0), 0),
     icav:      actSes.reduce((n: number, s: any) => n + s.act_icav + (view === 'all' ? (s.non_tw_act_icav ?? 0) : 0), 0),
@@ -166,6 +196,8 @@
   }
 
   const stratOnly     = $derived(teamExpIcav > 0 && teamActIcav === 0);
+  const actOnly       = $derived(teamActIcav > 0 && teamExpIcav === 0);
+  const singleMotion  = $derived(stratOnly || actOnly);
   const summaryCards  = $derived(data ? [
     {label:'Team Total iACV',        val:fmt(teamTotalIcav),                   color:null,                                                                                                                                                 show:true},
     {label:motionLabels.act+' iACV', val:fmt(teamActIcav),                     color:null,                                                                                                                                                 show:teamActIcav>0 && teamExpIcav>0},
@@ -254,10 +286,10 @@ const actStatCols = $derived(data ? [
   let navHovered = $state(false);
 
   const navSections = $derived(data ? [
-    { id: 'rankings',  label: 'Rankings' },
-    { id: 'activate',  label: motionLabels.act,  show: actSes.length > 0 },
-    { id: 'expansion', label: motionLabels.exp,  show: expSes.length > 0 },
-    { id: 'deals',     label: 'Largest Deals',   show: !!(data.deal_sorted?.length) },
+    { id: 'rankings',  label: 'Standings' },
+    { id: 'activate',  label: motionLabels.act,  show: actSes.length > 0 && !singleMotion },
+    { id: 'expansion', label: motionLabels.exp,  show: expSes.length > 0 && !singleMotion },
+    { id: 'deals',     label: 'Largest Deals',   show: dealSorted.length > 0 },
     { id: 'notes',     label: 'Notes Quality',   show: !notesFilter },
     { id: 'trends',    label: 'Trends & Flags' },
     { id: 'recs',      label: 'Recommendations', show: !!(data.recommendations?.length) },
@@ -357,7 +389,8 @@ const actStatCols = $derived(data ? [
   <div style="margin-bottom:28px">
     <div class="p5-badge" style="margin-bottom:10px">SE Scorecard V2 · {data.quarter}</div>
     <h1 style="font-size:36px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:3px 3px 0 var(--red)':''}">SE Scorecard</h1>
-    <p style="font-size:13px;color:var(--text-muted);font-weight:600;margin-top:4px">{data.total} SEs · Live data from Salesforce</p>
+    <p style="font-size:16px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:var(--red);margin-top:6px">{data.team_label}</p>
+    <p style="font-size:13px;color:var(--text-muted);font-weight:600;margin-top:2px">{data.total} SEs · Live data from Salesforce</p>
   </div>
 
   <div style="display:grid;grid-template-columns:repeat({summaryCards.length},1fr);gap:12px;margin-bottom:24px">
@@ -388,13 +421,15 @@ const actStatCols = $derived(data ? [
     <!-- iACV cutoff -->
     <div>
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">iACV</div>
-      <div style="display:flex;gap:6px">
+      <select
+        value={icavMin}
+        onchange={(e) => loadWithMin(+((e.currentTarget as HTMLSelectElement).value))}
+        style="padding:5px 10px;font-size:12px;font-weight:600;border-radius:5px;border:1px solid {icavMin>0?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:var(--bg);color:{icavMin>0?'var(--red)':'var(--text-muted)'};cursor:pointer;outline:none;opacity:{icavLoading?0.5:1};transition:opacity 0.15s"
+      >
         {#each ICAV_PRESETS as p}
-        <button onclick={() => loadWithMin(p.value)}
-          style="padding:5px 12px;font-size:12px;font-weight:700;border-radius:5px;border:1px solid {icavMin===p.value?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:{icavMin===p.value?'rgba(var(--red-rgb),0.1)':'transparent'};color:{icavMin===p.value?'var(--red)':'var(--text-muted)'};cursor:pointer;opacity:{icavLoading&&icavMin===p.value?0.5:1};transition:opacity 0.15s"
-        >{icavLoading && icavMin === p.value ? '…' : p.label}</button>
+        <option value={p.value}>{icavLoading && icavMin === p.value ? '…' : p.label}</option>
         {/each}
-      </div>
+      </select>
     </div>
 
     <!-- Activity columns toggle -->
@@ -413,16 +448,39 @@ const actStatCols = $derived(data ? [
       >{notesFilter ? '✓ Documented Only' : 'Documented Only'}</button>
     </div>
 
+    <!-- Title filter -->
+    {#if titleGroups.length > 0}
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Job Title</div>
+      <select
+        value={titleFilter}
+        onchange={(e) => titleFilter = (e.currentTarget as HTMLSelectElement).value}
+        style="padding:5px 10px;font-size:12px;font-weight:600;border-radius:5px;border:1px solid {titleFilter?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:var(--bg);color:{titleFilter?'var(--red)':'var(--text-muted)'};cursor:pointer;outline:none"
+      >
+        <option value="">All Titles</option>
+        {#each titleGroups as grp}
+        <optgroup label="───────────────">
+          <option value="level:{grp.level}">{grp.label} — All</option>
+          {#each grp.titles as t}
+          <option value={t}>↳ {t}</option>
+          {/each}
+        </optgroup>
+        {/each}
+      </select>
+    </div>
+    {/if}
+
   </div>
   </div>
 
   <div style="margin-bottom:20px"></div>
 
-  <!-- Overall Rankings -->
+  <!-- Overall Rankings (multi-motion only) -->
+  {#if !singleMotion}
   <div id="rankings" class="p5-panel" style="margin-bottom:20px">
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
       <div style="display:flex;align-items:center;justify-content:space-between">
-        <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Overall Rankings</h2>
+        <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Standings</h2>
         <button
           onclick={() => rankCriteriaExpanded = !rankCriteriaExpanded}
           style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);background:transparent;border:1px solid rgba(var(--red-rgb),0.2);border-radius:4px;padding:4px 10px;cursor:pointer"
@@ -476,7 +534,7 @@ const actStatCols = $derived(data ? [
           {@const vExpWins = se.exp_wins + (view==='all' ? (se.non_tw_exp_wins ?? 0) : 0)}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
             <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{se.rank}</td>
-            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
 
             {#if hasActCol}
             <td style="padding:10px 16px">
@@ -561,7 +619,10 @@ const actStatCols = $derived(data ? [
     </div>
   </div>
 
-  <!-- Activate + Expansion -->
+  {/if}
+
+  <!-- Activate + Expansion (multi-motion only) -->
+  {#if !singleMotion}
   <div style="display:flex;flex-direction:column;gap:16px;margin-bottom:20px">
     {#if actSes.length > 0}
     <div id="activate" class="p5-panel">
@@ -603,7 +664,7 @@ const actStatCols = $derived(data ? [
             {@const vActIcav = se.act_icav + (view === 'all' ? (se.non_tw_act_icav ?? 0) : 0)}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
-              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{vActWins}</td>
               <td style="padding:10px 16px;color:var(--act-color);font-weight:700">{fmt(vActIcav)}</td>
               <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.act_median)}</td>
@@ -685,12 +746,12 @@ const actStatCols = $derived(data ? [
             </tr>
           </thead>
           <tbody>
-            {#each expSorted as se, i}
+            {#each expSes as se, i}
             {@const expSt = computeExpStatus(se)}
             {@const expStColor = expStatusColor(expSt)}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
-              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.exp_wins}</td>
               <td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{fmt(se.exp_icav)}</td>
               {#if expTotals.arr_total > 0}
@@ -748,18 +809,202 @@ const actStatCols = $derived(data ? [
     </div>
     {/if}
   </div>
+  {/if}
+
+  <!-- Single-motion merged table -->
+  {#if singleMotion}
+  <div id="rankings" class="p5-panel" style="margin-bottom:20px">
+    <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Standings</h2>
+        <button onclick={() => rankCriteriaExpanded = !rankCriteriaExpanded}
+          style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);background:transparent;border:1px solid rgba(var(--red-rgb),0.2);border-radius:4px;padding:4px 10px;cursor:pointer"
+        >Ranking Criteria {rankCriteriaExpanded ? '▲' : '▼'}</button>
+      </div>
+      {#if rankCriteriaExpanded}
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px">
+        {#each [
+          {w:'85%', label:'Total iACV',       desc:'Primary revenue output — dominant signal'},
+          {w:'8%',  label:'Quarter MRR %',   desc:'Avg % MRR growth across expansion accounts — are accounts genuinely growing?'},
+          {w:'5%',  label:'Total ARR Touched',desc:'Sum of current ARR across expansion accounts — breadth of account footprint'},
+          {w:'2%',  label:'Notes Hygiene',   desc:notesFloorLabel+' opps with both SE notes fields filled ÷ total'},
+        ] as c}
+        <div style="display:flex;gap:8px;align-items:flex-start;padding:6px 8px;background:rgba(var(--red-rgb),0.04);border-left:3px solid rgba(var(--red-rgb),0.3);{$theme==='twilio'?'border-radius:0 4px 4px 0':''}">
+          <span style="font-size:13px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--red);flex-shrink:0;min-width:32px">{c.w}</span>
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--text);text-transform:uppercase;letter-spacing:0.08em">{c.label}</div>
+            <div style="font-size:10px;color:var(--text-muted);margin-top:1px">{c.desc}</div>
+          </div>
+        </div>
+        {/each}
+      </div>
+      <p style="font-size:10px;color:var(--text-faint);margin-top:8px">Each metric is percentile-ranked 0–100 within the team, then combined with these weights into a composite score.</p>
+      {/if}
+    </div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>
+          {#each (stratOnly ? [
+            {h:'#',           tip:'', show:true},
+            {h:'SE',          tip:'', show:true},
+            {h:'Wins',        tip:`Count of TW Closed Won ${motionLabels.exp} opps.`, show:true},
+            {h:'iACV',        tip:`Net new ARR committed on close across this SE's TW ${motionLabels.exp.toLowerCase()} wins.`, show:true},
+            {h:'Acct ARR',    tip:`Current ARR on each ${motionLabels.exp.toLowerCase()} account. Each account counted once.`, show:expTotals.arr_total>0},
+            {h:'Qtr MRR Δ',   tip:`Avg monthly usage in the opp's close quarter vs the 3 prior months.`, show:expTotals.arr_total>0},
+            {h:'SE Notes',    tip:'Opps with both SE notes fields filled ÷ total TW opps above iACV floor.', show:hasNotesCol},
+            {h:'In-Q Emails', tip:`Emails to ${motionLabels.exp} opps closing this quarter.`, show:showActivity && expTotals.inq>0},
+            {h:'Pipe Emails', tip:`Emails to ${motionLabels.exp} pipeline opps.`, show:showActivity && expTotals.outq>0},
+            {h:'In-Q Meets',  tip:`Meetings on ${motionLabels.exp} opps closing this quarter.`, show:showActivity && expTotals.meet_inq>0},
+            {h:'Pipe Meets',  tip:`Meetings on pipeline ${motionLabels.exp} opps.`, show:showActivity && expTotals.meet_outq>0},
+            {h:'Status',      tip:`Growing — net MRR increase. Expanding — new iACV, flat MRR. Mixed — new iACV but MRR declining. Contracting — MRR dropping, no new wins. Retaining — no growth signal.`, show:true},
+          ] : [
+            {h:'#',           tip:'', show:true},
+            {h:'SE',          tip:'', show:true},
+            {h:'Wins',        tip:`Count of TW Closed Won ${motionLabels.act} opps.`, show:true},
+            {h:'iACV',        tip:`Net new ARR committed on close across this SE's TW ${motionLabels.act.toLowerCase()} wins.`, show:true},
+            {h:'Median',      tip:`Median deal size (iACV) — less skewed by a single large deal.`, show:true},
+            {h:'Win Rate',    tip:`Closed Won ÷ (Closed Won + Closed Lost).`, show:hasWinRateCol},
+            {h:'SE Notes',    tip:'Opps with both SE notes fields filled ÷ total TW opps above iACV floor.', show:hasNotesCol},
+            {h:'In-Q Emails', tip:`Emails to ${motionLabels.act} opps closing this quarter.`, show:showActivity && actTotals.inq>0},
+            {h:'Pipe Emails', tip:`Emails to ${motionLabels.act} pipeline opps.`, show:showActivity && actTotals.outq>0},
+            {h:'In-Q Meets',  tip:`Meetings on ${motionLabels.act} opps closing this quarter.`, show:showActivity && actTotals.meet_inq>0},
+            {h:'Pipe Meets',  tip:`Meetings on pipeline ${motionLabels.act} opps.`, show:showActivity && actTotals.meet_outq>0},
+          ]).filter(c=>c.show) as {h, tip}, idx}
+          <th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap;position:relative"
+            onmouseenter={() => tip ? colTipIdx = idx : null}
+            onmouseleave={() => colTipIdx = -1}
+          >
+            <span style="{tip ? 'border-bottom:1px dashed rgba(var(--red-rgb),0.4);cursor:help;padding-bottom:1px' : ''}">{h}</span>
+            {#if colTipIdx === idx && tip}
+            <div style="position:absolute;top:calc(100% + 4px);{idx > 5 ? 'right:0' : 'left:0'};z-index:400;width:280px;background:{$theme==='twilio'?'#fff':'#0f1117'};border:1px solid rgba(var(--red-rgb),0.2);border-radius:6px;padding:10px 12px;box-shadow:0 6px 24px rgba(0,0,0,0.2);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted);line-height:1.5;white-space:normal;pointer-events:none">{tip}</div>
+            {/if}
+          </th>
+          {/each}
+        </tr></thead>
+        <tbody>
+          {#if stratOnly}
+            {#each expSes as se, i}
+            {@const expSt = computeExpStatus(se)}
+            {@const expStColor = expStatusColor(expSt)}
+            {@const seArr = se.exp_arr_total ?? 0}
+            {@const seDelta = se.exp_mrr_delta_total ?? 0}
+            {@const mrrPct = se.exp_mrr_pct_avg ?? 0}
+            <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
+              <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{se.rank ?? i+1}</td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+              <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.exp_wins}</td>
+              <td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{fmt(se.exp_icav)}</td>
+              {#if expTotals.arr_total > 0}
+              <td style="padding:10px 16px;font-weight:700;color:{seArr > 0 ? ($theme==='twilio'?'#178742':'#10B981') : 'var(--text-faint)'}">
+                {seArr > 0 ? fmt(seArr) : '—'}
+              </td>
+              <td style="padding:10px 16px">
+                {#if seArr > 0}
+                  <div style="font-weight:700;color:{seDelta > 0 ? ($theme==='twilio'?'#178742':'#10B981') : seDelta < 0 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}">
+                    {fmtMrrDelta(seDelta)}{#if mrrPct !== 0} <span style="font-size:11px;font-weight:600">({mrrPct > 0 ? '+' : ''}{mrrPct}%)</span>{/if}
+                  </div>
+                {:else}<span style="color:var(--text-faint)">—</span>{/if}
+              </td>
+              {/if}
+              {#if hasNotesCol}
+              <td style="padding:10px 16px;font-size:12px;line-height:1.6">
+                {#if (se.note_hv_total ?? 0) > 0}
+                  <div style="font-weight:700;color:{se.note_hv_covered === se.note_hv_total ? 'var(--exp-color)' : se.note_hv_covered > 0 ? 'var(--text)' : 'var(--red)'}">{se.note_hv_covered}/{se.note_hv_total}</div>
+                  <div style="font-size:11px;color:var(--text-muted)">{se.note_hv_avg_entries} avg entries</div>
+                {:else}<span style="color:var(--text-faint)">—</span>{/if}
+              </td>
+              {/if}
+              {#if showActivity && expTotals.inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.email_exp_inq ?? 0) > 0 ? se.email_exp_inq : '—'}</td>{/if}
+              {#if showActivity && expTotals.outq > 0}<td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{(se.email_exp_outq ?? 0) > 0 ? se.email_exp_outq : '—'}</td>{/if}
+              {#if showActivity && expTotals.meet_inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.meeting_exp_inq ?? 0) > 0 ? se.meeting_exp_inq : '—'}</td>{/if}
+              {#if showActivity && expTotals.meet_outq > 0}<td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{(se.meeting_exp_outq ?? 0) > 0 ? se.meeting_exp_outq : '—'}</td>{/if}
+              <td style="padding:10px 16px">
+                <span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:700;background:{expStColor}18;color:{expStColor};border:1px solid {expStColor}40;{$theme==='p5'?'clip-path:polygon(0 0,100% 0,calc(100% - 6px) 100%,0 100%)':'border-radius:4px'}">{expSt}</span>
+              </td>
+            </tr>
+            {/each}
+            <!-- strat totals row -->
+            <tr style="border-top:2px solid rgba(var(--exp-rgb),0.2);background:rgba(var(--exp-rgb),0.04)">
+              <td style="padding:10px 16px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--exp-color)">TOT</td>
+              <td style="padding:10px 16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--exp-color)">Team Total</td>
+              <td style="padding:10px 16px;font-weight:700;color:var(--exp-color);text-align:center">{expTotals.wins}</td>
+              <td style="padding:10px 16px;font-weight:900;color:var(--exp-color)">{fmt(expTotals.icav)}</td>
+              {#if expTotals.arr_total > 0}
+              <td style="padding:10px 16px;font-weight:700;color:{$theme==='twilio'?'#178742':'#10B981'}">{fmt(expTotals.arr_total)}</td>
+              <td style="padding:10px 16px"><div style="font-weight:700;color:{expTotals.mrr_delta_total > 0 ? ($theme==='twilio'?'#178742':'#10B981') : expTotals.mrr_delta_total < 0 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}">{fmtMrrDelta(expTotals.mrr_delta_total)}</div></td>
+              {/if}
+              {#if hasNotesCol}<td style="padding:10px 16px"></td>{/if}
+              {#if showActivity && expTotals.inq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.inq}</td>{/if}
+              {#if showActivity && expTotals.outq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.outq}</td>{/if}
+              {#if showActivity && expTotals.meet_inq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.meet_inq}</td>{/if}
+              {#if showActivity && expTotals.meet_outq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.meet_outq}</td>{/if}
+              <td style="padding:10px 16px"></td>
+            </tr>
+          {:else}
+            {#each actSes as se, i}
+            {@const vActWins = se.act_wins + (view === 'all' ? (se.non_tw_act_wins ?? 0) : 0)}
+            {@const vActIcav = se.act_icav + (view === 'all' ? (se.non_tw_act_icav ?? 0) : 0)}
+            <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
+              <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{se.rank ?? i+1}</td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
+              <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{vActWins}</td>
+              <td style="padding:10px 16px;color:var(--act-color);font-weight:700">{fmt(vActIcav)}</td>
+              <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.act_median)}</td>
+              {#if hasWinRateCol}
+              <td style="padding:10px 16px">
+                <div style="font-weight:700;color:{se.win_rate >= 50 ? 'var(--exp-color)' : se.win_rate > 0 ? 'var(--text-muted)' : 'var(--text-faint)'}">{se.win_rate > 0 ? se.win_rate+'%' : '—'}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:1px">{se.closed_won}W / {se.closed_lost}L</div>
+              </td>
+              {/if}
+              {#if hasNotesCol}
+              <td style="padding:10px 16px;font-size:12px;line-height:1.6">
+                {#if (se.note_hv_total ?? 0) > 0}
+                  <div style="font-weight:700;color:{se.note_hv_covered === se.note_hv_total ? 'var(--exp-color)' : se.note_hv_covered > 0 ? 'var(--text)' : 'var(--red)'}">{se.note_hv_covered}/{se.note_hv_total}</div>
+                  <div style="font-size:11px;color:var(--text-muted)">{se.note_hv_avg_entries} avg entries</div>
+                {:else}<span style="color:var(--text-faint)">—</span>{/if}
+              </td>
+              {/if}
+              {#if showActivity && actTotals.inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.email_act_inq ?? 0) > 0 ? se.email_act_inq : '—'}</td>{/if}
+              {#if showActivity && actTotals.outq > 0}<td style="padding:10px 16px;color:var(--act-color);font-weight:700">{(se.email_act_outq ?? 0) > 0 ? se.email_act_outq : '—'}</td>{/if}
+              {#if showActivity && actTotals.meet_inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.meeting_act_inq ?? 0) > 0 ? se.meeting_act_inq : '—'}</td>{/if}
+              {#if showActivity && actTotals.meet_outq > 0}<td style="padding:10px 16px;color:var(--act-color);font-weight:700">{(se.meeting_act_outq ?? 0) > 0 ? se.meeting_act_outq : '—'}</td>{/if}
+            </tr>
+            {/each}
+            <!-- act totals row -->
+            {#if actMedians}
+            <tr style="border-top:2px solid rgba(var(--act-rgb),0.2);background:rgba(var(--act-rgb),0.04)">
+              <td style="padding:10px 16px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--act-color)">MED</td>
+              <td style="padding:10px 16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--act-color)">Team Median</td>
+              <td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.wins} {actMedians.wins === 1 ? 'win' : 'wins'}</td>
+              <td style="padding:10px 16px;font-weight:900;color:var(--act-color);opacity:0.8">{fmt(actMedians.icav)}</td>
+              <td style="padding:10px 16px;color:var(--act-color);font-size:11px;opacity:0.8">{actTeamStats.deal_median > 0 ? fmt(actTeamStats.deal_median) : '—'}</td>
+              {#if hasWinRateCol}<td style="padding:10px 16px">{actMedians.win_rate > 0 ? actMedians.win_rate+'%' : '—'}</td>{/if}
+              {#if hasNotesCol}<td style="padding:10px 16px"></td>{/if}
+              {#if showActivity && actTotals.inq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.email_inq > 0 ? actMedians.email_inq : '—'}</td>{/if}
+              {#if showActivity && actTotals.outq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.email_outq > 0 ? actMedians.email_outq : '—'}</td>{/if}
+              {#if showActivity && actTotals.meet_inq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.meet_inq > 0 ? actMedians.meet_inq : '—'}</td>{/if}
+              {#if showActivity && actTotals.meet_outq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--act-color);opacity:0.8">{actMedians.meet_outq > 0 ? actMedians.meet_outq : '—'}</td>{/if}
+            </tr>
+            {/if}
+          {/if}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {/if}
 
   <!-- Largest Deals -->
-  {#if data.deal_sorted?.length}
+  {#if dealSorted.length > 0}
   <div id="deals" class="p5-panel" style="margin-bottom:20px">
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)"><h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Largest Deals</h2></div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['SE','Value','Motion','AE','Account','Product'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'}">{h}</th>{/each}</tr></thead>
+        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['#','SE','Value','Motion','AE','Account','Product'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'}">{h}</th>{/each}</tr></thead>
         <tbody>
-          {#each data.deal_sorted as se}
+          {#each dealSorted as se, i}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
-            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
+            <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
             <td style="padding:10px 16px;color:{$theme==='twilio'?'#B45309':'var(--yellow)'};font-weight:900;font-style:{$theme==='p5'?'italic':'normal'}">{fmt(se.largest_deal_value)}</td>
             <td style="padding:10px 16px">
               {#if se.largest_deal_motion}
@@ -793,7 +1038,7 @@ const actStatCols = $derived(data ? [
           {#each [...filteredRanked].filter((s: any) => (s.note_hv_total ?? 0) > 0).sort((a: any, b: any) => (b.note_hv_covered / b.note_hv_total) - (a.note_hv_covered / a.note_hv_total) || b.note_hv_avg_entries - a.note_hv_avg_entries) as se}
           {@const pct = se.note_hv_total > 0 ? Math.round(se.note_hv_covered / se.note_hv_total * 100) : 0}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
-            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
             <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.note_hv_total}</td>
             <td style="padding:10px 16px;font-weight:700;color:{se.note_hv_covered === se.note_hv_total ? 'var(--exp-color)' : se.note_hv_covered > 0 ? 'var(--text)' : 'var(--red)'}">{se.note_hv_covered}</td>
             <td style="padding:10px 16px">
@@ -808,7 +1053,7 @@ const actStatCols = $derived(data ? [
           {/each}
           {#each [...filteredRanked].filter((s: any) => (s.note_hv_total ?? 0) === 0) as se}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05);opacity:0.4">
-            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a>{#if se.title}<div style="font-size:10px;color:var(--text-muted);margin-top:2px">({se.title})</div>{/if}</td>
             <td colspan="5" style="padding:10px 16px;font-size:11px;color:var(--text-faint)">No closed won opps ≥ {notesFloorLabel} this period</td>
           </tr>
           {/each}

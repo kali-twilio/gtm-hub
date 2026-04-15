@@ -135,6 +135,17 @@ def _se_email(opp: dict) -> str:
     return (tl.get("Email") or "").strip().lower()
 
 
+def _se_title(opp: dict) -> str:
+    tl = opp.get("Technical_Lead__r") or {}
+    return (tl.get("Title") or "").strip()
+
+
+def _opp_product(opp_name: str) -> str:
+    """Extract product from opp name: 'Account - Product - Description' → 'Product'."""
+    parts = opp_name.split(" - ")
+    return parts[1].strip() if len(parts) >= 2 else ""
+
+
 def _team(opp: dict) -> str:
     return (opp.get(FIELD_CONFIG["team_field"]) or "").strip()
 
@@ -231,6 +242,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
             by_se[name] = {
                 "name":           name,
                 "email":          email,
+                "title":          _se_title(opp),
                 "act_icavs":      [],   # TW activate wins
                 "exp_icavs":      [],   # TW expansion wins
                 "non_tw_act_icavs": [], # non-TW activate wins
@@ -299,6 +311,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
 
         tw_opps_detail = sorted([{
             "name":         opp.get("Name") or "",
+            "product":      _opp_product(opp.get("Name") or ""),
             "owner":        ((opp.get("Owner") or {}).get("Name") or ""),
             "close_date":   opp.get("CloseDate") or "",
             "icav":         _icav(opp),
@@ -322,9 +335,9 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
         note_hv_entries   = sum(_history_entries(o.get("SE_Notes_History__c") or "") for o in hv_opps)
         note_hv_avg_entries = round(note_hv_entries / note_hv_total, 1) if note_hv_total > 0 else 0
 
-        # Largest deal
-        all_icavs = [(o, _icav(o)) for o in d["all_opps"]]
-        largest_opp, largest_val = max(all_icavs, key=lambda x: x[1]) if all_icavs else (None, 0)
+        # Largest deal — TW only so it's consistent with total_icav and appears in tw_opps_detail
+        tw_icavs = [(o, _icav(o)) for o in tw_opps]
+        largest_opp, largest_val = max(tw_icavs, key=lambda x: x[1]) if tw_icavs else (None, 0)
         largest_name   = (largest_opp.get("Name") or "") if largest_opp else ""
         largest_dsr    = ((largest_opp.get("Owner") or {}).get("Name") or "") if largest_opp else ""
         largest_acct   = ((largest_opp.get("Account") or {}).get("Name") or "") if largest_opp else ""
@@ -421,6 +434,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
         se = {
             "name":              name,
             "email":             d["email"],
+            "title":             d.get("title", ""),
             "act_wins":          act_wins,
             "act_icav":          act_icav,
             "act_avg":           act_avg,
@@ -1067,14 +1081,39 @@ def collect_team_trends(ses, motion: str = "dsr"):
             msg += f" {len(whale_dep)} SE{'s' if len(whale_dep) > 1 else ''} with high avg/median variance — whale-dependent quarters."
         trends.append((act_cat, msg))
 
-    # MOTION
-    act_only = [se for se in ses if se["total_icav"] > 0 and se["act_icav"] / se["total_icav"] > 0.85 and se["act_icav"] > 200_000]
-    exp_only = [se for se in ses if se["total_icav"] > 0 and se["exp_icav"] / se["total_icav"] > 0.85 and se["exp_icav"] > 200_000]
-    if act_only or exp_only:
-        trends.append(("MOTION", (
-            f"{len(act_only)} SE{'s' if len(act_only) != 1 else ''} running {act_lbl}-only (>85% from new logos). "
-            f"{len(exp_only)} SE{'s' if len(exp_only) != 1 else ''} {exp_lbl}-only."
-        )))
+    # MOTION — only meaningful for DSR teams where split is unexpected
+    if motion != "ae":
+        act_only = [se for se in ses if se["total_icav"] > 0 and se["act_icav"] / se["total_icav"] > 0.85 and se["act_icav"] > 200_000]
+        exp_only = [se for se in ses if se["total_icav"] > 0 and se["exp_icav"] / se["total_icav"] > 0.85 and se["exp_icav"] > 200_000]
+        if act_only or exp_only:
+            trends.append(("MOTION", (
+                f"{len(act_only)} SE{'s' if len(act_only) != 1 else ''} running {act_lbl}-only (>85% from new logos). "
+                f"{len(exp_only)} SE{'s' if len(exp_only) != 1 else ''} {exp_lbl}-only."
+            )))
+
+    # PRODUCTS — what's actually selling
+    prod_icav: dict = {}
+    prod_wins: dict = {}
+    for se in ses:
+        for opp in se.get("tw_opps_detail", []):
+            p = opp.get("product", "")
+            if p:
+                prod_icav[p] = prod_icav.get(p, 0) + opp.get("icav", 0)
+                prod_wins[p] = prod_wins.get(p, 0) + 1
+    if prod_icav:
+        total_prod_icav = sum(prod_icav.values())
+        top = sorted(prod_icav.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_pct = round(top[0][1] / total_prod_icav * 100) if total_prod_icav else 0
+        prod_lines = ", ".join(
+            f"{p} ({fmt(v)} · {prod_wins[p]} win{'s' if prod_wins[p] != 1 else ''})"
+            for p, v in top
+        )
+        msg = f"Top products by iACV: {prod_lines}."
+        if top_pct > 60:
+            msg += f" {top[0][0]} accounts for {top_pct}% of team iACV — heavy product concentration."
+        elif len(prod_icav) >= 4:
+            msg += f" {len(prod_icav)} distinct products in play — healthy diversification."
+        trends.append(("PRODUCTS", msg))
 
     # RISK — revenue concentration + notes gap
     sorted_icav = sorted(ses, key=lambda x: x["total_icav"], reverse=True)
@@ -1296,6 +1335,68 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
                     f"well above the team median of {med_breadth}. "
                     "Broad coverage amplifies sales org capacity and reduces single-rep dependency. "
                     "Consider pairing these SEs with newer AE relationships to spread influence."
+                ),
+            })
+
+    # ── 5. Product concentration ─────────────────────────────────────────────
+    prod_icav_r: dict = {}
+    prod_wins_r: dict = {}
+    for s in ses:
+        for o in s.get("tw_opps_detail", []):
+            p = o.get("product", "")
+            if p:
+                prod_icav_r[p] = prod_icav_r.get(p, 0) + o.get("icav", 0)
+                prod_wins_r[p] = prod_wins_r.get(p, 0) + 1
+
+    if prod_icav_r:
+        total_p_icav = sum(prod_icav_r.values())
+        top_prod, top_p_icav = max(prod_icav_r.items(), key=lambda x: x[1])
+        top_pct = round(top_p_icav / total_p_icav * 100) if total_p_icav else 0
+
+        # Team-level concentration warning
+        if top_pct > 65:
+            top3 = sorted(prod_icav_r.items(), key=lambda x: x[1], reverse=True)[:3]
+            top3_str = ", ".join(f"{p} ({fmt(v)})" for p, v in top3)
+            recs.append({
+                "cat":   "RISK",
+                "title": f"{top_prod} drives {top_pct}% of team iACV — product concentration risk",
+                "body":  (
+                    f"{top_prod} accounts for {fmt(top_p_icav)} of {fmt(total_p_icav)} total iACV. "
+                    f"Top 3: {top3_str}. "
+                    "Heavy reliance on a single product creates risk if it faces competitive pressure or pricing changes. "
+                    "Identify SEs positioned to expand into adjacent product lines and prioritise cross-product enablement."
+                ),
+            })
+
+        # SE-level single-product coaching
+        se_prod_counts = [
+            (s["name"], len({o.get("product", "") for o in s.get("tw_opps_detail", []) if o.get("product")}), s["total_icav"])
+            for s in ses
+        ]
+        single_prod = [(name, icav) for name, cnt, icav in se_prod_counts if cnt == 1 and icav > 50_000]
+        multi_prod  = [(name, cnt) for name, cnt, icav in se_prod_counts if cnt >= 3 and icav > 0]
+        if single_prod:
+            sp_names = ", ".join(name for name, _ in single_prod[:3])
+            recs.append({
+                "cat":   "COACHING",
+                "title": f"{len(single_prod)} SE{'s' if len(single_prod)>1 else ''} closing wins in only one product line",
+                "body":  (
+                    f"{sp_names}{'...' if len(single_prod) > 3 else ''} "
+                    "won deals exclusively in a single product this quarter. "
+                    "Single-product SEs are exposed if that product loses momentum or their accounts consolidate. "
+                    "Broadening technical depth into adjacent products increases deal size potential and SE versatility."
+                ),
+            })
+        if multi_prod:
+            mp_names = ", ".join(name for name, _ in multi_prod[:3])
+            recs.append({
+                "cat":   "STRENGTH",
+                "title": f"{len(multi_prod)} SE{'s' if len(multi_prod)>1 else ''} selling across 3+ product lines",
+                "body":  (
+                    f"{mp_names}{'...' if len(multi_prod) > 3 else ''} "
+                    f"closed wins across {sorted(cnt for _, cnt in multi_prod)[0]}–{sorted(cnt for _, cnt in multi_prod)[-1]} distinct products. "
+                    "Multi-product SEs are high-leverage for complex, multi-workload accounts. "
+                    "Use these SEs as product depth resources and pairing partners for more specialised colleagues."
                 ),
             })
 

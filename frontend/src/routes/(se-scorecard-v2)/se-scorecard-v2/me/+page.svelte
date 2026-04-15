@@ -42,6 +42,42 @@
 
   const isOwnProfile = () => $user?.sf_is_se ?? false;
 
+  let actSortKey = $state('icav');
+  let actSortAsc = $state(false);
+  let expSortKey = $state('icav');
+  let expSortAsc = $state(false);
+
+  function oppAccount(name: string): string {
+    return (name.split(' - ')[0] ?? name).trim();
+  }
+
+  function sortOpps(opps: any[], key: string, asc: boolean, acctMap: Record<string, any> = {}): any[] {
+    const getVal = (o: any): string | number => {
+      if (key === 'account')   return oppAccount(o.name ?? '').toLowerCase();
+      if (key === 'product')   return (o.product ?? '').toLowerCase();
+      if (key === 'owner')     return (o.owner ?? '').toLowerCase();
+      if (key === 'close_date') return o.close_date ?? '';
+      if (key === 'arr')       return acctMap[o.name]?.arr ?? 0;
+      if (key === 'mrr_delta') return acctMap[o.name]?.mrr_delta ?? 0;
+      return o[key] ?? 0;
+    };
+    return [...opps].sort((a, b) => {
+      const av = getVal(a), bv = getVal(b);
+      if (typeof av === 'string') return asc ? av.localeCompare(bv as string) : (bv as string).localeCompare(av);
+      return asc ? (av as number) - (bv as number) : (bv as number) - (av as number);
+    });
+  }
+
+  function setActSort(key: string) {
+    if (key === actSortKey) actSortAsc = !actSortAsc;
+    else { actSortKey = key; actSortAsc = false; }
+  }
+
+  function setExpSort(key: string) {
+    if (key === expSortKey) expSortAsc = !expSortAsc;
+    else { expSortKey = key; expSortAsc = false; }
+  }
+
   onMount(async () => {
     periods = await getSFPeriods();
     const seName = $page.url.searchParams.get('se');
@@ -205,10 +241,13 @@
 
   <!-- TW Closed Won opp detail tables -->
   {#if se.tw_opps_detail?.length}
-  {@const actOpps = se.tw_opps_detail.filter((o: any) => isAE ? o.motion === 'nb' : o.motion === 'act')}
-  {@const expOpps = se.tw_opps_detail.filter((o: any) => isAE ? o.motion === 'strat' : o.motion === 'exp')}
+  {@const rawActOpps = se.tw_opps_detail.filter((o: any) => isAE ? o.motion === 'nb' : o.motion === 'act')}
+  {@const rawExpOpps = se.tw_opps_detail.filter((o: any) => isAE ? o.motion === 'strat' : o.motion === 'exp')}
+  {@const expAcctMap = Object.fromEntries((se.exp_account_detail ?? []).map((a: any) => [a.opp_name, a]))}
+  {@const actOpps = sortOpps(rawActOpps, actSortKey, actSortAsc)}
+  {@const expOpps = sortOpps(rawExpOpps, expSortKey, expSortAsc, expAcctMap)}
 
-  <!-- Activate: compact table -->
+  <!-- New Business / Activate table -->
   {#if actOpps.length > 0}
   <div class="p5-panel" style="padding:14px 20px;width:100%;margin-top:14px">
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
@@ -220,11 +259,19 @@
       <table style="width:100%;border-collapse:collapse;font-size:11px">
         <thead>
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.1)">
-            <th style="text-align:left;padding:4px 8px 6px 0;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Opportunity</th>
-            <th style="text-align:left;padding:4px 8px 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">AE</th>
-            <th style="text-align:right;padding:4px 8px 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Date</th>
-            <th style="text-align:right;padding:4px 8px 6px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">iACV</th>
-            <th style="text-align:right;padding:4px 0 6px 8px;font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Notes</th>
+            {#each [
+              {key:'account',    label:'Account',  align:'left',  pad:'4px 8px 6px 0'},
+              {key:'product',    label:'Product',  align:'left',  pad:'4px 8px 6px'},
+              {key:'owner',      label:'AE',       align:'left',  pad:'4px 8px 6px'},
+              {key:'close_date', label:'Date',     align:'right', pad:'4px 8px 6px'},
+              {key:'icav',       label:'iACV',     align:'right', pad:'4px 8px 6px'},
+              {key:'has_notes',  label:'Notes',    align:'right', pad:'4px 0 6px 8px'},
+            ] as col}
+            <th onclick={() => setActSort(col.key)}
+              style="text-align:{col.align};padding:{col.pad};font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:{actSortKey===col.key?'var(--red)':'var(--text-muted)'};white-space:nowrap;cursor:pointer;user-select:none">
+              {col.label}{actSortKey===col.key ? (actSortAsc ? ' ▲' : ' ▼') : ''}
+            </th>
+            {/each}
           </tr>
         </thead>
         <tbody>
@@ -233,7 +280,8 @@
           {@const notesPartial = opp.has_notes || opp.has_history}
           {@const notesColor = notesOk ? ($theme==='twilio'?'#178742':'#10B981') : notesPartial ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')}
           <tr style="border-bottom:{i < actOpps.length-1 ? '1px solid rgba(var(--red-rgb),0.05)' : 'none'}">
-            <td style="padding:5px 8px 5px 0;color:var(--text);font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={opp.name}>{opp.name}</td>
+            <td style="padding:5px 8px 5px 0;color:var(--text);font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={oppAccount(opp.name)}>{oppAccount(opp.name)}</td>
+            <td style="padding:5px 8px;color:var(--text-muted);white-space:nowrap">{opp.product || '—'}</td>
             <td style="padding:5px 8px;color:var(--text-muted);white-space:nowrap">{opp.owner}</td>
             <td style="padding:5px 8px;color:var(--text-muted);text-align:right;white-space:nowrap">{opp.close_date}</td>
             <td style="padding:5px 8px;font-weight:700;color:var(--act-color);text-align:right;white-space:nowrap">{fmt(opp.icav)}</td>
@@ -249,9 +297,8 @@
   </div>
   {/if}
 
-  <!-- Expansion: opps + account revenue combined -->
+  <!-- Strategic / Expansion table -->
   {#if expOpps.length > 0}
-  {@const acctMap = Object.fromEntries((se.exp_account_detail ?? []).map((a: any) => [a.opp_name, a]))}
   <div class="p5-panel" style="padding:20px 24px;width:100%;margin-top:14px">
     <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
       <div class="p5-badge" style="font-size:10px;background:rgba(var(--exp-rgb),0.12);color:var(--exp-color);border-color:rgba(var(--exp-rgb),0.3)">{expLabel} · TW Closed Won</div>
@@ -262,17 +309,25 @@
       <table style="width:100%;border-collapse:collapse;font-size:12px">
         <thead>
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.12)">
-            <th style="text-align:left;padding:6px 8px 8px 0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Opportunity · Account</th>
-            <th style="text-align:left;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">AE</th>
-            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">iACV</th>
-            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Acct ARR</th>
-            <th style="text-align:right;padding:6px 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Quarter MRR Δ</th>
-            <th style="text-align:right;padding:6px 0 8px 8px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);white-space:nowrap">Notes</th>
+            {#each [
+              {key:'account',    label:'Account',       align:'left',  pad:'6px 8px 8px 0'},
+              {key:'product',    label:'Product',       align:'left',  pad:'6px 8px 8px'},
+              {key:'owner',      label:'AE',            align:'left',  pad:'6px 8px 8px'},
+              {key:'icav',       label:'iACV',          align:'right', pad:'6px 8px 8px'},
+              {key:'arr',        label:'Acct ARR',      align:'right', pad:'6px 8px 8px'},
+              {key:'mrr_delta',  label:'Qtr MRR Δ',    align:'right', pad:'6px 8px 8px'},
+              {key:'has_notes',  label:'Notes',         align:'right', pad:'6px 0 8px 8px'},
+            ] as col}
+            <th onclick={() => setExpSort(col.key)}
+              style="text-align:{col.align};padding:{col.pad};font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:{expSortKey===col.key?'var(--red)':'var(--text-muted)'};white-space:nowrap;cursor:pointer;user-select:none">
+              {col.label}{expSortKey===col.key ? (expSortAsc ? ' ▲' : ' ▼') : ''}
+            </th>
+            {/each}
           </tr>
         </thead>
         <tbody>
           {#each expOpps as opp, i}
-          {@const acct = acctMap[opp.name] ?? null}
+          {@const acct = expAcctMap[opp.name] ?? null}
           {@const notesOk = opp.has_notes && opp.has_history}
           {@const notesPartial = opp.has_notes || opp.has_history}
           {@const notesColor = notesOk ? ($theme==='twilio'?'#178742':'#10B981') : notesPartial ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')}
@@ -281,12 +336,8 @@
           {@const trendColor = trendUp ? ($theme==='twilio'?'#178742':'#10B981') : trendDown ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}
           {@const mrrPct = acct?.mrr_pct ?? 0}
           <tr style="border-bottom:{i < expOpps.length-1 ? '1px solid rgba(var(--red-rgb),0.06)' : 'none'}">
-            <td style="padding:8px 8px 8px 0;max-width:240px">
-              <div style="color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={opp.name}>{opp.name}</div>
-              {#if acct?.acct_name && acct.acct_name !== opp.name}
-              <div style="font-size:10px;color:var(--text-muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{acct.acct_name}</div>
-              {/if}
-            </td>
+            <td style="padding:8px 8px 8px 0;color:var(--text);font-weight:600;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={oppAccount(opp.name)}>{oppAccount(opp.name)}</td>
+            <td style="padding:8px;color:var(--text-muted);white-space:nowrap;vertical-align:top">{opp.product || '—'}</td>
             <td style="padding:8px;color:var(--text-muted);white-space:nowrap;vertical-align:top">{opp.owner}</td>
             <td style="padding:8px;font-weight:700;color:{opp.icav > 0 ? 'var(--exp-color)' : 'var(--text-muted)'};text-align:right;white-space:nowrap;vertical-align:top">{opp.icav > 0 ? fmt(opp.icav) : '$0'}</td>
             <td style="padding:8px;text-align:right;white-space:nowrap;vertical-align:top">
@@ -296,9 +347,7 @@
               {#if acct}
                 {#if acct.mrr_delta !== 0}
                 <span style="font-weight:700;color:{trendColor}">{trendUp ? '↑' : '↓'} {fmtMrr(Math.abs(acct.mrr_delta))}/mo{#if mrrPct !== 0} <span style="font-size:10px;font-weight:600">({mrrPct > 0 ? '+' : ''}{mrrPct}%)</span>{/if}</span>
-                {:else}
-                <span style="color:var(--text-faint)">→ flat{#if mrrPct === 0} (0%){/if}</span>
-                {/if}
+                {:else}<span style="color:var(--text-faint)">→ flat</span>{/if}
               {:else}<span style="color:var(--text-faint)">—</span>{/if}
             </td>
             <td style="padding:8px 0 8px 8px;text-align:right;white-space:nowrap;vertical-align:top">
