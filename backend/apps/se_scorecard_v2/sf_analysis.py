@@ -306,6 +306,8 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
             "has_notes":    bool(opp.get("Sales_Engineer_Notes__c")),
             "has_history":  bool(opp.get("SE_Notes_History__c")),
             "note_entries": _history_entries(opp.get("SE_Notes_History__c") or ""),
+            "notes_len":    len((opp.get("Sales_Engineer_Notes__c") or "").strip()),
+            "history_len":  len((opp.get("SE_Notes_History__c") or "").strip()),
         } for opp in tw_opps], key=lambda x: x["icav"], reverse=True)
 
         note_opps         = sum(1 for o in tw_opps if o.get("Sales_Engineer_Notes__c"))
@@ -325,6 +327,10 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
         largest_opp, largest_val = max(all_icavs, key=lambda x: x[1]) if all_icavs else (None, 0)
         largest_name   = (largest_opp.get("Name") or "") if largest_opp else ""
         largest_dsr    = ((largest_opp.get("Owner") or {}).get("Name") or "") if largest_opp else ""
+        largest_acct   = ((largest_opp.get("Account") or {}).get("Name") or "") if largest_opp else ""
+        # Product is the second segment of the opp name: "Account - Product - Description"
+        _name_parts    = largest_name.split(" - ")
+        largest_product = _name_parts[1].strip() if len(_name_parts) >= 2 else ""
         if largest_opp:
             if motion == "ae":
                 largest_motion = "New Business" if _is_new_business(largest_opp) else ("Strategic" if _is_strategic(largest_opp) else "")
@@ -449,10 +455,12 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0) -> list:
             "meeting_exp_inq":       0,  # meetings on Expansion opps closing this period
             "meeting_exp_outq":      0,  # meetings on future Expansion opps (pipeline building)
             "meeting_exp_outq_icav": 0,  # iACV of those future Expansion opps
-            "largest_deal":        largest_name,
-            "largest_deal_value":  largest_val,
-            "largest_deal_dsr":    largest_dsr,
-            "largest_deal_motion": largest_motion,
+            "largest_deal":         largest_name,
+            "largest_deal_acct":    largest_acct,
+            "largest_deal_product": largest_product,
+            "largest_deal_value":   largest_val,
+            "largest_deal_dsr":     largest_dsr,
+            "largest_deal_motion":  largest_motion,
             "tw_opps_detail":      tw_opps_detail,
             "exp_account_detail":  exp_account_detail,
             "exp_arr_total":          exp_arr_total,
@@ -1098,11 +1106,14 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
     Data-driven recommendations for the SE org leader.
     Returns list of {"cat": str, "title": str, "body": str}.
 
-    Sources used:
-      - tw_opps_detail per SE (opp-level note coverage, iACV, motion)
-      - Win rate, deal sizing (act_median, act_avg), concentration
-      - Expansion ARR/MRR signals, exp_status
-      - Composite ranking scores
+    Focuses on SE-controllable metrics:
+      - Documentation discipline: note coverage and depth on high-value opps
+      - Deal breadth: unique AE/DSR partners covered per SE
+      - Deal sizing and concentration signals
+      - Expansion ARR/MRR signals (account health SEs influence via engagement)
+
+    Win rate is intentionally excluded — Closed Lost logging is driven by AE/DSR
+    behavior (logging unqualified disqualifications), not SE performance.
     """
     recs = []
     n = len(ses)
@@ -1113,11 +1124,8 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
     exp_lbl = "strategic"    if motion == "ae" else "expansion"
 
     # ── Aggregates ────────────────────────────────────────────────────────────
-    team_total_icav  = sum(s["total_icav"]  for s in ses)
-    team_act_icav    = sum(s["act_icav"]    for s in ses)
-    team_exp_icav    = sum(s["exp_icav"]    for s in ses)
-    team_act_wins    = sum(s["act_wins"]    for s in ses)
-    team_exp_wins    = sum(s["exp_wins"]    for s in ses)
+    team_total_icav = sum(s["total_icav"] for s in ses)
+    team_act_wins   = sum(s["act_wins"]   for s in ses)
 
     # Aggregate all TW opp detail rows across every SE
     all_opps = [o for s in ses for o in s.get("tw_opps_detail", [])]
@@ -1154,7 +1162,7 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
                     ),
                 })
 
-    # ── 4. Expansion untapped — high ARR, flat MRR ───────────────────────────
+    # ── 2. Expansion untapped — high ARR, flat MRR ───────────────────────────
     exp_ses_with_arr = [s for s in ses if s.get("exp_arr_total", 0) > 0]
     if exp_ses_with_arr:
         contracting  = [s for s in exp_ses_with_arr if s.get("exp_status") == "Contracting"]
@@ -1168,8 +1176,8 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
                 "title": f"{fmt(total_flat_arr)} ARR sitting flat — expansion opportunity for {len(flat_big_arr)} SE{'s' if len(flat_big_arr)>1 else ''}",
                 "body":  (
                     f"{len(flat_big_arr)} SE{'s' if len(flat_big_arr)>1 else ''} {'have' if len(flat_big_arr)>1 else 'has'} "
-                    f"large ARR accounts showing flat or Retaining status. "
-                    "Accounts with $200K+ ARR and no MRR growth are candidates for new use-case expansion. "
+                    f"large ARR accounts showing flat or Retaining MRR status. "
+                    "Accounts with $200K+ ARR and no growth are candidates for new use-case expansion. "
                     "Prioritise account mapping and QBRs with these customers."
                 ),
             })
@@ -1185,15 +1193,12 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
                 ),
             })
 
-    # ── 5. Notes → attribution gap ───────────────────────────────────────────
+    # ── 3. Notes — coverage and depth on high-value opps ─────────────────────
     if all_opps:
-        hv_opps     = [o for o in all_opps if o["icav"] >= 50_000]
-        hv_covered  = sum(1 for o in hv_opps if o["has_notes"] and o["has_history"])
-        hv_total    = len(hv_opps)
-        hv_pct      = round(hv_covered / hv_total * 100) if hv_total else 0
-
-        # iACV breakdown by coverage
-        covered_icav   = sum(o["icav"] for o in hv_opps if o["has_notes"] and o["has_history"])
+        hv_opps        = [o for o in all_opps if o["icav"] >= 50_000]
+        hv_covered     = sum(1 for o in hv_opps if o["has_notes"] and o["has_history"])
+        hv_total       = len(hv_opps)
+        hv_pct         = round(hv_covered / hv_total * 100) if hv_total else 0
         uncovered_icav = sum(o["icav"] for o in hv_opps if not (o["has_notes"] and o["has_history"]))
 
         if hv_pct < 70 and uncovered_icav > 0:
@@ -1208,54 +1213,84 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
                 ),
             })
 
-        # Attention distribution: what share of total opp count drives the iACV?
-        if all_opps:
-            sorted_opps   = sorted(all_opps, key=lambda o: o["icav"], reverse=True)
-            top20_count   = max(1, round(len(sorted_opps) * 0.20))
-            top20_icav    = sum(o["icav"] for o in sorted_opps[:top20_count])
-            top20_pct_rev = round(top20_icav / team_total_icav * 100) if team_total_icav else 0
-            top20_noted   = sum(1 for o in sorted_opps[:top20_count] if o["has_notes"] and o["has_history"])
-            top20_noted_pct = round(top20_noted / top20_count * 100)
-            recs.append({
-                "cat":   "EFFICIENCY",
-                "title": f"Top 20% of opps ({top20_count} deals) drive {top20_pct_rev}% of team iACV",
-                "body":  (
-                    f"The {top20_count} highest-value closed wins represent {fmt(top20_icav)} of "
-                    f"{fmt(team_total_icav)} total iACV. "
-                    f"{top20_noted_pct}% of these high-impact deals have full SE notes. "
-                    + (f"The {top20_count - top20_noted} undocumented top-20% deals are the highest-leverage notes gap to close."
-                       if top20_noted < top20_count else
-                       "All top-20% deals are fully documented — strong discipline on the deals that matter most.")
-                ),
-            })
+        # Note depth: flag thin notes on high-value opps (notes_len < 200 chars)
+        # SEs who write one-liners instead of real technical context lose attribution value
+        hv_with_notes = [o for o in hv_opps if o.get("notes_len", 0) > 0]
+        if hv_with_notes:
+            avg_note_len = round(sum(o["notes_len"] for o in hv_with_notes) / len(hv_with_notes))
+            avg_entries  = round(sum(o.get("note_entries", 0) for o in hv_with_notes) / len(hv_with_notes), 1)
+            thin_notes   = [o for o in hv_with_notes if o["notes_len"] < 200]
+            if len(thin_notes) >= max(2, len(hv_with_notes) * 0.4):
+                recs.append({
+                    "cat":   "HYGIENE",
+                    "title": f"{len(thin_notes)}/{len(hv_with_notes)} documented high-value opps have thin notes (under 200 chars)",
+                    "body":  (
+                        f"Average SE note length on $50K+ deals: {avg_note_len} chars, {avg_entries} history entries. "
+                        f"{len(thin_notes)} of {len(hv_with_notes)} documented opps have fewer than 200 characters — "
+                        "likely a placeholder rather than a meaningful technical record. "
+                        "Richer notes capture use case, competitive context, and technical risks, making wins "
+                        "replicable and attribution defensible in review cycles."
+                    ),
+                })
 
-    # ── 6. Win rate — qualification signal ───────────────────────────────────
-    wr_ses = [s for s in ses if (s.get("closed_won", 0) + s.get("closed_lost", 0)) >= 4]
-    if wr_ses:
-        wr_vals   = [s["win_rate"] for s in wr_ses]
-        team_wr   = round(statistics.mean(wr_vals))
-        low_wr    = [s for s in wr_ses if s["win_rate"] < 40]
-        high_wr   = [s for s in wr_ses if s["win_rate"] >= 75]
-        if low_wr:
+        # Top-20% deal documentation focus
+        sorted_opps     = sorted(all_opps, key=lambda o: o["icav"], reverse=True)
+        top20_count     = max(1, round(len(sorted_opps) * 0.20))
+        top20_icav      = sum(o["icav"] for o in sorted_opps[:top20_count])
+        top20_pct_rev   = round(top20_icav / team_total_icav * 100) if team_total_icav else 0
+        top20_noted     = sum(1 for o in sorted_opps[:top20_count] if o["has_notes"] and o["has_history"])
+        top20_noted_pct = round(top20_noted / top20_count * 100)
+        recs.append({
+            "cat":   "EFFICIENCY",
+            "title": f"Top 20% of opps ({top20_count} deals) drive {top20_pct_rev}% of team iACV",
+            "body":  (
+                f"The {top20_count} highest-value closed wins represent {fmt(top20_icav)} of "
+                f"{fmt(team_total_icav)} total iACV. "
+                f"{top20_noted_pct}% of these high-impact deals have full SE notes. "
+                + (f"The {top20_count - top20_noted} undocumented top-20% deals are the highest-leverage notes gap to close."
+                   if top20_noted < top20_count else
+                   "All top-20% deals are fully documented — strong discipline on the deals that matter most.")
+            ),
+        })
+
+    # ── 4. AE/DSR partner breadth ─────────────────────────────────────────────
+    # SEs don't own accounts — their impact depends on which AEs/DSRs they partner with.
+    # Wide breadth = more of the sales org amplified. Narrow = single-rep dependency.
+    se_breadth = [
+        (s["name"], len({o["owner"] for o in s.get("tw_opps_detail", []) if o.get("owner")}), s["total_icav"])
+        for s in ses
+    ]
+    breadth_vals = [cnt for _, cnt, icav in se_breadth if cnt > 0 and icav > 0]
+    if breadth_vals:
+        med_breadth = round(statistics.median(breadth_vals))
+        narrow      = [(name, cnt) for name, cnt, icav in se_breadth if cnt == 1 and icav > 0]
+        wide        = [(name, cnt) for name, cnt, icav in se_breadth if cnt >= max(3, med_breadth * 2) and icav > 0]
+        if narrow:
+            narrow_names = ", ".join(name for name, _ in narrow[:3])
             recs.append({
                 "cat":   "COACHING",
-                "title": f"{len(low_wr)} SE{'s' if len(low_wr)>1 else ''} below 40% win rate — deal qualification gap",
+                "title": f"{len(narrow)} SE{'s' if len(narrow)>1 else ''} worked with a single AE/DSR this quarter",
                 "body":  (
-                    f"Team average win rate: {team_wr}%. "
-                    f"{len(low_wr)} SE{'s' if len(low_wr)>1 else ''} {'are' if len(low_wr)>1 else 'is'} closing fewer than 40% of contested deals. "
-                    "Low win rates at high volume burn SE capacity on deals they won't close. "
-                    "Review deal selection criteria: are SEs chasing unwinnable opps?"
+                    f"{narrow_names}{'...' if len(narrow) > 3 else ''} "
+                    f"closed all TW wins from one AE/DSR relationship. "
+                    "Single-partner SEs are exposed if that rep changes territory or leaves. "
+                    f"Team median AE/DSR breadth: {med_breadth} partners. "
+                    "Encourage proactive outreach to 2-3 additional reps next quarter."
                 ),
             })
-        if high_wr and len(high_wr) < n // 2:
-            top_wr_se  = max(wr_ses, key=lambda s: s["win_rate"])
+        if wide:
+            wide_names  = ", ".join(name for name, _ in wide[:3])
+            wide_counts = sorted(cnt for _, cnt in wide)
+            count_range = f"{wide_counts[0]}" if len(wide_counts) == 1 else f"{wide_counts[0]}–{wide_counts[-1]}"
             recs.append({
-                "cat":   "COACHING",
-                "title": f"Win rate gap: {top_wr_se['win_rate']}% top vs {min(wr_vals)}% bottom — spread insights",
+                "cat":   "STRENGTH",
+                "title": f"{len(wide)} SE{'s' if len(wide)>1 else ''} covering broad AE/DSR portfolios — high org leverage",
                 "body":  (
-                    f"{len(high_wr)} SE{'s' if len(high_wr)>1 else ''} at ≥75% win rate vs {len(low_wr)} below 40%. "
-                    f"The delta suggests a discovery or qualification pattern difference. "
-                    "Pair high-win-rate SEs with lower performers for deal review sessions."
+                    f"{wide_names}{'...' if len(wide) > 3 else ''} "
+                    f"partnered with {count_range} AEs/DSRs this quarter — "
+                    f"well above the team median of {med_breadth}. "
+                    "Broad coverage amplifies sales org capacity and reduces single-rep dependency. "
+                    "Consider pairing these SEs with newer AE relationships to spread influence."
                 ),
             })
 

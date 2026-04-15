@@ -11,6 +11,7 @@
   let rankCriteriaExpanded = $state(false);
   let colTipIdx = $state(-1);
   let actColTipIdx = $state(-1);
+  let expColTipIdx = $state(-1);
   let notesFilter = $state(false);
   let showActivity = $state(false);
 
@@ -80,8 +81,8 @@
   const teamTotalIcav = $derived(filteredRanked.reduce((s: number, se: any) => s + se.total_icav + (view === 'all' ? (se.non_tw_total_icav ?? 0) : 0), 0));
 
   // Column visibility flags — hide columns that have no data for any SE
-  const hasActCol     = $derived(teamActIcav > 0);
-  const hasExpCol     = $derived(teamExpIcav > 0);
+  const hasActCol     = $derived(teamActIcav > 0 && teamExpIcav > 0);
+  const hasExpCol     = $derived(teamExpIcav > 0 && teamActIcav > 0);
   const hasArrCol     = $derived(filteredRanked.some((s: any) => (s.exp_arr_total ?? 0) > 0));
   // When notes filter is on every remaining opp already has both fields filled → column is trivially 100%, hide it
   const hasNotesCol   = $derived(!notesFilter && filteredRanked.some((s: any) => (s.note_hv_total ?? 0) > 0));
@@ -164,19 +165,17 @@
     return `${sign} ${fmt(Math.abs(delta))}/mo`;
   }
 
-  const expStatCols = $derived(data ? [
-    {l:'Total Wins',  v:String(expTotals.wins),  c:'var(--exp-color)'},
-    {l:'Total iACV',  v:fmt(expTotals.icav),      c:'var(--exp-color)'},
-    {l:'Avg Deal',    v:fmt(expTotals.avg),        c:'var(--exp-color)'},
-    ...(expTotals.arr_total > 0 ? [{l:'Account ARR', v:fmt(expTotals.arr_total), c:$theme==='twilio'?'#178742':'#10B981'}] : []),
-    ...(expTotals.arr_total > 0 ? [{l:'Quarter MRR Δ', v:fmtMrrDelta(expTotals.mrr_delta_total), c:expTotals.mrr_delta_total > 0 ? ($theme==='twilio'?'#178742':'#10B981') : expTotals.mrr_delta_total < 0 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}] : []),
-    ...(showActivity && expTotals.inq > 0  ? [{l:'In-Q Emails', v:String(expTotals.inq), c:'var(--exp-color)'}] : []),
-    ...(showActivity && expTotals.outq > 0 ? [{l:'Pipe Emails', v:expTotals.outq + (expTotals.outq_icav > 0 ? ' · '+fmt(expTotals.outq_icav) : ''), c:'var(--exp-color)'}] : []),
-    ...(showActivity && (expTotals.meet_inq > 0 || expTotals.meet_outq > 0) ? [{l:'In-Q Meets', v:expTotals.meet_inq > 0 ? String(expTotals.meet_inq) : '—', c:'var(--exp-color)'}] : []),
-    ...(showActivity && expTotals.meet_outq > 0 ? [{l:'Pipe Meets', v:expTotals.meet_outq + (expTotals.meet_outq_icav > 0 ? ' · '+fmt(expTotals.meet_outq_icav) : ''), c:'var(--exp-color)'}] : []),
-  ] : []);
+  const stratOnly     = $derived(teamExpIcav > 0 && teamActIcav === 0);
+  const summaryCards  = $derived(data ? [
+    {label:'Team Total iACV',        val:fmt(teamTotalIcav),                   color:null,                                                                                                                                                 show:true},
+    {label:motionLabels.act+' iACV', val:fmt(teamActIcav),                     color:null,                                                                                                                                                 show:teamActIcav>0 && teamExpIcav>0},
+    {label:motionLabels.exp+' iACV', val:fmt(teamExpIcav),                     color:null,                                                                                                                                                 show:teamExpIcav>0 && teamActIcav>0},
+    {label:'Account ARR',            val:fmt(expTotals.arr_total),             color:null,                                                                                                                                                 show:stratOnly && expTotals.arr_total>0},
+    {label:'Qtr MRR Δ',              val:fmtMrrDelta(expTotals.mrr_delta_total), color:expTotals.mrr_delta_total>0?($theme==='twilio'?'#178742':'#10B981'):expTotals.mrr_delta_total<0?($theme==='twilio'?'#DC2626':'#EF4444'):'var(--text-muted)', show:stratOnly && expTotals.arr_total>0},
+    {label:'SEs Analysed',           val:String(data.total),                   color:null,                                                                                                                                                 show:true},
+  ].filter((s: any) => s.show) : []);
 
-  const actStatCols = $derived(data ? [
+const actStatCols = $derived(data ? [
     {l:'Total Wins',  v:String(actTotals.wins)},
     {l:'Total iACV',  v:fmt(actTotals.icav)},
     {l:'Avg Deal',    v:fmt(actTotals.avg)},
@@ -224,7 +223,33 @@
     })(),
   } : null);
 
-  let expInfoVisible = $state(false);
+  function computeExpStatus(se: any): string {
+    const iCAV     = se.exp_icav ?? 0;
+    const arr      = se.exp_arr_total ?? 0;
+    const mrrDelta = se.exp_mrr_delta_total ?? 0;
+    const wins     = se.exp_wins ?? 0;
+    // MRR actively growing — accounts using more regardless of new iACV
+    if (mrrDelta > 0) return iCAV > 0 ? 'Growing' : 'Growing';
+    // New iACV committed; MRR flat (deal in, usage not yet ramped)
+    if (iCAV > 0 && mrrDelta === 0) return 'Expanding';
+    // New deals signed but accounts are losing MRR simultaneously
+    if (iCAV > 0 && mrrDelta < 0) return 'Mixed';
+    // No new wins; accounts actively shrinking in usage
+    if (mrrDelta < 0) return 'Contracting';
+    // Large ARR footprint but no growth signal at all
+    if (arr > 0 && wins > 0) return 'Retaining';
+    // Zero expansion contribution
+    return 'Retaining';
+  }
+
+  function expStatusColor(status: string): string {
+    if (status === 'Growing')     return $theme === 'twilio' ? '#178742' : '#10B981';
+    if (status === 'Expanding')   return $theme === 'twilio' ? '#006EFF' : '#3B82F6';
+    if (status === 'Mixed')       return $theme === 'twilio' ? '#B45309' : '#FFB800';
+    if (status === 'Contracting') return $theme === 'twilio' ? '#DC2626' : '#EF4444';
+    return 'var(--text-muted)';
+  }
+
   let activeSection = $state('rankings');
   let navHovered = $state(false);
 
@@ -335,16 +360,11 @@
     <p style="font-size:13px;color:var(--text-muted);font-weight:600;margin-top:4px">{data.total} SEs · Live data from Salesforce</p>
   </div>
 
-  <div style="display:grid;grid-template-columns:repeat({[true, teamActIcav>0, teamExpIcav>0, true].filter(Boolean).length},1fr);gap:12px;margin-bottom:24px">
-    {#each [
-      {label:'Team Total iACV', val:fmt(teamTotalIcav), show:true},
-      {label:motionLabels.act+' iACV', val:fmt(teamActIcav), show:teamActIcav>0},
-      {label:motionLabels.exp+' iACV', val:fmt(teamExpIcav), show:teamExpIcav>0},
-      {label:'SEs Analysed',    val:String(data.total), show:true},
-    ].filter(s => s.show) as s}
+  <div style="display:grid;grid-template-columns:repeat({summaryCards.length},1fr);gap:12px;margin-bottom:24px">
+    {#each summaryCards as s}
     <div class="p5-panel" style="padding:18px 20px">
       <div style="font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:0.18em;font-style:{$theme==='p5'?'italic':'normal'};margin-bottom:6px">{s.label}</div>
-      <div style="font-size:28px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 var(--red)':''}">{s.val}</div>
+      <div style="font-size:28px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{s.color ?? 'var(--text)'};{$theme==='p5'?'text-shadow:2px 2px 0 var(--red)':''}">{s.val}</div>
     </div>
     {/each}
   </div>
@@ -456,7 +476,7 @@
           {@const vExpWins = se.exp_wins + (view==='all' ? (se.non_tw_exp_wins ?? 0) : 0)}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
             <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{se.rank}</td>
-            <td style="padding:10px 16px;font-weight:700;color:var(--text)">{se.name}</td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
 
             {#if hasActCol}
             <td style="padding:10px 16px">
@@ -583,7 +603,7 @@
             {@const vActIcav = se.act_icav + (view === 'all' ? (se.non_tw_act_icav ?? 0) : 0)}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
-              <td style="padding:10px 16px;font-weight:700;color:var(--text)">{se.name}</td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{vActWins}</td>
               <td style="padding:10px 16px;color:var(--act-color);font-weight:700">{fmt(vActIcav)}</td>
               <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.act_median)}</td>
@@ -630,84 +650,58 @@
     {/if}
     {#if expSes.length > 0}
     <div id="expansion" class="p5-panel">
-      <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12);position:relative">
-        <div style="display:inline-flex;align-items:center;gap:8px;margin-bottom:2px"
-          onmouseenter={() => expInfoVisible = true}
-          onmouseleave={() => expInfoVisible = false}
-        >
-          <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);cursor:help;border-bottom:1px dashed rgba(var(--red-rgb),0.3)">{motionLabels.exp}{data.motion === 'dsr' ? ' — Land & Expand' : ''}</h2>
-        </div>
-        <p style="font-size:12px;color:var(--text-muted)">{motionLabels.expDesc}</p>
-        {#if expInfoVisible}
-        <div style="position:absolute;top:calc(100% + 4px);left:20px;z-index:300;width:460px;background:{$theme==='twilio'?'#fff':'#0f1117'};border:1px solid rgba(var(--red-rgb),0.2);border-radius:8px;padding:16px;box-shadow:0 8px 32px rgba(0,0,0,0.25);pointer-events:none">
-          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--red);margin-bottom:10px">How Expansion is Calculated</div>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            {#each [
-              ['iACV',           'Sum of Comms_Segment_Combined_iACV__c from Technical Win expansion Closed Won opps. Each opp where the owner\'s role contains "Expansion".'],
-              ['Account ARR',    'Current_ARR_Based_on_Last_6_Months__c on the Account. Each account counted once — if the SE has multiple expansion opps on the same account, ARR is only included once.'],
-              ['Quarter MRR Δ',  'Avg of monthly amortized usage snapshots for the 3 months of the opp\'s close quarter, minus avg of the 3 prior months. Shows whether the account was actually growing during the period the SE was involved. Falls back to rolling 3-month avg vs ARR÷12 when snapshots are unavailable.'],
-              ['Status',         'Growing — avg MRR ≥ +5% with more accounts gaining than losing. Expanding — positive iACV but MRR flat (deal committed, usage not ramped yet). Mixed — accounts moving in both directions. Contracting — avg MRR ≤ −5%. Retaining — $0 median, flat MRR.'],
-            ] as [col, desc]}
-            <div style="display:grid;grid-template-columns:100px 1fr;gap:10px;align-items:start">
-              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--exp-color);padding-top:1px">{col}</span>
-              <span style="font-size:11px;color:var(--text-muted);line-height:1.5">{desc}</span>
-            </div>
-            {/each}
-          </div>
-        </div>
-        {/if}
-      </div>
-      <!-- Expansion totals summary -->
-      <div style="display:grid;grid-template-columns:repeat({expStatCols.length},1fr);gap:0;border-bottom:2px solid rgba(var(--exp-rgb),0.2)">
-        {#each expStatCols as t}
-        <div style="padding:12px 16px;border-right:1px solid rgba(var(--red-rgb),0.08)">
-          <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:{t.c};margin-bottom:4px">{t.l}</div>
-          <div style="font-size:16px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text)">{t.v}</div>
-        </div>
-        {/each}
+      <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
+        <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">{motionLabels.exp}</h2>
       </div>
       <div style="overflow-x:auto">
         <table style="width:100%;border-collapse:collapse;font-size:13px">
           <thead style="background:rgba(var(--red-rgb),0.06)">
             <tr>
               {#each [
-                {h:'#',show:true},{h:'SE',show:true},{h:'Wins',show:true},{h:'iACV',show:true},{h:'Avg',show:true},{h:'Median',show:true},{h:'Status',show:true},
-                {h:'Account ARR',show:expTotals.arr_total>0},{h:'Quarter MRR Δ',show:expTotals.arr_total>0},
-                {h:'In-Q Emails',show:showActivity && expTotals.inq>0},{h:'Pipe Emails',show:showActivity && expTotals.outq>0},
-                {h:'In-Q Meets',show:showActivity && expTotals.meet_inq>0},{h:'Pipe Meets',show:showActivity && expTotals.meet_outq>0},
-              ].filter(c=>c.show) as {h}}
-              <th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>
+                {h:'#',          tip:'',                                                                                                                                                                                        show:true},
+                {h:'SE',         tip:'',                                                                                                                                                                                        show:true},
+                {h:'Wins',       tip:`Count of Technical Win Closed Won ${motionLabels.exp} opps. ${motionLabels.expDesc}. Only TW opps count toward ranking.`,                                                                 show:true},
+                {h:'iACV',       tip:`Net new ARR committed on close — sum of Comms_Segment_Combined_iACV__c across this SE's TW ${motionLabels.exp.toLowerCase()} wins.`,                                                      show:true},
+                {h:'Acct ARR',   tip:`Current_ARR_Based_on_Last_6_Months__c on each expansion account. Each account counted once even if the SE has multiple opps on it.`,                                                      show:expTotals.arr_total>0},
+                {h:'Qtr MRR Δ',  tip:`Avg monthly usage in the opp's close quarter minus avg of the 3 prior months. Anchored to the quarter the SE was involved — shows real account trajectory. % is total-based so direction always matches the ↑/↓ sign.`, show:expTotals.arr_total>0},
+                {h:'In-Q Emails',tip:`Salesforce Task emails sent to ${motionLabels.exp} opps closing this quarter.`,                                                                                                           show:showActivity && expTotals.inq>0},
+                {h:'Pipe Emails',tip:`Emails to ${motionLabels.exp} opps closing a future quarter — pipeline development signal.`,                                                                                              show:showActivity && expTotals.outq>0},
+                {h:'In-Q Meets', tip:`Meetings on ${motionLabels.exp} opps closing this quarter. Recurring series deduplicated.`,                                                                                               show:showActivity && expTotals.meet_inq>0},
+                {h:'Pipe Meets', tip:`Meetings on pipeline ${motionLabels.exp} opps (future quarter).`,                                                                                                                        show:showActivity && expTotals.meet_outq>0},
+                {h:'Status',     tip:`Growing — any net MRR increase. Expanding — new iACV with flat MRR (usage not yet ramped). Mixed — new iACV but MRR declining (losing ground on existing accounts). Contracting — MRR dropping, no new wins to offset. Retaining — no growth signal.`, show:true},
+              ].filter(c=>c.show) as {h, tip}, idx}
+              <th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap;position:relative"
+                onmouseenter={() => tip ? expColTipIdx = idx : null}
+                onmouseleave={() => expColTipIdx = -1}
+              >
+                <span style="{tip ? 'border-bottom:1px dashed rgba(var(--red-rgb),0.4);cursor:help;padding-bottom:1px' : ''}">{h}</span>
+                {#if expColTipIdx === idx && tip}
+                <div style="position:absolute;top:calc(100% + 4px);{idx > 5 ? 'right:0' : 'left:0'};z-index:400;width:280px;background:{$theme==='twilio'?'#fff':'#0f1117'};border:1px solid rgba(var(--red-rgb),0.2);border-radius:6px;padding:10px 12px;box-shadow:0 6px 24px rgba(0,0,0,0.2);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted);line-height:1.5;white-space:normal;pointer-events:none">
+                  {tip}
+                </div>
+                {/if}
+              </th>
               {/each}
             </tr>
           </thead>
           <tbody>
             {#each expSorted as se, i}
-            {@const expSt = se.exp_status ?? (se.exp_growing ? 'Growing' : 'Retaining')}
-            {@const expStColor =
-              expSt === 'Growing'     ? ($theme==='twilio' ? '#178742' : '#10B981') :
-              expSt === 'Expanding'   ? ($theme==='twilio' ? '#006EFF' : '#3B82F6') :
-              expSt === 'Mixed'       ? ($theme==='twilio' ? '#B45309' : '#FFB800') :
-              expSt === 'Contracting' ? ($theme==='twilio' ? '#DC2626' : '#EF4444') :
-              'var(--text-muted)'}
+            {@const expSt = computeExpStatus(se)}
+            {@const expStColor = expStatusColor(expSt)}
             <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
-              <td style="padding:10px 16px;font-weight:700;color:var(--text)">{se.name}</td>
+              <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.exp_wins}</td>
               <td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{fmt(se.exp_icav)}</td>
-              <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.exp_avg)}</td>
-              <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.exp_median)}</td>
-              <td style="padding:10px 16px">
-                <span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:700;background:{expStColor}18;color:{expStColor};border:1px solid {expStColor}40;{$theme==='p5'?'clip-path:polygon(0 0,100% 0,calc(100% - 6px) 100%,0 100%)':'border-radius:4px'}">{expSt}</span>
-              </td>
               {#if expTotals.arr_total > 0}
               {@const seArr = se.exp_arr_total ?? 0}
               {@const seDelta = se.exp_mrr_delta_total ?? 0}
+              {@const mrrPct = se.exp_mrr_pct_avg ?? 0}
+              {@const mrrQ = se.exp_mrr_quarter_total ?? 0}
+              {@const mrrPre = se.exp_mrr_pre_total ?? 0}
               <td style="padding:10px 16px;font-weight:700;color:{seArr > 0 ? ($theme==='twilio'?'#178742':'#10B981') : 'var(--text-faint)'}">
                 {seArr > 0 ? fmt(seArr) : '—'}
               </td>
-              {@const mrrQ = se.exp_mrr_quarter_total ?? 0}
-              {@const mrrPre = se.exp_mrr_pre_total ?? 0}
-              {@const mrrPct = se.exp_mrr_pct_avg ?? 0}
               <td style="padding:10px 16px">
                 {#if seArr > 0}
                   <div style="font-weight:700;color:{seDelta > 0 ? ($theme==='twilio'?'#178742':'#10B981') : seDelta < 0 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}">
@@ -723,35 +717,34 @@
               {#if showActivity && expTotals.outq > 0}<td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{#if (se.email_exp_outq ?? 0) > 0}{se.email_exp_outq}{#if (se.email_exp_outq_icav ?? 0) > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(se.email_exp_outq_icav)}</span>{/if}{:else}—{/if}</td>{/if}
               {#if showActivity && expTotals.meet_inq > 0}<td style="padding:10px 16px;color:var(--text);font-weight:700">{(se.meeting_exp_inq ?? 0) > 0 ? se.meeting_exp_inq : '—'}</td>{/if}
               {#if showActivity && expTotals.meet_outq > 0}<td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{#if (se.meeting_exp_outq ?? 0) > 0}{se.meeting_exp_outq}{#if (se.meeting_exp_outq_icav ?? 0) > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(se.meeting_exp_outq_icav)}</span>{/if}{:else}—{/if}</td>{/if}
+              <td style="padding:10px 16px">
+                <span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:700;background:{expStColor}18;color:{expStColor};border:1px solid {expStColor}40;{$theme==='p5'?'clip-path:polygon(0 0,100% 0,calc(100% - 6px) 100%,0 100%)':'border-radius:4px'}">{expSt}</span>
+              </td>
             </tr>
             {/each}
+            <!-- Totals row -->
+            <tr style="border-top:2px solid rgba(var(--exp-rgb),0.2);background:rgba(var(--exp-rgb),0.04)">
+              <td style="padding:10px 16px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--exp-color)">TOT</td>
+              <td style="padding:10px 16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--exp-color)">Team Total</td>
+              <td style="padding:10px 16px;font-weight:700;color:var(--exp-color);text-align:center">{expTotals.wins}</td>
+              <td style="padding:10px 16px;font-weight:900;color:var(--exp-color)">{fmt(expTotals.icav)}</td>
+              {#if expTotals.arr_total > 0}
+              <td style="padding:10px 16px;font-weight:700;color:{$theme==='twilio'?'#178742':'#10B981'}">{fmt(expTotals.arr_total)}</td>
+              <td style="padding:10px 16px">
+                <div style="font-weight:700;color:{expTotals.mrr_delta_total > 0 ? ($theme==='twilio'?'#178742':'#10B981') : expTotals.mrr_delta_total < 0 ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}">
+                  {fmtMrrDelta(expTotals.mrr_delta_total)}
+                </div>
+              </td>
+              {/if}
+              {#if showActivity && expTotals.inq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.inq}</td>{/if}
+              {#if showActivity && expTotals.outq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.outq}{#if expTotals.outq_icav > 0} <span style="font-size:11px;color:var(--text-muted);font-weight:400">{fmt(expTotals.outq_icav)}</span>{/if}</td>{/if}
+              {#if showActivity && expTotals.meet_inq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.meet_inq}</td>{/if}
+              {#if showActivity && expTotals.meet_outq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.meet_outq}</td>{/if}
+              <td style="padding:10px 16px"></td>
+            </tr>
           </tbody>
         </table>
       </div>
-
-      <!-- How columns are calculated -->
-      {#if expTotals.arr_total > 0}
-      <div style="margin:0 20px 16px">
-        <details style="border:1px solid rgba(var(--red-rgb),0.12);border-radius:6px;overflow:hidden">
-          <summary style="padding:8px 12px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text-muted);cursor:pointer;list-style:none;display:flex;align-items:center;gap:6px">ℹ How Account ARR &amp; MRR are calculated</summary>
-          <div style="border-top:1px solid rgba(var(--red-rgb),0.08)">
-            {#each [
-              ['iACV',          'Sum of Comms_Segment_Combined_iACV__c across this SE\'s TW expansion Closed Won opps in the period.'],
-              ['Avg / Median',   'Mean and median iACV per expansion opp for this SE.'],
-              ['Status',         '"Growing" = positive iACV median (accounts expanding MRR). "Retaining" = $0 median — renewals with no upsell.'],
-              ['Account ARR',    'Current_ARR_Based_on_Last_6_Months__c on the Account. Each account counted once — if the SE has multiple expansion opps for the same account, the account\'s ARR is only counted once to avoid double-counting.'],
-              ['Quarter MRR Δ', 'Avg of Total_Amortized_Twilio_Usage monthly snapshots for the 3 months of the opp\'s close quarter, minus avg of the 3 months immediately before. Directly anchored to the quarter the opp closed — shows whether the account was growing or contracting during the period the SE was involved. Falls back to 3-month rolling avg vs ARR/12 baseline for periods beyond the 14-month snapshot window. Each account counted once.'],
-            ] as [col, desc], i}
-            <div style="display:grid;grid-template-columns:100px 1fr;gap:12px;padding:8px 14px;{i>0?'border-top:1px solid rgba(var(--red-rgb),0.06)':''}">
-              <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--red);padding-top:1px">{col}</span>
-              <span style="font-size:11px;color:var(--text-muted);line-height:1.5">{desc}</span>
-            </div>
-            {/each}
-          </div>
-        </details>
-      </div>
-      {/if}
-
     </div>
     {/if}
   </div>
@@ -762,11 +755,11 @@
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)"><h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text)">Largest Deals</h2></div>
     <div style="overflow-x:auto">
       <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['SE','Value','Motion','AE','Deal'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'}">{h}</th>{/each}</tr></thead>
+        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['SE','Value','Motion','AE','Account','Product'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'}">{h}</th>{/each}</tr></thead>
         <tbody>
           {#each data.deal_sorted as se}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
-            <td style="padding:10px 16px;font-weight:700;color:var(--text)">{se.name}</td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
             <td style="padding:10px 16px;color:{$theme==='twilio'?'#B45309':'var(--yellow)'};font-weight:900;font-style:{$theme==='p5'?'italic':'normal'}">{fmt(se.largest_deal_value)}</td>
             <td style="padding:10px 16px">
               {#if se.largest_deal_motion}
@@ -774,7 +767,8 @@
               {:else}—{/if}
             </td>
             <td style="padding:10px 16px;color:var(--text-muted)">{se.largest_deal_dsr || '—'}</td>
-            <td style="padding:10px 16px;color:var(--text-muted);font-size:12px">{se.largest_deal.slice(0,60)}{se.largest_deal.length > 60 ? '…' : ''}</td>
+            <td style="padding:10px 16px;font-weight:600;color:var(--text)">{se.largest_deal_acct || se.largest_deal.split(' - ')[0] || '—'}</td>
+            <td style="padding:10px 16px;color:var(--text-muted);font-size:12px">{se.largest_deal_product || '—'}</td>
           </tr>
           {/each}
         </tbody>
@@ -799,7 +793,7 @@
           {#each [...filteredRanked].filter((s: any) => (s.note_hv_total ?? 0) > 0).sort((a: any, b: any) => (b.note_hv_covered / b.note_hv_total) - (a.note_hv_covered / a.note_hv_total) || b.note_hv_avg_entries - a.note_hv_avg_entries) as se}
           {@const pct = se.note_hv_total > 0 ? Math.round(se.note_hv_covered / se.note_hv_total * 100) : 0}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
-            <td style="padding:10px 16px;font-weight:700;color:var(--text)">{se.name}</td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
             <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.note_hv_total}</td>
             <td style="padding:10px 16px;font-weight:700;color:{se.note_hv_covered === se.note_hv_total ? 'var(--exp-color)' : se.note_hv_covered > 0 ? 'var(--text)' : 'var(--red)'}">{se.note_hv_covered}</td>
             <td style="padding:10px 16px">
@@ -814,7 +808,7 @@
           {/each}
           {#each [...filteredRanked].filter((s: any) => (s.note_hv_total ?? 0) === 0) as se}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05);opacity:0.4">
-            <td style="padding:10px 16px;font-weight:700;color:var(--text)">{se.name}</td>
+            <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
             <td colspan="5" style="padding:10px 16px;font-size:11px;color:var(--text-faint)">No closed won opps ≥ {notesFloorLabel} this period</td>
           </tr>
           {/each}
@@ -843,7 +837,7 @@
   <div id="recs" class="p5-panel" style="margin-bottom:20px">
     <div style="padding:14px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.12)">
       <h2 style="font-size:15px;font-weight:700;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);margin-bottom:2px">Recommendations</h2>
-      <p style="font-size:12px;color:var(--text-muted)">Data-driven actions to increase iACV and revenue — derived from deal mix, email/meeting activity, notes hygiene, and win rates</p>
+      <p style="font-size:12px;color:var(--text-muted)">Data-driven actions to increase iACV and revenue — derived from deal sizing, expansion MRR signals, notes quality, and AE/DSR partner breadth</p>
     </div>
     <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
       {#each data.recommendations as rec}

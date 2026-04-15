@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { user, theme, sfTeam, sfPeriod, sfSubteam } from '$lib/stores';
   import { getSFSEs, getSFPeriods, fmt } from '$lib/api';
+  import { page } from '$app/stores';
   import { tc, fc } from '$lib/colors';
 
   interface Period { key: string; label: string; }
@@ -43,6 +44,8 @@
 
   onMount(async () => {
     periods = await getSFPeriods();
+    const seName = $page.url.searchParams.get('se');
+    if (seName) selected = seName;
     await loadData($sfPeriod);
   });
 </script>
