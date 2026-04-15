@@ -66,7 +66,10 @@ ALLOWED_DOMAIN       = "twilio.com"
 SCOPES               = ["openid", "https://www.googleapis.com/auth/userinfo.email"]
 
 if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
-    raise RuntimeError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set.")
+    if _local_dev:
+        log.warning("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set — OAuth disabled. Use /simulate to log in.")
+    else:
+        raise RuntimeError("GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set.")
 
 # ── Salesforce role → access helpers ─────────────────────────────────────────
 
@@ -279,6 +282,8 @@ def security_headers(response):
 
 @app.route("/auth")
 def auth():
+    if not GOOGLE_CLIENT_ID or not GOOGLE_CLIENT_SECRET:
+        return redirect(f"{_frontend_url}/?error=OAuth+not+configured.+Use+/simulate+in+local+dev.")
     flow = build_flow()
     auth_url, state = flow.authorization_url(prompt="select_account")
     session["oauth_state"] = state
