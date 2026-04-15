@@ -1063,35 +1063,6 @@ def collect_team_trends(ses):
             f"{len(exp_only)} SE{'s' if len(exp_only) != 1 else ''} expansion-only."
         )))
 
-    # PIPELINE — email engagement
-    pipe_ses        = [se for se in ses if (se.get("email_act_outq", 0) + se.get("email_exp_outq", 0)) > 0]
-    zero_email      = [se for se in ses if (se.get("email_act_outq", 0) + se.get("email_exp_outq", 0)
-                                           + se.get("email_act_inq", 0) + se.get("email_exp_inq", 0)) == 0]
-    total_pipe_icav   = sum(se.get("email_act_outq_icav", 0) + se.get("email_exp_outq_icav", 0) for se in ses)
-    total_pipe_emails = sum(se.get("email_act_outq", 0) + se.get("email_exp_outq", 0) for se in ses)
-    pipe_msg = f"{len(pipe_ses)} of {n} SEs building pipeline via email — {total_pipe_emails} outq emails"
-    if total_pipe_icav > 0:
-        pipe_msg += f", {fmt(total_pipe_icav)} in tracked future deals"
-    pipe_msg += "."
-    if zero_email:
-        pipe_msg += f" {len(zero_email)} SE{'s' if len(zero_email) > 1 else ''} with zero email activity recorded."
-    trends.append(("PIPELINE", pipe_msg))
-
-    # MEETINGS — calendar activity
-    def _meet_total(se):
-        return (se.get("meeting_act_inq", 0) + se.get("meeting_act_outq", 0) +
-                se.get("meeting_exp_inq", 0) + se.get("meeting_exp_outq", 0))
-    meet_ses       = [se for se in ses if _meet_total(se) > 0]
-    zero_meetings  = [se for se in ses if _meet_total(se) == 0]
-    total_meetings = sum(_meet_total(se) for se in ses)
-    total_meet_pipe = sum(se.get("meeting_act_outq", 0) + se.get("meeting_exp_outq", 0) for se in ses)
-    if total_meetings > 0:
-        meet_msg = (f"{len(meet_ses)} of {n} SEs have logged meetings — "
-                    f"{total_meetings} total ({total_meet_pipe} on pipeline opps).")
-        if zero_meetings:
-            meet_msg += f" {len(zero_meetings)} SE{'s' if len(zero_meetings) > 1 else ''} with zero meetings recorded."
-        trends.append(("MEETINGS", meet_msg))
-
     # RISK — revenue concentration + notes gap
     sorted_icav = sorted(ses, key=lambda x: x["total_icav"], reverse=True)
     top2_total  = sum(se["total_icav"] for se in sorted_icav[:2])
@@ -1127,8 +1098,7 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
     Data-driven recommendations for the SE org leader.
     Returns list of {"cat": str, "title": str, "body": str}.
 
-    Sources used (no email/note body text — all structural signals):
-      - Email and meeting inq/outq counts (where SEs spend activity time)
+    Sources used:
       - tw_opps_detail per SE (opp-level note coverage, iACV, motion)
       - Win rate, deal sizing (act_median, act_avg), concentration
       - Expansion ARR/MRR signals, exp_status
@@ -1149,68 +1119,10 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
     team_act_wins    = sum(s["act_wins"]    for s in ses)
     team_exp_wins    = sum(s["exp_wins"]    for s in ses)
 
-    total_emails_inq  = sum(s.get("email_act_inq",  0) + s.get("email_exp_inq",  0) for s in ses)
-    total_emails_outq = sum(s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ses)
-    total_meet_inq    = sum(s.get("meeting_act_inq",  0) + s.get("meeting_exp_inq",  0) for s in ses)
-    total_meet_outq   = sum(s.get("meeting_act_outq", 0) + s.get("meeting_exp_outq", 0) for s in ses)
-    total_pipe_icav   = sum(s.get("email_act_outq_icav", 0) + s.get("email_exp_outq_icav", 0) for s in ses)
-
     # Aggregate all TW opp detail rows across every SE
     all_opps = [o for s in ses for o in s.get("tw_opps_detail", [])]
 
-    # ── 1. Time allocation: in-Q vs pipeline ─────────────────────────────────
-    total_emails = total_emails_inq + total_emails_outq
-    total_meets  = total_meet_inq + total_meet_outq
-    if total_emails > 0:
-        inq_email_pct  = round(total_emails_inq  / total_emails * 100)
-        outq_email_pct = round(total_emails_outq / total_emails * 100)
-        inq_meet_pct   = round(total_meet_inq  / total_meets * 100) if total_meets > 0 else 0
-        outq_meet_pct  = round(total_meet_outq / total_meets * 100) if total_meets > 0 else 0
-        meet_str = (f" Meetings follow the same pattern: {inq_meet_pct}% in-Q, {outq_meet_pct}% pipeline."
-                    if total_meets > 0 else "")
-        if inq_email_pct >= 65:
-            recs.append({
-                "cat":   "PIPELINE",
-                "title": f"SE effort is {inq_email_pct}% in-quarter — next quarter is underfunded",
-                "body":  (
-                    f"{total_emails_inq} of {total_emails} emails target opps closing this period. "
-                    f"Only {total_emails_outq} emails build future pipeline"
-                    + (f" ({fmt(total_pipe_icav)} in tracked deals)" if total_pipe_icav else "") + "."
-                    + meet_str
-                    + " Recommend a team target of 40–50% outbound pipeline activity."
-                ),
-            })
-        elif outq_email_pct >= 55 and total_pipe_icav > team_total_icav * 0.5:
-            recs.append({
-                "cat":   "PIPELINE",
-                "title": f"Pipeline investment is healthy — {fmt(total_pipe_icav)} in future deals",
-                "body":  (
-                    f"{outq_email_pct}% of emails target future pipeline. "
-                    f"{fmt(total_pipe_icav)} tracked across next-quarter opportunities. "
-                    "Maintain this cadence to keep the next quarter loaded."
-                ),
-            })
-
-    # ── 2. Pipeline concentration ─────────────────────────────────────────────
-    if total_emails_outq > 0:
-        se_outq = sorted(ses, key=lambda s: s.get("email_act_outq", 0) + s.get("email_exp_outq", 0), reverse=True)
-        top1_outq = se_outq[0].get("email_act_outq", 0) + se_outq[0].get("email_exp_outq", 0)
-        top2_outq = top1_outq + (se_outq[1].get("email_act_outq", 0) + se_outq[1].get("email_exp_outq", 0) if n >= 2 else 0)
-        top2_pct  = round(top2_outq / total_emails_outq * 100)
-        zero_pipe = [s for s in ses if s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) == 0]
-        if top2_pct >= 70 and len(zero_pipe) >= 2:
-            recs.append({
-                "cat":   "COACHING",
-                "title": f"Pipeline building concentrated in {min(2,n-len(zero_pipe))} SE{'s' if min(2,n-len(zero_pipe))>1 else ''}",
-                "body":  (
-                    f"Top 2 SEs account for {top2_pct}% of all pipeline emails. "
-                    f"{len(zero_pipe)} SE{'s' if len(zero_pipe)>1 else ''} sent zero pipeline emails this period. "
-                    "If top builders miss next quarter, the team has no bench. "
-                    "Coach zero-pipeline SEs on prospecting cadence."
-                ),
-            })
-
-    # ── 3. Deal sizing — activate median below floor ──────────────────────────
+    # ── 1. Deal sizing — activate median below floor ──────────────────────────
     act_ses = [s for s in ses if s["act_wins"] >= 2]
     if act_ses:
         act_medians = [s["act_median"] for s in act_ses if s["act_median"] > 0]
@@ -1344,31 +1256,6 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
                     f"{len(high_wr)} SE{'s' if len(high_wr)>1 else ''} at ≥75% win rate vs {len(low_wr)} below 40%. "
                     f"The delta suggests a discovery or qualification pattern difference. "
                     "Pair high-win-rate SEs with lower performers for deal review sessions."
-                ),
-            })
-
-    # ── 7. Meeting investment vs email investment ─────────────────────────────
-    if total_emails > 0 and total_meets > 0:
-        meet_per_email = round(total_meets / total_emails, 2)
-        if meet_per_email < 0.2:
-            recs.append({
-                "cat":   "EFFICIENCY",
-                "title": "SE engagement is primarily email-based — meetings underutilised",
-                "body":  (
-                    f"{total_meets} meetings logged vs {total_emails} emails "
-                    f"({round(meet_per_email*100)}% meeting-to-email ratio). "
-                    "High-value expansion accounts typically close faster with live touchpoints. "
-                    "For $100K+ opps, target at least one recorded meeting per quarter close."
-                ),
-            })
-        elif meet_per_email > 1.5:
-            recs.append({
-                "cat":   "EFFICIENCY",
-                "title": "High meeting load relative to emails — check async engagement balance",
-                "body":  (
-                    f"{total_meets} meetings vs {total_emails} emails. "
-                    "Heavy meeting investment may be appropriate for enterprise deals, but "
-                    "ensure async email follow-up is happening to advance opps between calls."
                 ),
             })
 
