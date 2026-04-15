@@ -1,0 +1,8 @@
+{
+  "id": "customer-profiler",
+  "name": "Customer Profiler",
+  "description": "AI-powered research tool for DSRs to profile customers and surface Twilio opportunities.",
+  "icon": "🔍",
+  "path": "/customer-profiler",
+  "status": "live"
+}
