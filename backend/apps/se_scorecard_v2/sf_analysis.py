@@ -838,11 +838,7 @@ def collect_se_flags(se, ses, motion: str = "dsr"):
         [s["note_hv_covered"] / s["note_hv_total"] * 100 for s in notes_ses]
     )) if notes_ses else 0
     team_median_icav     = round(statistics.median([s["total_icav"] for s in ses]))
-    team_pipe_max        = max(s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ses)
-    team_meet_max        = max(
-        s.get("meeting_act_inq", 0) + s.get("meeting_act_outq", 0) +
-        s.get("meeting_exp_inq", 0) + s.get("meeting_exp_outq", 0) for s in ses
-    )
+    team_max_icav        = max(s["total_icav"] for s in ses)
 
     def _rel(val, med):
         """Return a short relative label vs a team median."""
@@ -926,46 +922,45 @@ def collect_se_flags(se, ses, motion: str = "dsr"):
         elif exp_pct > 0.85 and se["exp_icav"] > 200_000:
             flags.append(("MOTION", f"{round(exp_pct*100)}% of iACV from {exp_lbl} — {act_lbl} light."))
 
-    # --- PIPELINE (emails) ---
-    total_pipe = se.get("email_act_outq", 0) + se.get("email_exp_outq", 0)
-    total_inq  = se.get("email_act_inq", 0) + se.get("email_exp_inq", 0)
-    pipe_icav  = se.get("email_act_outq_icav", 0) + se.get("email_exp_outq_icav", 0)
-    team_median_pipe = round(statistics.median(
-        [s.get("email_act_outq", 0) + s.get("email_exp_outq", 0) for s in ses]
-    ))
+    # --- TOTAL iACV ---
+    if se["total_icav"] > 0 and team_median_icav > 0:
+        if se["total_icav"] == team_max_icav and len(ses) > 1:
+            others_total = sum(s["total_icav"] for s in ses) - se["total_icav"]
+            flags.append(("STRENGTH", (
+                f"Top iACV on the team — {fmt(se['total_icav'])} "
+                f"(team median {fmt(team_median_icav)}). "
+                f"Rest of team combined: {fmt(others_total)}."
+            )))
+        elif se["total_icav"] >= team_median_icav * 1.3:
+            icav_rel = _rel(se["total_icav"], team_median_icav)
+            flags.append(("STRENGTH", (
+                f"Strong quarter — {fmt(se['total_icav'])} total iACV, "
+                f"{icav_rel} (team median {fmt(team_median_icav)})."
+            )))
 
-    if total_pipe == 0 and total_inq == 0:
-        flags.append(("RISK", f"Zero email activity recorded — no in-Q or pipeline engagement. Team median: {team_median_pipe} pipeline emails."))
-    elif total_pipe == 0:
-        flags.append(("RISK", f"No pipeline emails — {total_inq} in-Q emails but nothing building for next quarter. Team median: {team_median_pipe}."))
-    elif total_pipe == team_pipe_max and total_pipe > 0:
-        pipe_str = f"{total_pipe} pipeline emails" + (f" · {fmt(pipe_icav)}" if pipe_icav > 0 else "")
-        flags.append(("STRENGTH", f"Top pipeline builder on the team — {pipe_str} (team median {team_median_pipe})."))
-    elif total_pipe >= 20 and pipe_icav > 500_000:
-        flags.append(("STRENGTH", f"Strong pipeline footprint — {total_pipe} outq emails, {fmt(pipe_icav)} in future deals."))
-    else:
-        pipe_rel = _rel(total_pipe, team_median_pipe)
-        if total_pipe > 0:
-            flags.append(("PIPELINE", f"{total_pipe} pipeline emails ({pipe_rel}, team median {team_median_pipe})."))
+    # --- BALANCED MOTION (both motions contributing well) ---
+    if has_act and has_exp and se["total_icav"] > 0:
+        act_pct = se["act_icav"] / se["total_icav"]
+        exp_pct = se["exp_icav"] / se["total_icav"]
+        if 0.25 <= act_pct <= 0.75 and se["total_icav"] >= team_median_icav:
+            flags.append(("STRENGTH", (
+                f"Balanced contribution — {round(act_pct*100)}% {act_lbl} / "
+                f"{round(exp_pct*100)}% {exp_lbl} across {fmt(se['total_icav'])} total iACV."
+            )))
 
-    # --- MEETINGS ---
-    total_meet     = (se.get("meeting_act_inq", 0) + se.get("meeting_act_outq", 0) +
-                      se.get("meeting_exp_inq", 0) + se.get("meeting_exp_outq", 0))
-    meet_inq       = se.get("meeting_act_inq", 0) + se.get("meeting_exp_inq", 0)
-    meet_pipe      = se.get("meeting_act_outq", 0) + se.get("meeting_exp_outq", 0)
-    team_median_meet = round(statistics.median(
-        [s.get("meeting_act_inq", 0) + s.get("meeting_act_outq", 0) +
-         s.get("meeting_exp_inq", 0) + s.get("meeting_exp_outq", 0) for s in ses]
-    ))
-
-    if team_meet_max > 0:
-        if total_meet == 0:
-            flags.append(("RISK", f"Zero meetings recorded. Team median: {team_median_meet}."))
-        elif total_meet == team_meet_max and len(ses) > 1:
-            flags.append(("STRENGTH", f"Most meetings on the team — {total_meet} ({meet_inq} in-Q, {meet_pipe} pipeline). Team median: {team_median_meet}."))
-        else:
-            meet_rel = _rel(total_meet, team_median_meet)
-            flags.append(("MEETINGS", f"{total_meet} meetings ({meet_inq} in-Q, {meet_pipe} pipeline) — {meet_rel} (team median {team_median_meet})."))
+    # --- EXPANSION MRR GROWTH ---
+    mrr_delta = se.get("exp_mrr_delta_total", 0)
+    if mrr_delta > 0 and se.get("exp_arr_total", 0) > 0:
+        mrr_ses_for_med = [s for s in ses if s.get("exp_mrr_delta_total", 0) > 0]
+        team_mrr_med = round(statistics.median([s["exp_mrr_delta_total"] for s in mrr_ses_for_med])) if mrr_ses_for_med else 0
+        pct_str = f" (+{se.get('exp_mrr_pct_avg', 0)}% vs prior qtr)" if se.get("exp_mrr_pct_avg", 0) > 0 else ""
+        if team_mrr_med > 0 and mrr_delta >= team_mrr_med * 1.25:
+            flags.append(("STRENGTH", (
+                f"Leading MRR growth — +{fmt(mrr_delta)}/mo across expansion accounts{pct_str}. "
+                f"Team median: +{fmt(team_mrr_med)}/mo."
+            )))
+        elif mrr_delta > 0:
+            flags.append(("STRENGTH", f"Positive MRR trajectory — +{fmt(mrr_delta)}/mo across expansion accounts{pct_str}."))
 
     # --- RISK: deal concentration ---
     if se["total_icav"] > 0 and se["largest_deal_value"] > se["total_icav"] * DEAL_CONCENTRATION_THRESHOLD:

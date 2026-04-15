@@ -183,7 +183,7 @@
     {#if se.flags?.length}
     <div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div class="p5-badge" style="font-size:10px">{$theme==='p5'?'Intel Report':'Performance Flags'}</div>
+        <div class="p5-badge" style="font-size:10px">{$theme==='p5'?'Intel Report':'Trends & Flags'}</div>
         <div style="flex:1;height:1px;background:rgba(var(--red-rgb),0.15)"></div>
       </div>
       <div style="display:flex;flex-direction:column;gap:6px">
