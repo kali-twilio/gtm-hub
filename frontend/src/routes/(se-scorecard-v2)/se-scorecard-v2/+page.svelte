@@ -10,7 +10,7 @@
 
   let teams: Team[] = $state([]);
   let periods: Period[] = $state([]);
-  let summary: { total: number; team_icav: number; team_wins: number; team_label: string; quarter: string } | null = $state(null);
+  let summary: { total: number; team_icav: number; team_wins: number; team_arr: number; team_label: string; quarter: string } | null = $state(null);
   let loading = $state(false);
   let showLoading = $state(false);
   let error = $state('');
@@ -26,7 +26,7 @@
     const r = await fetch(`/api/se-scorecard-v2/data/report?team=${teamKey}&period=${periodKey}${sub}`);
     if (r.ok) {
       const d = await r.json();
-      summary = { total: d.total, team_icav: d.team_icav, team_wins: d.team_wins, team_label: d.team_label, quarter: d.quarter };
+      summary = { total: d.total, team_icav: d.team_icav, team_wins: d.team_wins, team_arr: d.team_arr ?? 0, team_label: d.team_label, quarter: d.quarter };
     } else {
       const d = await r.json().catch(() => ({}));
       error = d.error || 'Failed to load data.';
@@ -189,12 +189,14 @@
   </div>
 
   <!-- Summary stats -->
-  <div class="w-full hub-container" style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:20px">
-    {#each [
-      { label: 'Team iACV',    val: fmt(summary.team_icav) },
-      { label: 'TW Closed Won', val: String(summary.team_wins) },
-      { label: 'SEs',           val: String(summary.total) },
-    ] as s}
+  {@const summaryStats = [
+    { label: 'Team iACV',    val: fmt(summary.team_icav) },
+    ...(summary.team_arr > 0 ? [{ label: 'Acct ARR', val: fmt(summary.team_arr) }] : []),
+    { label: 'TW Closed Won', val: String(summary.team_wins) },
+    { label: 'SEs',           val: String(summary.total) },
+  ]}
+  <div class="w-full hub-container" style="display:grid;grid-template-columns:repeat({summaryStats.length}, 1fr);gap:10px;margin-bottom:20px">
+    {#each summaryStats as s}
     <div class="p5-panel" style="padding:18px 20px;text-align:center">
       <div style="font-size:10px;color:var(--red);font-weight:700;text-transform:uppercase;letter-spacing:0.15em;margin-bottom:8px">{s.label}</div>
       <div style="font-size:26px;font-weight:900;color:var(--text)">{s.val}</div>

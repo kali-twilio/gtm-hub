@@ -681,6 +681,7 @@ def api_report():
         "icav_min":     icav_min,
         "team_icav":    sum(s["total_icav"] for s in ses_list),
         "team_wins":    sum(s["act_wins"] + s["exp_wins"] for s in ses_list),
+        "team_arr":     sum(s.get("exp_arr_total", 0) for s in ses_list),
         "act_sorted":   act_sorted,
         "exp_sorted":   exp_sorted,
         "pipe_sorted":  [],

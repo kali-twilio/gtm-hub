@@ -115,19 +115,13 @@
   {@const mrrColor = mrrUp ? ($theme==='twilio'?'#178742':'#10B981') : mrrDown ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}
   <div class="p5-panel" style="padding:24px;width:100%">
 
-    <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px">
-      <div>
-        <div style="font-size:24px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 rgba(232,0,61,0.5)':''}">{se.name}</div>
-      </div>
-      <div style="text-align:right">
-        <div style="font-size:36px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};line-height:1;color:var(--text);{$theme==='p5'?'text-shadow:3px 3px 0 var(--red)':''}">{fmt(se.total_icav)}</div>
-        <div style="font-size:10px;color:var(--text-muted);letter-spacing:0.18em;text-transform:uppercase;font-weight:700;margin-top:2px">Total iACV</div>
-      </div>
+    <div style="margin-bottom:20px">
+      <div style="font-size:24px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 rgba(232,0,61,0.5)':''}">{se.name}</div>
     </div>
 
     <div style="height:2px;background:linear-gradient(90deg,var(--red),transparent);{$theme==='p5'?'transform:skewX(-20deg);transform-origin:left':'border-radius:1px'};margin-bottom:20px"></div>
 
-    <div style="display:grid;grid-template-columns:{isAE && se.exp_arr_total > 0 ? 'repeat(4, 1fr)' : showAct && showExp ? '1fr 1fr' : '1fr'};gap:8px;margin-bottom:20px">
+    <div style="display:grid;grid-template-columns:{se.exp_arr_total > 0 ? 'repeat(4, 1fr)' : showAct && showExp ? '1fr 1fr' : '1fr'};gap:8px;margin-bottom:20px">
       {#if showAct}
       <div style="background:rgba(var(--act-rgb),0.08);border:1px solid rgba(var(--act-rgb),0.2);border-left:4px solid var(--act-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--act-color);margin-bottom:8px">{actLabel}</div>
@@ -141,7 +135,7 @@
       {/if}
       {#if showExp}
       <div style="background:rgba(var(--exp-rgb),0.08);border:1px solid rgba(var(--exp-rgb),0.2);border-left:4px solid var(--exp-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">{expLabel}{#if !isAE} · {se.exp_status ?? (se.exp_growing ? 'Growing' : 'Retaining')}{/if}</div>
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">{#if se.exp_arr_total > 0}{expLabel} <span style="text-transform:none">iACV</span>{:else if !isAE}{expLabel} · {se.exp_status ?? (se.exp_growing ? 'Growing' : 'Retaining')}{:else}{expLabel}{/if}</div>
         <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-glow);line-height:1">{fmt(se.exp_icav)}</div>
         {#if tm.exp_icav}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{fmt(tm.exp_icav)}</div>{:else}<div style="margin-bottom:8px"></div>{/if}
         <div style="border-top:1px solid rgba(var(--exp-rgb),0.15);padding-top:8px">
@@ -151,13 +145,13 @@
       </div>
       {/if}
 
-      {#if isAE && se.exp_arr_total > 0}
+      {#if se.exp_arr_total > 0}
       <div style="background:rgba(var(--exp-rgb),0.08);border:1px solid rgba(var(--exp-rgb),0.2);border-left:4px solid var(--exp-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
         <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-color);margin-bottom:8px">Acct ARR</div>
         <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--exp-glow);line-height:1">{fmt(se.exp_arr_total)}</div>
         {#if tm.exp_arr_total}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{fmt(tm.exp_arr_total)}</div>{:else}<div style="margin-bottom:8px"></div>{/if}
         <div style="border-top:1px solid rgba(var(--exp-rgb),0.15);padding-top:8px">
-          <div style="font-size:12px;color:var(--text-muted)">{se.exp_account_detail?.length ?? 0} accts · {fmt(se.exp_mrr_quarter_total ?? 0)}/mo avg</div>
+          <div style="font-size:12px;color:var(--text-muted)">{se.exp_account_detail?.length ?? 0} accts</div>
         </div>
       </div>
       <div style="background:rgba(var(--exp-rgb),0.08);border:1px solid rgba(var(--exp-rgb),0.2);border-left:4px solid var(--exp-color);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
@@ -166,6 +160,7 @@
         {#if tm.exp_mrr_delta_total}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px;margin-bottom:8px">{tm.exp_mrr_delta_total > 0 ? '+' : ''}{fmt(tm.exp_mrr_delta_total)}/mo</div>{:else}<div style="margin-bottom:8px"></div>{/if}
         <div style="border-top:1px solid rgba(var(--exp-rgb),0.15);padding-top:8px">
           <div style="font-size:12px;color:var(--text-muted)">{se.exp_mrr_pct_avg > 0 ? '+' : ''}{se.exp_mrr_pct_avg}% vs prior qtr</div>
+          {#if tm.exp_mrr_pct_avg}<div style="font-size:10px;color:var(--text-muted);opacity:0.55;margin-top:2px">{tm.exp_mrr_pct_avg > 0 ? '+' : ''}{tm.exp_mrr_pct_avg}%</div>{/if}
         </div>
       </div>
       {/if}
