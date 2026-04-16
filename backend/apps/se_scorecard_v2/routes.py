@@ -279,6 +279,20 @@ def _build_win_rate_soql(team_filter: str, start: str, end: str) -> str:
     )
 
 
+def _build_funnel_soql(team_filter: str, start: str, end: str) -> str:
+    """All opps that reached presales stage >= 1-Qualified (any final stage).
+    Used to compute overall win rate, SE win rate, and TW conversion rate."""
+    return (
+        f"SELECT StageName, Presales_Stage__c "
+        f"FROM Opportunity "
+        f"WHERE {team_filter} "
+        f"AND Technical_Lead__c != null "
+        f"AND CloseDate >= {start} "
+        f"AND CloseDate <= {end} "
+        f"AND Presales_Stage__c >= '1'"
+    )
+
+
 def _build_pipeline_soql(team_filter: str, end: str) -> str:
     """Open opps closing after the period — used to classify out-q email targets."""
     return (
@@ -339,6 +353,27 @@ def _build_meeting_soql(start: str, end: str, se_owner_filter: str) -> str:
 def _cache_path(team_key: str, period_key: str, icav_min: int = 0) -> Path:
     suffix = f"_min{icav_min}" if icav_min > 0 else ""
     return OUTPUT_DIR / f"sf_se_data_{team_key}_{period_key}{suffix}.json"
+
+
+def _funnel_cache_path(team_key: str, period_key: str) -> Path:
+    return OUTPUT_DIR / f"sf_funnel_{team_key}_{period_key}.json"
+
+
+def _load_funnel_cached(team_key: str, period_key: str) -> dict | None:
+    p = _funnel_cache_path(team_key, period_key)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _save_funnel_cached(funnel_stats: dict, team_key: str, period_key: str):
+    p   = _funnel_cache_path(team_key, period_key)
+    tmp = p.with_suffix(".tmp")
+    tmp.write_text(json.dumps(funnel_stats), encoding="utf-8")
+    tmp.replace(p)
 
 
 def _is_fresh(team_key: str, period_key: str, icav_min: int, ttl: int) -> bool:
@@ -412,16 +447,17 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
             return stale, None
         return None, "Salesforce is not configured."
 
-    # Run all 5 queries in parallel — they are fully independent
+    # Run all 6 queries in parallel — they are fully independent
     core_exc: Exception | None = None
-    opps = win_rate_opps = pipe_opps = email_tasks = meeting_events = None
+    opps = win_rate_opps = pipe_opps = email_tasks = meeting_events = funnel_opps = None
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=6) as pool:
         f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"], icav_min))
         f_win_rate = pool.submit(sf.query, _build_win_rate_soql(soql_filter, info["start"], info["end"]))
         f_pipeline = pool.submit(sf.query, _build_pipeline_soql(soql_filter, info["end"]))
         f_email    = pool.submit(sf.query, _build_email_soql(info["start"], info["end"], email_owner_filter))
         f_meetings = pool.submit(sf.query, _build_meeting_soql(info["start"], info["end"], email_owner_filter))
+        f_funnel   = pool.submit(sf.query, _build_funnel_soql(soql_filter, info["start"], info["end"]))
 
         try:
             opps          = f_opps.result()
@@ -445,6 +481,11 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
             meeting_events = f_meetings.result()
         except Exception:
             log.warning("Meeting activity query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+
+        try:
+            funnel_opps = f_funnel.result()
+        except Exception:
+            log.warning("Funnel query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
 
     if core_exc is not None:
         stale = _load_cached(cache_key, period_key, icav_min)
@@ -497,6 +538,9 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
         return [], None
     ranked = sf_analysis.rank_ses(ses)
     _save_cached(ranked, cache_key, period_key, icav_min, team.get("motion", "dsr"))
+    if funnel_opps is not None:
+        funnel_stats = sf_analysis.compute_funnel_stats(funnel_opps)
+        _save_funnel_cached(funnel_stats, cache_key, period_key)
     log.info("Refreshed %s/%s (min $%s) SE data from Salesforce (%d opps, %d win-rate opps)",
              cache_key, period_key, icav_min, len(opps), len(win_rate_opps))
     return _load_cached(cache_key, period_key, icav_min), None
@@ -642,6 +686,9 @@ def api_report():
     subteam     = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None) if subteam_key else None
     team_label  = f"{team['label']} · {subteam['label']}" if subteam else team["label"]
 
+    cache_key_funnel = f"{team_key}_{subteam_key}" if subteam_key else team_key
+    funnel_stats     = _load_funnel_cached(cache_key_funnel, period_key) or {}
+
     period      = _period_info(period_key)
     total       = len(ses_list)
     act_sorted  = sorted(ses_list, key=lambda x: x["act_icav"], reverse=True)
@@ -700,6 +747,7 @@ def api_report():
         "quarter":      period["label"],
         "team_label":   team_label,
         "motion":       team.get("motion", "dsr"),
+        "funnel_stats": funnel_stats,
     })
 
 
