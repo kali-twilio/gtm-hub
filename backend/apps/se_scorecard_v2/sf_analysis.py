@@ -1417,6 +1417,143 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
 
 import json
 
+
+# ---------------------------------------------------------------------------
+# Ghost work detection
+# ---------------------------------------------------------------------------
+
+def compute_ghost_work(email_tasks: list, meeting_events: list,
+                       open_opp_account_names: set) -> dict:
+    """
+    Identify ghost work: SE activity on accounts with no open opportunity
+    closing in the current or next quarter.
+
+    open_opp_account_names: set of lowercase account names that have open opps.
+    Returns a summary dict with per-SE ghost accounts and team-level insights.
+    """
+    by_se: dict[str, dict[str, dict]] = {}
+
+    def _add(se_name: str, acct_name: str, opp_name: str,
+             activity_date: str, kind: str):
+        if not se_name or not acct_name:
+            return
+        if acct_name.lower() in open_opp_account_names:
+            return
+        if se_name not in by_se:
+            by_se[se_name] = {}
+        if acct_name not in by_se[se_name]:
+            by_se[se_name][acct_name] = {
+                "account_name":  acct_name,
+                "email_count":   0,
+                "meeting_count": 0,
+                "opp_names":     set(),
+                "last_activity": activity_date or "",
+            }
+        entry = by_se[se_name][acct_name]
+        entry[kind] += 1
+        if opp_name:
+            entry["opp_names"].add(opp_name)
+        if activity_date and activity_date > entry["last_activity"]:
+            entry["last_activity"] = activity_date
+
+    for task in email_tasks:
+        owner    = task.get("Owner") or {}
+        se_name  = (owner.get("Name") or "").strip()
+        what     = task.get("What") or {}
+        acct     = what.get("Account") or {}
+        acct_name = (acct.get("Name") or "").strip()
+        opp_name  = (what.get("Name") or "").strip()
+        _add(se_name, acct_name, opp_name, task.get("ActivityDate") or "", "email_count")
+
+    seen_series: set = set()
+    for event in meeting_events:
+        owner    = event.get("Owner") or {}
+        se_name  = (owner.get("Name") or "").strip()
+        what     = event.get("What") or {}
+        acct     = what.get("Account") or {}
+        acct_name = (acct.get("Name") or "").strip()
+        opp_name  = (what.get("Name") or "").strip()
+        opp_id    = event.get("WhatId") or ""
+        rec_id    = event.get("RecurrenceActivityId") or ""
+        if rec_id:
+            key = (se_name, opp_id, rec_id)
+            if key in seen_series:
+                continue
+            seen_series.add(key)
+        _add(se_name, acct_name, opp_name, event.get("ActivityDate") or "", "meeting_count")
+
+    ses_result = []
+    for se_name, accounts in sorted(by_se.items()):
+        ghost_accounts = sorted(
+            [
+                {
+                    "account_name":   acct_name,
+                    "email_count":    e["email_count"],
+                    "meeting_count":  e["meeting_count"],
+                    "total_activity": e["email_count"] + e["meeting_count"],
+                    "last_activity":  e["last_activity"],
+                    "opp_names":      sorted(e["opp_names"]),
+                }
+                for acct_name, e in accounts.items()
+            ],
+            key=lambda x: x["total_activity"],
+            reverse=True,
+        )
+        if ghost_accounts:
+            total_ghost = sum(a["total_activity"] for a in ghost_accounts)
+            ses_result.append({
+                "se_name":              se_name,
+                "ghost_accounts":       ghost_accounts,
+                "ghost_account_count":  len(ghost_accounts),
+                "total_ghost_activity": total_ghost,
+            })
+
+    ses_result.sort(key=lambda x: x["total_ghost_activity"], reverse=True)
+
+    total_ghost_activity = sum(s["total_ghost_activity"] for s in ses_result)
+    total_ghost_accounts = sum(s["ghost_account_count"]  for s in ses_result)
+
+    insights: list[str] = []
+    if ses_result:
+        insights.append(
+            f"{len(ses_result)} SE{'s' if len(ses_result) != 1 else ''} "
+            f"{'have' if len(ses_result) != 1 else 'has'} activity on accounts with no open "
+            f"pipeline this quarter or next — {total_ghost_activity} total "
+            f"touch{'es' if total_ghost_activity != 1 else ''} across "
+            f"{total_ghost_accounts} unique account{'s' if total_ghost_accounts != 1 else ''}."
+        )
+        top = ses_result[0]
+        if top["ghost_account_count"] >= 2:
+            insights.append(
+                f"{top['se_name']} leads ghost work: "
+                f"{top['total_ghost_activity']} activities across "
+                f"{top['ghost_account_count']} accounts with no open opportunity."
+            )
+        acct_se_map: dict[str, set] = {}
+        for s in ses_result:
+            for a in s["ghost_accounts"]:
+                acct_se_map.setdefault(a["account_name"], set()).add(s["se_name"])
+        multi_se = {a: ses for a, ses in acct_se_map.items() if len(ses) > 1}
+        if multi_se:
+            top_acct = max(multi_se, key=lambda a: len(multi_se[a]))
+            insights.append(
+                f"{len(multi_se)} account{'s' if len(multi_se) != 1 else ''} "
+                f"{'have' if len(multi_se) != 1 else 'has'} multiple SEs active with no open "
+                f"pipeline — '{top_acct}' has {len(multi_se[top_acct])} SEs engaged."
+            )
+    else:
+        insights.append(
+            "No ghost work detected — all SE activity is tied to accounts with open pipeline."
+        )
+
+    return {
+        "by_se":                ses_result,
+        "insights":             insights,
+        "total_ghost_activity": total_ghost_activity,
+        "total_ghost_accounts": total_ghost_accounts,
+    }
+
+
 def save_data(ranked, output_dir):
     total   = len(ranked)
     payload = []
