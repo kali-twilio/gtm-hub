@@ -721,7 +721,7 @@ _TWILIO_AUTH_TOKEN      = os.environ.get("TWILIO_AUTH_TOKEN")
 _TWILIO_PHONE_NUMBER    = "+18446990268"
 
 # SMS pump protection: max texts per phone number per window
-_SMS_RL_LIMIT  = 5    # max messages
+_SMS_RL_LIMIT  = 100  # max messages
 _SMS_RL_WINDOW = 3600 # per hour (seconds)
 _sms_rl_store: dict[str, list[float]] = {}
 
@@ -950,70 +950,82 @@ def api_sms_webhook():
 
     cmd = body.strip().upper()
 
-    # ── LIST ──────────────────────────────────────────────────────────────────
-    if cmd == "LIST":
-        try:
-            docs = db.collection(_FIRESTORE_COLLECTION).order_by("created_at", direction="DESCENDING").stream()
-            items = [(doc.id, doc.to_dict()) for doc in docs]
-            if not items:
-                return _twiml_reply("No suggestions yet.")
-            lines = []
-            for i, (_, s) in enumerate(items, 1):
-                author = _display_author(s)
-                text   = s.get("text", "")[:60]
-                lines.append(f"{i}. [{author}] {text}{'…' if len(s.get('text',''))>60 else ''}")
-            return _twiml_reply("\n".join(lines))
-        except Exception as e:
-            log.error("Firestore list (SMS) failed: %s", e)
-            return _twiml_reply("Failed to load suggestions.")
+    def _load_all_docs():
+        return list(db.collection(_FIRESTORE_COLLECTION)
+                      .order_by("created_at", direction="DESCENDING").stream())
+
+    def _format_list(docs):
+        if not docs:
+            return "No suggestions yet."
+        lines = []
+        for i, doc in enumerate(docs, 1):
+            s      = doc.to_dict()
+            author = _display_author(s)
+            text   = s.get("text", "")[:60]
+            suffix = "..." if len(s.get("text", "")) > 60 else ""
+            mine   = " *" if s.get("phone") == from_number else ""
+            lines.append(f"{i}. [{author}]{mine} {text}{suffix}")
+        return "\n".join(lines)
 
     # ── DELETE ────────────────────────────────────────────────────────────────
     if cmd.startswith("DELETE"):
-        arg = body.strip()[6:].strip()  # preserve original case for "ALL"
+        arg = body.strip()[6:].strip()
         try:
-            docs = list(db.collection(_FIRESTORE_COLLECTION)
-                          .order_by("created_at", direction="DESCENDING").stream())
-            mine = [(doc.id, doc.to_dict()) for doc in docs
-                    if doc.to_dict().get("phone") == from_number]
-
-            if not mine:
-                return _twiml_reply("You have no suggestions to delete.")
+            docs = _load_all_docs()
 
             if arg.upper() == "ALL":
-                for doc_id, _ in mine:
-                    db.collection(_FIRESTORE_COLLECTION).document(doc_id).delete()
-                log.info("SMS DELETE ALL: removed %d suggestions for %s", len(mine), from_number)
-                return _twiml_reply(f"Deleted all {len(mine)} of your suggestion{'s' if len(mine)!=1 else ''}.")
+                mine = [d for d in docs if d.to_dict().get("phone") == from_number]
+                if not mine:
+                    return _twiml_reply("You have no suggestions to delete.")
+                for d in mine:
+                    db.collection(_FIRESTORE_COLLECTION).document(d.id).delete()
+                log.info("SMS DELETE ALL: removed %d for %s", len(mine), from_number)
+                # Reload and return updated list
+                updated = _load_all_docs()
+                reply = f"Deleted all {len(mine)} of your suggestion{'s' if len(mine) != 1 else ''}.\n\n" + _format_list(updated)
+                return _twiml_reply(reply)
 
-            # DELETE <number> — number refers to position in the full LIST
+            # DELETE 1,2,3 — comma-separated indices into the full list
             try:
-                idx = int(arg) - 1
+                indices = [int(x.strip()) - 1 for x in arg.split(",") if x.strip()]
+                if not indices:
+                    raise ValueError
             except ValueError:
-                return _twiml_reply("Usage: DELETE <number> or DELETE ALL\nSend LIST to see numbered suggestions.")
+                return _twiml_reply("Usage: DELETE 1  or  DELETE 1,2,3  or  DELETE ALL")
 
-            all_items = [(doc.id, doc.to_dict()) for doc in docs]
-            if idx < 0 or idx >= len(all_items):
-                return _twiml_reply(f"No suggestion #{idx+1}. Send LIST to see available suggestions.")
+            errors, deleted = [], []
+            for idx in sorted(set(indices)):
+                if idx < 0 or idx >= len(docs):
+                    errors.append(f"#{idx+1} doesn't exist")
+                    continue
+                d = docs[idx]
+                if d.to_dict().get("phone") != from_number:
+                    errors.append(f"#{idx+1} isn't yours")
+                    continue
+                db.collection(_FIRESTORE_COLLECTION).document(d.id).delete()
+                deleted.append(idx + 1)
 
-            target_id, target_doc = all_items[idx]
-            if target_doc.get("phone") != from_number:
-                return _twiml_reply(f"Suggestion #{idx+1} isn't yours — you can only delete your own.")
-
-            db.collection(_FIRESTORE_COLLECTION).document(target_id).delete()
-            log.info("SMS DELETE #%d by %s", idx+1, from_number)
-            return _twiml_reply(f"Deleted suggestion #{idx+1}.")
+            log.info("SMS DELETE %s by %s — deleted=%s errors=%s", arg, from_number, deleted, errors)
+            parts = []
+            if deleted:
+                parts.append(f"Deleted #{', #'.join(str(n) for n in deleted)}.")
+            if errors:
+                parts.append("Skipped: " + "; ".join(errors) + ".")
+            updated = _load_all_docs()
+            reply = " ".join(parts) + "\n\n" + _format_list(updated)
+            return _twiml_reply(reply)
 
         except Exception as e:
             log.error("Firestore delete (SMS) failed: %s", e)
             return _twiml_reply("Failed to delete suggestion.")
 
-    # ── SUBMIT (default) ─────────────────────────────────────────────────────
+    # ── SUBMIT (default) — save then auto-send full list ─────────────────────
     if len(body) > 1000:
         return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
 
     try:
-        count = len(db.collection(_FIRESTORE_COLLECTION).limit(_SUGGESTIONS_MAX + 1).get())
-        if count >= _SUGGESTIONS_MAX:
+        all_docs = _load_all_docs()
+        if len(all_docs) >= _SUGGESTIONS_MAX:
             return _twiml_reply("Sorry, we've reached our suggestion limit. Thank you for your interest!")
 
         doc_id     = str(uuid.uuid4())
@@ -1028,7 +1040,11 @@ def api_sms_webhook():
             doc["caller_name"] = lookup["caller_name"]
         db.collection(_FIRESTORE_COLLECTION).document(doc_id).set(doc)
         log.info("SMS suggestion saved from %s (%s)", from_number, lookup["caller_name"] or "unknown")
-        return _twiml_reply("Got it — thanks for your suggestion!\n\nReply LIST to see all suggestions, or DELETE <#> to remove one of yours.")
+
+        # Return updated list so sender can see their submission and delete by number
+        updated = _load_all_docs()
+        reply = "Got it! Here are all suggestions (* = yours). Reply DELETE 1,2 to remove yours:\n\n" + _format_list(updated)
+        return _twiml_reply(reply)
     except Exception as e:
         log.error("Firestore SMS save failed: %s", e)
         return _twiml_reply("Sorry, something went wrong. Please try again.")
