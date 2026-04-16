@@ -10,7 +10,7 @@
 
   let teams: Team[] = $state([]);
   let periods: Period[] = $state([]);
-  let summary: { total: number; team_icav: number; team_wins: number; team_arr: number; team_label: string; quarter: string } | null = $state(null);
+  let summary: { total: number; team_icav: number; team_wins: number; team_arr: number; team_label: string; quarter: string; se_icav_pct: number | null } | null = $state(null);
   let loading = $state(false);
   let showLoading = $state(false);
   let error = $state('');
@@ -26,7 +26,7 @@
     const r = await fetch(`/api/se-scorecard-v2/data/report?team=${teamKey}&period=${periodKey}${sub}`);
     if (r.ok) {
       const d = await r.json();
-      summary = { total: d.total, team_icav: d.team_icav, team_wins: d.team_wins, team_arr: d.team_arr ?? 0, team_label: d.team_label, quarter: d.quarter };
+      summary = { total: d.total, team_icav: d.team_icav, team_wins: d.team_wins, team_arr: d.team_arr ?? 0, team_label: d.team_label, quarter: d.quarter, se_icav_pct: d.se_icav_pct ?? null };
     } else {
       const d = await r.json().catch(() => ({}));
       error = d.error || 'Failed to load data.';
@@ -186,7 +186,8 @@
 
   <!-- Summary stats -->
   {@const summaryStats = [
-    { label: 'Team iACV',    val: fmt(summary.team_icav) },
+    { label: 'SE-Influenced iACV', val: fmt(summary.team_icav) },
+    ...(summary.se_icav_pct !== null ? [{ label: 'SE Impact %', val: summary.se_icav_pct + '%' }] : []),
     ...(summary.team_arr > 0 ? [{ label: 'Acct ARR', val: fmt(summary.team_arr) }] : []),
     { label: 'TW Closed Won', val: String(summary.team_wins) },
     { label: 'SEs',           val: String(summary.total) },
