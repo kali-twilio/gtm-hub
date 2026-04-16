@@ -802,7 +802,7 @@ def _lookup_phone(phone: str) -> dict:
 def _display_author(doc: dict) -> str:
     """Return display name: email prefix, Lookup name, or formatted phone."""
     source = doc.get("source", "web")
-    if source == "sms":
+    if source in ("sms", "whatsapp"):
         phone = doc.get("phone", "")
         name = doc.get("caller_name")
         if name:
@@ -810,7 +810,7 @@ def _display_author(doc: dict) -> str:
         # Format +18005551234 → (800) 555-1234
         if phone.startswith("+1") and len(phone) == 12:
             return f"({phone[2:5]}) {phone[5:8]}-{phone[8:]}"
-        return phone or "SMS"
+        return phone or source.upper()
     return _masked(doc.get("email", ""))
 
 
@@ -1067,6 +1067,152 @@ def api_sms_webhook():
 
     preview = body[:80] + ("..." if len(body) > 80 else "")
     _sms_pending[from_number] = (body, lookup["caller_name"], time.time() + _SMS_CONFIRM_TTL)
+    return _twiml_reply(f'Confirm your suggestion? Reply Y to save or N to cancel:\n"{preview}"')
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/whatsapp", methods=["POST"])
+def api_whatsapp_webhook():
+    """Twilio WhatsApp webhook — same command interface as SMS."""
+    _local_dev = os.environ.get("LOCAL_DEV") == "1"
+    if _TWILIO_AUTH_TOKEN and not _local_dev:
+        from twilio.request_validator import RequestValidator
+        validator = RequestValidator(_TWILIO_AUTH_TOKEN)
+        _frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+        url = f"{_frontend}/api/se-scorecard-v2/whatsapp"
+        sig = request.headers.get("X-Twilio-Signature", "")
+        if not validator.validate(url, request.form, sig):
+            log.warning("Twilio WhatsApp signature validation failed — url=%s", url)
+            return "Forbidden", 403
+
+    from_raw    = request.form.get("From", "").strip()
+    body        = request.form.get("Body", "").strip()
+
+    # Strip whatsapp: prefix Twilio adds for WhatsApp senders
+    from_number = from_raw.replace("whatsapp:", "")
+
+    if not from_number or not body:
+        return _twiml_reply("No message body received.")
+
+    if _sms_rate_limited(from_number):
+        log.warning("WhatsApp rate limit exceeded for %s", from_number)
+        return _twiml_reply("You've sent too many messages. Please wait an hour before trying again.")
+
+    # Lookup: WhatsApp numbers are always mobile — skip line_type check
+    lookup = _lookup_phone(from_number) if not _local_dev else {"caller_name": None, "is_mobile": True}
+    caller_name = lookup.get("caller_name")
+
+    db = _get_firestore()
+    if db is None:
+        log.error("Firestore unavailable for WhatsApp from %s", from_number)
+        return _twiml_reply("Sorry, storage is unavailable right now. Please try again later.")
+
+    cmd = body.strip().upper()
+
+    def _load_all_docs_inner(db_):
+        return list(db_.collection(_FIRESTORE_COLLECTION)
+                       .order_by("created_at", direction="DESCENDING").stream())
+
+    def _format_list_inner(docs, phone):
+        if not docs:
+            return "No suggestions yet."
+        lines = []
+        for i, doc in enumerate(docs, 1):
+            s      = doc.to_dict()
+            author = _display_author(s)
+            text   = s.get("text", "")[:60]
+            suffix = "..." if len(s.get("text", "")) > 60 else ""
+            mine   = " *" if s.get("phone") == phone else ""
+            lines.append(f"{i}. [{author}]{mine} {text}{suffix}")
+        return "\n".join(lines)
+
+    # ── CONFIRMATION FLOW ─────────────────────────────────────────────────────
+    if from_number in _sms_pending:
+        pending_text, pending_name, expires_at = _sms_pending[from_number]
+        if time.time() > expires_at:
+            del _sms_pending[from_number]
+        elif cmd in ("Y", "YES"):
+            del _sms_pending[from_number]
+            try:
+                all_docs = _load_all_docs_inner(db)
+                if len(all_docs) >= _SUGGESTIONS_MAX:
+                    return _twiml_reply("Sorry, we've reached our suggestion limit. Thank you for your interest!")
+                doc_id     = str(uuid.uuid4())
+                created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                doc = {"phone": from_number, "text": pending_text, "source": "whatsapp", "created_at": created_at}
+                if pending_name:
+                    doc["caller_name"] = pending_name
+                db.collection(_FIRESTORE_COLLECTION).document(doc_id).set(doc)
+                log.info("WhatsApp suggestion confirmed and saved from %s", from_number)
+                updated = _load_all_docs_inner(db)
+                reply = "Saved! Here are all suggestions (* = yours). Reply DELETE 1,2 to remove yours:\n\n" + _format_list_inner(updated, from_number)
+                return _twiml_reply(reply)
+            except Exception as e:
+                log.error("Firestore WhatsApp save failed: %s", e)
+                return _twiml_reply("Sorry, something went wrong. Please try again.")
+        elif cmd in ("N", "NO"):
+            del _sms_pending[from_number]
+            return _twiml_reply("Cancelled — suggestion not saved.")
+        else:
+            preview = pending_text[:80] + ("..." if len(pending_text) > 80 else "")
+            return _twiml_reply(f'Reply Y to confirm or N to cancel:\n"{preview}"')
+
+    def _load_all_docs():
+        return _load_all_docs_inner(db)
+
+    def _format_list(docs):
+        return _format_list_inner(docs, from_number)
+
+    # ── DELETE ────────────────────────────────────────────────────────────────
+    if cmd.startswith("DELETE"):
+        arg = body.strip()[6:].strip()
+        try:
+            docs = _load_all_docs()
+            if arg.upper() == "ALL":
+                mine = [d for d in docs if d.to_dict().get("phone") == from_number]
+                if not mine:
+                    return _twiml_reply("You have no suggestions to delete.")
+                for d in mine:
+                    db.collection(_FIRESTORE_COLLECTION).document(d.id).delete()
+                log.info("WhatsApp DELETE ALL: removed %d for %s", len(mine), from_number)
+                updated = _load_all_docs()
+                reply = f"Deleted all {len(mine)} of your suggestion{'s' if len(mine) != 1 else ''}.\n\n" + _format_list(updated)
+                return _twiml_reply(reply)
+            try:
+                indices = [int(x.strip()) - 1 for x in arg.split(",") if x.strip()]
+                if not indices:
+                    raise ValueError
+            except ValueError:
+                return _twiml_reply("Usage: DELETE 1  or  DELETE 1,2,3  or  DELETE ALL")
+            errors, deleted = [], []
+            for idx in sorted(set(indices)):
+                if idx < 0 or idx >= len(docs):
+                    errors.append(f"#{idx+1} doesn't exist")
+                    continue
+                d = docs[idx]
+                if d.to_dict().get("phone") != from_number:
+                    errors.append(f"#{idx+1} isn't yours")
+                    continue
+                db.collection(_FIRESTORE_COLLECTION).document(d.id).delete()
+                deleted.append(idx + 1)
+            log.info("WhatsApp DELETE %s by %s — deleted=%s errors=%s", arg, from_number, deleted, errors)
+            parts = []
+            if deleted:
+                parts.append(f"Deleted #{', #'.join(str(n) for n in deleted)}.")
+            if errors:
+                parts.append("Skipped: " + "; ".join(errors) + ".")
+            updated = _load_all_docs()
+            reply = " ".join(parts) + "\n\n" + _format_list(updated)
+            return _twiml_reply(reply)
+        except Exception as e:
+            log.error("Firestore delete (WhatsApp) failed: %s", e)
+            return _twiml_reply("Failed to delete suggestion.")
+
+    # ── SUBMIT — ask for confirmation ────────────────────────────────────────
+    if len(body) > 1000:
+        return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
+
+    preview = body[:80] + ("..." if len(body) > 80 else "")
+    _sms_pending[from_number] = (body, caller_name, time.time() + _SMS_CONFIRM_TTL)
     return _twiml_reply(f'Confirm your suggestion? Reply Y to save or N to cancel:\n"{preview}"')
 
 
