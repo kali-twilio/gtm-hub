@@ -26,29 +26,39 @@
       ? 'background:#0d0d0d;border-bottom:1px solid rgba(232,0,61,0.35);box-shadow:0 0 20px rgba(232,0,61,0.08);'
       : 'background:white;border-bottom:1px solid rgba(13,18,43,0.1);box-shadow:0 1px 8px rgba(13,18,43,0.06);'}"
 >
-  <div style="display:flex;align-items:center;gap:16px">
-    <a href="/" style="display:flex;align-items:center;text-decoration:none">
-      <img src="/Twilio-logo-red.svg.png" alt="Twilio" style="height:22px;width:auto">
-    </a>
-    <div style="width:1px;height:22px;background:{p5 ? 'rgba(232,0,61,0.3)' : 'rgba(13,18,43,0.12)'}"></div>
-    <button
-      onclick={() => theme.toggle()}
-      style="background:none;border:none;padding:2px 4px;margin:-2px -4px;cursor:pointer;font-size:13px;font-weight:600;letter-spacing:-0.01em;color:{p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'};border-radius:4px;transition:color 0.15s,background 0.15s"
-      onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color = 'var(--red)'; el.style.background = p5 ? 'rgba(232,0,61,0.1)' : 'rgba(242,47,70,0.07)'; }}
-      onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color = p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'; el.style.background = 'none'; }}
-      title="Click for a surprise"
-    >SE Scorecard</button>
-    <SuggestionBox />
-    <a
-      href="sms:+18446990268"
-      title="Text us feedback"
-      style="display:flex;align-items:center;gap:5px;text-decoration:none;padding:4px 8px;border-radius:5px;transition:color 0.15s,background 0.15s;font-size:12px;font-weight:600;color:{p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'}"
-      onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color='var(--red)'; el.style.background=p5?'rgba(232,0,61,0.1)':'rgba(242,47,70,0.07)'; }}
-      onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color=p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'; el.style.background='none'; }}
-    >
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="opacity:0.8"><rect x="1" y="2" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M4 14l2-2h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
-      <span style="font-size:15px;font-weight:700;letter-spacing:0.01em">(844) 699-0268</span>
-    </a>
+  <div style="display:flex;align-items:center;justify-content:space-between;width:100%">
+
+    <!-- Left: logo + app name -->
+    <div style="display:flex;align-items:center;gap:16px">
+      <a href="/" style="display:flex;align-items:center;text-decoration:none">
+        <img src="/Twilio-logo-red.svg.png" alt="Twilio" style="height:22px;width:auto">
+      </a>
+      <div style="width:1px;height:22px;background:{p5 ? 'rgba(232,0,61,0.3)' : 'rgba(13,18,43,0.12)'}"></div>
+      <button
+        onclick={() => theme.toggle()}
+        style="background:none;border:none;padding:2px 4px;margin:-2px -4px;cursor:pointer;font-size:13px;font-weight:600;letter-spacing:-0.01em;color:{p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'};border-radius:4px;transition:color 0.15s,background 0.15s"
+        onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color = 'var(--red)'; el.style.background = p5 ? 'rgba(232,0,61,0.1)' : 'rgba(242,47,70,0.07)'; }}
+        onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color = p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'; el.style.background = 'none'; }}
+        title="Click for a surprise"
+      >SE Scorecard</button>
+    </div>
+
+    <!-- Right: feedback group -->
+    <div style="display:flex;align-items:center;gap:4px;padding:4px 6px;border-radius:8px;background:{p5?'rgba(255,255,255,0.03)':'rgba(13,18,43,0.03)'};border:1px solid {p5?'rgba(255,255,255,0.07)':'rgba(13,18,43,0.07)'}">
+      <SuggestionBox />
+      <div style="width:1px;height:18px;background:{p5?'rgba(255,255,255,0.1)':'rgba(13,18,43,0.1)'}"></div>
+      <a
+        href="sms:+18446990268"
+        title="Text us feedback"
+        style="display:flex;align-items:center;gap:6px;text-decoration:none;padding:3px 8px;border-radius:5px;transition:color 0.15s,background 0.15s;color:{p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'}"
+        onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color='var(--red)'; el.style.background=p5?'rgba(232,0,61,0.1)':'rgba(242,47,70,0.07)'; }}
+        onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color=p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'; el.style.background='none'; }}
+      >
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" style="opacity:0.8;flex-shrink:0"><rect x="1" y="2" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M4 14l2-2h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        <span style="font-size:17px;font-weight:800;letter-spacing:-0.01em;line-height:1">(844) 699-0268</span>
+      </a>
+    </div>
+
   </div>
 </div>
 
