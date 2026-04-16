@@ -235,9 +235,47 @@
     return `${sign} ${fmtMrr(Math.abs(delta))}/mo`;
   }
 
+  // Announced org-wide iACV totals (all closed won, SE-tagged or not).
+  // Used to show what % of the org's iACV SEs were involved in.
+  const ANNOUNCED_ORG_ICAV: Record<string, number> = {
+    namer_strat:     11_300_000,
+    namer_nb:         7_900_000,
+    digital_sales_activate: 13_300_000,
+    digital_sales_expansion: 7_300_000,
+  };
+
+  const orgIcav = $derived(data?.org_icav ?? null);
+
+  function orgIcavPct(seIcavVal: number, orgTotal: number): string {
+    if (!orgTotal || !seIcavVal) return '';
+    return Math.round(seIcavVal / orgTotal * 100) + '%';
+  }
+
+  // For the current team, pick the announced totals if available
+  const announcedOrgActIcav = $derived((() => {
+    if (!data) return null;
+    const t = $sfTeam;
+    if (t === 'namer') return ANNOUNCED_ORG_ICAV['namer_nb'] + ANNOUNCED_ORG_ICAV['namer_strat'];
+    if (t === 'digital_sales') return ANNOUNCED_ORG_ICAV['digital_sales_activate'] + ANNOUNCED_ORG_ICAV['digital_sales_expansion'];
+    return null;
+  })());
+
+  const announcedOrgActLabel = $derived((() => {
+    if (!data) return null;
+    const t = $sfTeam;
+    if (t === 'namer') return 'Org iACV (Strat + NB)';
+    if (t === 'digital_sales') return 'Org iACV (Activate + Expansion)';
+    return null;
+  })());
+
   const stratOnly     = $derived(teamExpIcav > 0 && teamActIcav === 0);
   const actOnly       = $derived(teamActIcav > 0 && teamExpIcav === 0);
   const singleMotion  = $derived(stratOnly || actOnly);
+  const orgIcavTotal = $derived(orgIcav ? (orgIcav.total ?? 0) : (announcedOrgActIcav ?? 0));
+  const seIcavPct    = $derived(orgIcavTotal > 0 && teamTotalIcav > 0
+    ? Math.round(teamTotalIcav / orgIcavTotal * 100)
+    : null);
+
   const summaryCards  = $derived(data ? [
     {label:'Team Total iACV',        val:fmt(teamTotalIcav),                   color:null,                                                                                                                                                 show:true},
     {label:motionLabels.act+' iACV', val:fmt(teamActIcav),                     color:null,                                                                                                                                                 show:teamActIcav>0 && teamExpIcav>0},
@@ -245,6 +283,7 @@
     {label:'Account ARR',            val:fmt(expTotals.arr_total),             color:null,                                                                                                                                                 show:stratOnly && expTotals.arr_total>0},
     {label:'Qtr MRR Δ',              val:fmtMrrDelta(expTotals.mrr_delta_total), color:expTotals.mrr_delta_total>0?($theme==='twilio'?'#178742':'#10B981'):expTotals.mrr_delta_total<0?($theme==='twilio'?'#DC2626':'#EF4444'):'var(--text-muted)', show:stratOnly && expTotals.arr_total>0},
     {label:'SEs Analysed',           val:String(data.total),                   color:null,                                                                                                                                                 show:true},
+    {label:'SE iACV Impact',         val:seIcavPct !== null ? seIcavPct+'%' : '—', color:null,                                                                                                                                            show:seIcavPct !== null},
   ].filter((s: any) => s.show) : []);
 
 const actStatCols = $derived(data ? [
@@ -440,6 +479,49 @@ const actStatCols = $derived(data ? [
     </div>
     {/each}
   </div>
+
+  <!-- iACV Impact panel — only shown when announced org totals are available -->
+  {#if $sfTeam === 'namer' || $sfTeam === 'digital_sales'}
+  {@const isNamer = $sfTeam === 'namer'}
+  {@const motions = isNamer
+    ? [
+        { label: 'Strategic',    announced: ANNOUNCED_ORG_ICAV['namer_strat'], seIcav: teamExpIcav },
+        { label: 'New Business', announced: ANNOUNCED_ORG_ICAV['namer_nb'],    seIcav: teamActIcav },
+      ]
+    : [
+        { label: 'Activate',  announced: ANNOUNCED_ORG_ICAV['digital_sales_activate'],  seIcav: teamActIcav },
+        { label: 'Expansion', announced: ANNOUNCED_ORG_ICAV['digital_sales_expansion'], seIcav: teamExpIcav },
+      ]
+  }
+  {@const announcedSum = motions.reduce((s: number, m: any) => s + m.announced, 0)}
+  {@const seSum = motions.reduce((s: number, m: any) => s + m.seIcav, 0)}
+  <div class="p5-panel" style="margin-bottom:20px;padding:14px 18px">
+    <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);margin-bottom:10px">SE iACV Impact vs Org Total</div>
+    <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">
+      Announced org iACV totals include all Closed Won opps — SE-tagged and untagged. This shows how much of the org's iACV SEs were involved in.
+    </div>
+    <div style="display:grid;grid-template-columns:repeat({motions.length + 1},1fr);gap:10px">
+      {#each motions as m}
+      {@const pct = m.announced > 0 ? Math.round(m.seIcav / m.announced * 100) : 0}
+      <div style="padding:10px 12px;background:rgba(var(--red-rgb),0.04);border-left:3px solid rgba(var(--red-rgb),0.25);{$theme==='twilio'?'border-radius:0 6px 6px 0':''}">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:4px">{m.label}</div>
+        <div style="font-size:20px;font-weight:900;color:var(--text)">{pct}%</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">{fmt(m.seIcav)} SE-tagged</div>
+        <div style="font-size:11px;color:var(--text-faint)">{fmt(m.announced)} org total</div>
+        <div style="margin-top:6px;background:rgba(var(--red-rgb),0.1);border-radius:2px;height:4px"><div style="height:4px;border-radius:2px;background:var(--red);width:{Math.min(pct,100)}%"></div></div>
+      </div>
+      {/each}
+      {@const totalPct = announcedSum > 0 ? Math.round(seSum / announcedSum * 100) : 0}
+      <div style="padding:10px 12px;background:rgba(var(--red-rgb),0.08);border-left:3px solid var(--red);{$theme==='twilio'?'border-radius:0 6px 6px 0':''}">
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--red);margin-bottom:4px">Total</div>
+        <div style="font-size:20px;font-weight:900;color:var(--text)">{totalPct}%</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">{fmt(seSum)} SE-tagged</div>
+        <div style="font-size:11px;color:var(--text-faint)">{fmt(announcedSum)} org total</div>
+        <div style="margin-top:6px;background:rgba(var(--red-rgb),0.1);border-radius:2px;height:4px"><div style="height:4px;border-radius:2px;background:var(--red);width:{Math.min(totalPct,100)}%"></div></div>
+      </div>
+    </div>
+  </div>
+  {/if}
 
   <!-- Controls row — sticky -->
   <div style="position:sticky;top:68px;z-index:150;margin:0 -24px;padding:10px 24px;background:var(--bg);border-bottom:1px solid rgba(var(--red-rgb),0.1);backdrop-filter:blur(8px);margin-bottom:0">

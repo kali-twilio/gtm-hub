@@ -1415,6 +1415,26 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
 # Save se_data.json
 # ---------------------------------------------------------------------------
 
+def compute_org_icav_totals(opps: list, motion: str = "dsr") -> dict:
+    """
+    Sum iACV across ALL closed-won opps (SE-tagged or not) split by motion.
+    Used to compute what % of org iACV SEs were involved in.
+    """
+    total = act_total = exp_total = 0
+    for opp in opps:
+        v = _icav(opp)
+        total += v
+        if motion == "ae":
+            if _is_new_business(opp): act_total += v
+            elif _is_strategic(opp):  exp_total += v
+            else:                     act_total += v
+        else:
+            if _is_activate(opp):    act_total += v
+            elif _is_expansion(opp): exp_total += v
+            else:                    act_total += v
+    return {"total": total, "act": act_total, "exp": exp_total}
+
+
 import json
 
 def save_data(ranked, output_dir):
