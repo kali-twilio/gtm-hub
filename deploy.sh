@@ -346,27 +346,9 @@ aws ec2 associate-address \
 rm -f "$USERDATA_FILE"
 
 # ── 7. Delete secrets file from S3 once instance signals setup complete ───────
-# Note: EC2 console output is buffered and can take up to 15 minutes to appear
-# via the API even after the instance has finished booting. Poll for up to 15 min.
-echo "Waiting for instance to finish setup (polling console output for SETUP COMPLETE)..."
-_ELAPSED=0
-while true; do
-  OUTPUT=$(aws ec2 get-console-output \
-    --profile "$PROFILE" --region "$REGION" \
-    --instance-id "$INSTANCE_ID" \
-    --query "Output" --output text 2>/dev/null || true)
-  if echo "$OUTPUT" | grep -q "SETUP COMPLETE"; then
-    echo "Instance setup complete (${_ELAPSED}s)."
-    break
-  fi
-  if [ "$_ELAPSED" -ge 900 ]; then
-    echo "Warning: timed out waiting for SETUP COMPLETE after ${_ELAPSED}s — deleting secrets anyway."
-    break
-  fi
-  sleep 15
-  _ELAPSED=$((_ELAPSED + 15))
-  echo "  Still waiting... (${_ELAPSED}s)"
-done
+# Instance is running — give it 3 min to finish downloading secrets, then delete
+echo "Waiting 3 minutes for instance to fetch secrets, then cleaning up S3..."
+sleep 180
 aws s3 rm s3://$BUCKET/secrets.env --profile "$PROFILE" --region "$REGION" && echo "Secrets file deleted from S3." || echo "Warning: could not delete secrets.env from S3 — delete manually."
 
 echo ""
