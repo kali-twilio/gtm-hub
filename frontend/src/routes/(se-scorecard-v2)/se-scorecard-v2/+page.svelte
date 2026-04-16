@@ -83,7 +83,7 @@
   <!-- Header -->
   <div class="text-center mb-8 w-full hub-container">
     <div class="p5-badge mb-3">SE Scorecard V2</div>
-    <h1 style="font-size:28px;font-weight:800;color:var(--text);letter-spacing:-0.02em">SE Performance</h1>
+    <h1 style="font-size:28px;font-weight:800;color:var(--text);letter-spacing:-0.02em">SE Impact</h1>
     <div style="width:40px;height:3px;background:var(--red);border-radius:2px;margin:10px auto 0"></div>
   </div>
 
@@ -208,7 +208,7 @@
       <span style="font-size:24px">📊</span>
       <div style="flex:1">
         <div style="font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">Full Report</div>
-        <div style="font-size:11px;color:var(--text-muted);font-weight:500;margin-top:2px">Complete SE performance analysis</div>
+        <div style="font-size:11px;color:var(--text-muted);font-weight:500;margin-top:2px">Complete SE impact analysis</div>
       </div>
       <span style="color:var(--red);font-size:18px">▶</span>
     </a>
@@ -225,7 +225,7 @@
       <span style="font-size:24px">👤</span>
       <div style="flex:1">
         <div style="font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">My Stats</div>
-        <div style="font-size:11px;color:var(--text-muted);font-weight:500;margin-top:2px">Individual SE performance view</div>
+        <div style="font-size:11px;color:var(--text-muted);font-weight:500;margin-top:2px">Individual SE impact view</div>
       </div>
       <span style="color:var(--red);font-size:18px">▶</span>
     </a>
