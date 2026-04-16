@@ -916,13 +916,15 @@ def api_sms_webhook():
 
         # Pass the parsed form dict — Twilio signs application/x-www-form-urlencoded
         # params sorted alphabetically appended to the URL.
+        # Use the canonical public URL that Twilio signed — the internal Flask
+        # request.url reflects the EC2 hostname which doesn't match. CloudFront
+        # does not forward X-Forwarded-Host, so we read FRONTEND_URL from env
+        # (which is set to the CloudFront domain in production).
+        _frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+        url = f"{_frontend}/api/se-scorecard-v2/sms"
         log.info("Twilio sig check — url=%s sig=%s", url, sig[:16] if sig else "missing")
         if not validator.validate(url, request.form, sig):
-            log.warning("Twilio signature validation failed — url=%s host_header=%s forwarded_host=%s proto=%s",
-                        url,
-                        request.headers.get("Host", ""),
-                        request.headers.get("X-Forwarded-Host", ""),
-                        request.headers.get("X-Forwarded-Proto", ""))
+            log.warning("Twilio signature validation failed — url=%s", url)
             return "Forbidden", 403
 
     from_number = request.form.get("From", "").strip()
