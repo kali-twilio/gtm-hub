@@ -904,18 +904,25 @@ def api_sms_webhook():
         from twilio.request_validator import RequestValidator
         validator = RequestValidator(_TWILIO_AUTH_TOKEN)
 
-        # Reconstruct the exact URL Twilio signed. Behind a proxy (CloudFront →
-        # nginx → Flask) request.url has scheme=http. Use X-Forwarded-Proto so
-        # the URL matches what Twilio actually called.
+        # Reconstruct the exact URL Twilio signed. Behind CloudFront → nginx →
+        # Flask, request.url has the internal EC2 hostname and http scheme.
+        # Use X-Forwarded-Proto + X-Forwarded-Host to rebuild the public URL
+        # that Twilio actually called and signed.
         proto = request.headers.get("X-Forwarded-Proto", "https")
-        url = request.url.replace("http://", f"{proto}://", 1)
+        host  = request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
+        url   = f"{proto}://{host}{request.full_path.rstrip('?')}"
 
         sig = request.headers.get("X-Twilio-Signature", "")
 
         # Pass the parsed form dict — Twilio signs application/x-www-form-urlencoded
         # params sorted alphabetically appended to the URL.
+        log.info("Twilio sig check — url=%s sig=%s", url, sig[:16] if sig else "missing")
         if not validator.validate(url, request.form, sig):
-            log.warning("Twilio signature validation failed (url=%s)", url)
+            log.warning("Twilio signature validation failed — url=%s host_header=%s forwarded_host=%s proto=%s",
+                        url,
+                        request.headers.get("Host", ""),
+                        request.headers.get("X-Forwarded-Host", ""),
+                        request.headers.get("X-Forwarded-Proto", ""))
             return "Forbidden", 403
 
     from_number = request.form.get("From", "").strip()
