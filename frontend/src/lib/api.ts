@@ -65,6 +65,39 @@ export async function getSFRankings(team: string, period: string, icavMin = 0, s
   return r.json();
 }
 
+// ---------------------------------------------------------------------------
+// Suggestion box
+// ---------------------------------------------------------------------------
+
+export interface Suggestion {
+  id:         string;
+  text:       string;
+  author:     string;
+  created_at: string;
+  is_mine:    boolean;
+}
+
+export async function getSuggestions(): Promise<Suggestion[]> {
+  const r = await fetch('/api/se-scorecard-v2/suggestions');
+  if (!r.ok) return [];
+  return r.json();
+}
+
+export async function createSuggestion(text: string): Promise<Suggestion | null> {
+  const r = await fetch('/api/se-scorecard-v2/suggestions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+export async function deleteSuggestion(id: string): Promise<boolean> {
+  const r = await fetch(`/api/se-scorecard-v2/suggestions/${id}`, { method: 'DELETE' });
+  return r.ok;
+}
+
 export function fmt(n: number): string {
   if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;

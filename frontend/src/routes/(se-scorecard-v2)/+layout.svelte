@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { theme } from '$lib/stores';
+  import SuggestionBox from '$lib/SuggestionBox.svelte';
 
   let { children } = $props();
 
@@ -30,12 +31,14 @@
       <img src="/Twilio-logo-red.svg.png" alt="Twilio" style="height:22px;width:auto">
     </a>
     <div style="width:1px;height:22px;background:{p5 ? 'rgba(232,0,61,0.3)' : 'rgba(13,18,43,0.12)'}"></div>
-    <span style="font-size:13px;font-weight:600;letter-spacing:-0.01em;color:{p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'}">SE Scorecard V2</span>
-    {#if p5}
-    <button onclick={() => theme.toggle()} style="background:rgba(232,0,61,0.12);border:1px solid rgba(232,0,61,0.25);border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;color:var(--red);cursor:pointer;display:flex;align-items:center;gap:5px;letter-spacing:0.03em;text-transform:uppercase"><span>🏢</span> Exit Fun Mode</button>
-    {:else}
-    <button onclick={() => theme.toggle()} style="background:rgba(242,47,70,0.07);border:none;border-radius:6px;padding:5px 10px;font-size:11px;font-weight:700;color:#F22F46;cursor:pointer;display:flex;align-items:center;gap:5px;letter-spacing:0.03em;text-transform:uppercase"><span>🎉</span> Fun Mode</button>
-    {/if}
+    <button
+      onclick={() => theme.toggle()}
+      style="background:none;border:none;padding:2px 4px;margin:-2px -4px;cursor:pointer;font-size:13px;font-weight:600;letter-spacing:-0.01em;color:{p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'};border-radius:4px;transition:color 0.15s,background 0.15s"
+      onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color = 'var(--red)'; el.style.background = p5 ? 'rgba(232,0,61,0.1)' : 'rgba(242,47,70,0.07)'; }}
+      onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color = p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'; el.style.background = 'none'; }}
+      title="Click for a surprise"
+    >SE Scorecard V2</button>
+    <SuggestionBox />
   </div>
 </div>
 

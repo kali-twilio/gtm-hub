@@ -7,12 +7,16 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
+import boto3
+from botocore.exceptions import ClientError
 from flask import Blueprint, jsonify, request, session
 
 from salesforce import sf
@@ -698,6 +702,118 @@ def api_report():
         "team_label":   team_label,
         "motion":       team.get("motion", "dsr"),
     })
+
+
+# ---------------------------------------------------------------------------
+# Suggestion box — stored in S3 as suggestions/se-scorecard-v2.json
+# ---------------------------------------------------------------------------
+
+_SUGGESTIONS_BUCKET = os.environ.get("BUCKET", "kali-gtm-hub-deploy")
+_SUGGESTIONS_REGION = os.environ.get("REGION", "us-west-2")
+_SUGGESTIONS_PROFILE = os.environ.get("PROFILE")   # set in deploy.env; None in production (uses EC2 role)
+_SUGGESTIONS_KEY    = "suggestions/se-scorecard-v2.json"
+_SUGGESTIONS_MAX    = 500
+
+
+def _s3():
+    if _SUGGESTIONS_PROFILE:
+        boto_session = boto3.Session(profile_name=_SUGGESTIONS_PROFILE, region_name=_SUGGESTIONS_REGION)
+        return boto_session.client("s3")
+    return boto3.client("s3", region_name=_SUGGESTIONS_REGION)
+
+
+def _load_suggestions() -> list:
+    try:
+        obj = _s3().get_object(Bucket=_SUGGESTIONS_BUCKET, Key=_SUGGESTIONS_KEY)
+        return json.loads(obj["Body"].read().decode("utf-8"))
+    except ClientError as e:
+        if e.response["Error"]["Code"] in ("NoSuchKey", "404"):
+            return []
+        log.warning("S3 get_object failed: %s", e)
+        raise
+
+
+def _save_suggestions(items: list) -> None:
+    body = json.dumps(items, ensure_ascii=False, indent=2).encode("utf-8")
+    _s3().put_object(
+        Bucket=_SUGGESTIONS_BUCKET,
+        Key=_SUGGESTIONS_KEY,
+        Body=body,
+        ContentType="application/json",
+    )
+
+
+def _masked(email: str) -> str:
+    return email.split("@")[0] if email else "anonymous"
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/suggestions", methods=["GET"])
+def api_suggestions_list():
+    current_email = session.get("user_email", "")
+    try:
+        items = _load_suggestions()
+    except Exception:
+        return jsonify({"error": "Could not load suggestions"}), 503
+    return jsonify([{
+        "id":         s["id"],
+        "text":       s["text"],
+        "author":     _masked(s["email"]),
+        "created_at": s["created_at"],
+        "is_mine":    s["email"] == current_email,
+    } for s in items])
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/suggestions", methods=["POST"])
+def api_suggestions_create():
+    email = session.get("user_email", "")
+    if not email:
+        return jsonify({"error": "Unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    text = (body.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+    if len(text) > 1000:
+        return jsonify({"error": "text too long (max 1000 chars)"}), 400
+    try:
+        items = _load_suggestions()
+        if len(items) >= _SUGGESTIONS_MAX:
+            return jsonify({"error": "Suggestion limit reached"}), 429
+        item = {
+            "id":         str(uuid.uuid4()),
+            "email":      email,
+            "text":       text,
+            "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+        items.append(item)
+        _save_suggestions(items)
+    except Exception:
+        return jsonify({"error": "Could not save suggestion"}), 503
+    return jsonify({
+        "id":         item["id"],
+        "text":       item["text"],
+        "author":     _masked(email),
+        "created_at": item["created_at"],
+        "is_mine":    True,
+    }), 201
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/suggestions/<suggestion_id>", methods=["DELETE"])
+def api_suggestions_delete(suggestion_id: str):
+    email = session.get("user_email", "")
+    if not email:
+        return jsonify({"error": "Unauthorized"}), 401
+    try:
+        items = _load_suggestions()
+        match = next((s for s in items if s["id"] == suggestion_id), None)
+        if not match:
+            return jsonify({"error": "Not found"}), 404
+        if match["email"] != email:
+            return jsonify({"error": "Forbidden"}), 403
+        items = [s for s in items if s["id"] != suggestion_id]
+        _save_suggestions(items)
+    except Exception:
+        return jsonify({"error": "Could not delete suggestion"}), 503
+    return "", 204
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")

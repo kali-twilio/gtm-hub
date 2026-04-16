@@ -14,7 +14,8 @@
   let expColTipIdx = $state(-1);
   let notesFilter = $state(false);
   let showActivity = $state(false);
-  let titleFilter = $state('');
+  let titleFilter   = $state('');
+  let productFilter = $state('');
 
   // Returns a copy of an SE with iACV/wins recalculated from only fully-documented
   // TW opps (both Sales_Engineer_Notes__c and SE_Notes_History__c filled).
@@ -90,8 +91,33 @@
     return t === f;
   }
 
+  function primaryProduct(se: any): string {
+    const opps: any[] = se.tw_opps_detail ?? [];
+    const totals: Record<string, number> = {};
+    for (const o of opps) {
+      const p = o.product || '';
+      if (p) totals[p] = (totals[p] ?? 0) + (o.icav ?? 0);
+    }
+    const entries = Object.entries(totals);
+    if (!entries.length) return '';
+    return entries.sort((a, b) => b[1] - a[1])[0][0];
+  }
+
+  const productList = $derived(data ? (() => {
+    // Only include products where at least one SE (after title filter) has it as their primary.
+    // Sum by each SE's total iACV so ranking reflects actual output, not raw opp counts.
+    const base = titleFilter ? data.ranked.filter((s: any) => titleMatchesFilter(s.title || '', titleFilter)) : data.ranked;
+    const totals: Record<string, number> = {};
+    for (const se of base as any[]) {
+      const p = primaryProduct(se);
+      if (p) totals[p] = (totals[p] ?? 0) + ((se as any).total_icav ?? 0);
+    }
+    return Object.entries(totals).sort((a, b) => b[1] - a[1]).map(([p]) => p);
+  })() : []);
+
   const filteredRanked = $derived(data ? (() => {
     let base = titleFilter ? data.ranked.filter((s: any) => titleMatchesFilter(s.title || '', titleFilter)) : data.ranked;
+    if (productFilter) base = base.filter((s: any) => primaryProduct(s) === productFilter);
     if (!notesFilter) return base;
     const mapped = base.map(_notesFiltered);
     const sorted = [...mapped].sort((a: any, b: any) => b.total_icav - a.total_icav);
@@ -112,10 +138,12 @@
   const actKey    = (s: any) => s.act_icav + (view === 'all' ? (s.non_tw_act_icav ?? 0) : 0);
   const actSorted = $derived(filteredRanked.filter((s: any) => actKey(s) > 0).sort((a: any, b: any) => actKey(b) - actKey(a)));
   const expSorted = $derived([...filteredRanked].filter((s: any) => s.exp_wins > 0).sort((a: any, b: any) => b.exp_icav - a.exp_icav));
-  const dealSorted = $derived(data ? (titleFilter
-    ? (data.deal_sorted ?? []).filter((s: any) => titleMatchesFilter(s.title || '', titleFilter))
-    : (data.deal_sorted ?? [])
-  ) : []);
+  const dealSorted = $derived(data ? (() => {
+    let base = data.deal_sorted ?? [];
+    if (titleFilter)   base = base.filter((s: any) => titleMatchesFilter(s.title || '', titleFilter));
+    if (productFilter) base = base.filter((s: any) => primaryProduct(s) === productFilter);
+    return base;
+  })() : []);
   const maxActIcav = $derived(actSorted.length ? Math.max(...actSorted.map((s: any) => s.act_icav)) : 1);
   const maxExpIcav = $derived(expSorted.length ? Math.max(...expSorted.map((s: any) => s.exp_icav)) : 1);
   const teamActIcav   = $derived(filteredRanked.reduce((s: number, se: any) => s + se.act_icav + (view === 'all' ? (se.non_tw_act_icav ?? 0) : 0), 0));
@@ -460,7 +488,7 @@ const actStatCols = $derived(data ? [
       <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Job Title</div>
       <select
         value={titleFilter}
-        onchange={(e) => titleFilter = (e.currentTarget as HTMLSelectElement).value}
+        onchange={(e) => { titleFilter = (e.currentTarget as HTMLSelectElement).value; productFilter = ''; }}
         style="padding:5px 10px;font-size:12px;font-weight:600;border-radius:5px;border:1px solid {titleFilter?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:var(--bg);color:{titleFilter?'var(--red)':'var(--text-muted)'};cursor:pointer;outline:none"
       >
         <option value="">All Titles</option>
@@ -471,6 +499,23 @@ const actStatCols = $derived(data ? [
           <option value={t}>↳ {t}</option>
           {/each}
         </optgroup>
+        {/each}
+      </select>
+    </div>
+    {/if}
+
+    <!-- Product filter -->
+    {#if productList.length > 1}
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:6px">Primary Product</div>
+      <select
+        value={productFilter}
+        onchange={(e) => productFilter = (e.currentTarget as HTMLSelectElement).value}
+        style="padding:5px 10px;font-size:12px;font-weight:600;border-radius:5px;border:1px solid {productFilter?'var(--red)':'rgba(var(--red-rgb),0.2)'};background:var(--bg);color:{productFilter?'var(--red)':'var(--text-muted)'};cursor:pointer;outline:none"
+      >
+        <option value="">All Products</option>
+        {#each productList as p}
+        <option value={p}>{p}</option>
         {/each}
       </select>
     </div>
