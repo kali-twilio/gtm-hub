@@ -104,12 +104,6 @@ rm /tmp/backend.tar.gz /tmp/frontend.tar.gz
 # Write secrets to a temp file, upload to S3, then delete locally.
 SECRETS_FILE=$(mktemp /tmp/secrets.XXXXXX.env)
 chmod 600 "$SECRETS_FILE"
-# Export AWS credentials from the deploy profile so the EC2 instance can access S3
-AWS_CREDS=$(aws configure export-credentials --profile "$PROFILE" --format env-no-export 2>/dev/null || true)
-AWS_KEY_ID=$(echo "$AWS_CREDS"     | grep ^AWS_ACCESS_KEY_ID     | cut -d= -f2-)
-AWS_SECRET=$(echo "$AWS_CREDS"     | grep ^AWS_SECRET_ACCESS_KEY | cut -d= -f2-)
-AWS_SESSION=$(echo "$AWS_CREDS"    | grep ^AWS_SESSION_TOKEN     | cut -d= -f2-)
-
 cat > "$SECRETS_FILE" << SECRETS
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
@@ -117,9 +111,6 @@ SECRET_KEY=${SECRET_KEY}
 FRONTEND_URL=https://${DOMAIN}
 BUCKET=${BUCKET}
 REGION=${REGION}
-AWS_ACCESS_KEY_ID=${AWS_KEY_ID}
-AWS_SECRET_ACCESS_KEY=${AWS_SECRET}
-AWS_SESSION_TOKEN=${AWS_SESSION}
 SALESFORCE_INSTANCE_URL=${SALESFORCE_INSTANCE_URL:-}
 SALESFORCE_CLIENT_ID=${SALESFORCE_CLIENT_ID:-}
 SALESFORCE_CLIENT_SECRET=${SALESFORCE_CLIENT_SECRET:-}
@@ -148,6 +139,10 @@ BACKEND_URL_S3=$(aws s3 presign  s3://$BUCKET/backend.tar.gz   --profile "$PROFI
 FRONTEND_URL_S3=$(aws s3 presign s3://$BUCKET/frontend.tar.gz  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 SECRETS_URL_S3=$(aws s3 presign  s3://$BUCKET/secrets.env      --profile "$PROFILE" --region "$REGION" --expires-in $SECRETS_EXPIRES)
 
+# Pre-signed URL to seed suggestions at boot (empty JSON array if key doesn't exist yet)
+SUGGESTIONS_URL_S3=$(aws s3 presign s3://$BUCKET/suggestions/se-scorecard-v2.json \
+  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES 2>/dev/null || true)
+
 
 # ── 4. Build boot script (NO secret values — only a short-lived URL) ─────────
 USERDATA_FILE=$(mktemp /tmp/userdata.XXXXXX.sh)
@@ -163,6 +158,11 @@ yum install -y python3 python3-pip nginx
 
 mkdir -p /app/outputs /var/www/scorecard
 cd /app
+
+# Seed suggestions from S3 so data survives redeploys (best-effort — no credentials needed)
+if [ -n '${SUGGESTIONS_URL_S3}' ]; then
+  curl -sf '${SUGGESTIONS_URL_S3}' -o /app/outputs/suggestions.json 2>/dev/null || true
+fi
 
 curl -sL '${BACKEND_URL_S3}' -o /tmp/backend.tar.gz
 tar -xzf /tmp/backend.tar.gz -C /app
