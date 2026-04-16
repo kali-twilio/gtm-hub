@@ -725,6 +725,10 @@ _SMS_RL_LIMIT  = 100  # max messages
 _SMS_RL_WINDOW = 3600 # per hour (seconds)
 _sms_rl_store: dict[str, list[float]] = {}
 
+# Pending confirmations: phone -> (text, caller_name, expires_at)
+_SMS_CONFIRM_TTL = 300  # 5 minutes to confirm
+_sms_pending: dict[str, tuple[str, str | None, float]] = {}
+
 def _sms_rate_limited(phone: str) -> bool:
     """Returns True if this phone number has exceeded the SMS rate limit."""
     now = time.monotonic()
@@ -950,11 +954,11 @@ def api_sms_webhook():
 
     cmd = body.strip().upper()
 
-    def _load_all_docs():
-        return list(db.collection(_FIRESTORE_COLLECTION)
-                      .order_by("created_at", direction="DESCENDING").stream())
+    def _load_all_docs_inner(db_):
+        return list(db_.collection(_FIRESTORE_COLLECTION)
+                       .order_by("created_at", direction="DESCENDING").stream())
 
-    def _format_list(docs):
+    def _format_list_inner(docs, phone):
         if not docs:
             return "No suggestions yet."
         lines = []
@@ -963,9 +967,47 @@ def api_sms_webhook():
             author = _display_author(s)
             text   = s.get("text", "")[:60]
             suffix = "..." if len(s.get("text", "")) > 60 else ""
-            mine   = " *" if s.get("phone") == from_number else ""
+            mine   = " *" if s.get("phone") == phone else ""
             lines.append(f"{i}. [{author}]{mine} {text}{suffix}")
         return "\n".join(lines)
+
+    # ── CONFIRMATION FLOW ─────────────────────────────────────────────────────
+    if from_number in _sms_pending:
+        pending_text, pending_name, expires_at = _sms_pending[from_number]
+        if time.time() > expires_at:
+            del _sms_pending[from_number]
+        elif cmd in ("Y", "YES"):
+            del _sms_pending[from_number]
+            try:
+                all_docs = _load_all_docs_inner(db)
+                if len(all_docs) >= _SUGGESTIONS_MAX:
+                    return _twiml_reply("Sorry, we've reached our suggestion limit. Thank you for your interest!")
+                doc_id     = str(uuid.uuid4())
+                created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                doc = {"phone": from_number, "text": pending_text, "source": "sms", "created_at": created_at}
+                if pending_name:
+                    doc["caller_name"] = pending_name
+                db.collection(_FIRESTORE_COLLECTION).document(doc_id).set(doc)
+                log.info("SMS suggestion confirmed and saved from %s", from_number)
+                updated = _load_all_docs_inner(db)
+                reply = "Saved! Here are all suggestions (* = yours). Reply DELETE 1,2 to remove yours:\n\n" + _format_list_inner(updated, from_number)
+                return _twiml_reply(reply)
+            except Exception as e:
+                log.error("Firestore SMS save failed: %s", e)
+                return _twiml_reply("Sorry, something went wrong. Please try again.")
+        elif cmd in ("N", "NO"):
+            del _sms_pending[from_number]
+            return _twiml_reply("Cancelled — suggestion not saved.")
+        else:
+            # Unrecognised — re-prompt
+            preview = pending_text[:80] + ("..." if len(pending_text) > 80 else "")
+            return _twiml_reply(f'Reply Y to confirm or N to cancel:\n"{preview}"')
+
+    def _load_all_docs():
+        return _load_all_docs_inner(db)
+
+    def _format_list(docs):
+        return _format_list_inner(docs, from_number)
 
     # ── DELETE ────────────────────────────────────────────────────────────────
     if cmd.startswith("DELETE"):
@@ -1019,35 +1061,13 @@ def api_sms_webhook():
             log.error("Firestore delete (SMS) failed: %s", e)
             return _twiml_reply("Failed to delete suggestion.")
 
-    # ── SUBMIT (default) — save then auto-send full list ─────────────────────
+    # ── SUBMIT (default) — ask for confirmation before saving ────────────────
     if len(body) > 1000:
         return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
 
-    try:
-        all_docs = _load_all_docs()
-        if len(all_docs) >= _SUGGESTIONS_MAX:
-            return _twiml_reply("Sorry, we've reached our suggestion limit. Thank you for your interest!")
-
-        doc_id     = str(uuid.uuid4())
-        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        doc = {
-            "phone":      from_number,
-            "text":       body,
-            "source":     "sms",
-            "created_at": created_at,
-        }
-        if lookup["caller_name"]:
-            doc["caller_name"] = lookup["caller_name"]
-        db.collection(_FIRESTORE_COLLECTION).document(doc_id).set(doc)
-        log.info("SMS suggestion saved from %s (%s)", from_number, lookup["caller_name"] or "unknown")
-
-        # Return updated list so sender can see their submission and delete by number
-        updated = _load_all_docs()
-        reply = "Got it! Here are all suggestions (* = yours). Reply DELETE 1,2 to remove yours:\n\n" + _format_list(updated)
-        return _twiml_reply(reply)
-    except Exception as e:
-        log.error("Firestore SMS save failed: %s", e)
-        return _twiml_reply("Sorry, something went wrong. Please try again.")
+    preview = body[:80] + ("..." if len(body) > 80 else "")
+    _sms_pending[from_number] = (body, lookup["caller_name"], time.time() + _SMS_CONFIRM_TTL)
+    return _twiml_reply(f'Confirm your suggestion? Reply Y to save or N to cancel:\n"{preview}"')
 
 
 def _twiml_reply(message: str):
