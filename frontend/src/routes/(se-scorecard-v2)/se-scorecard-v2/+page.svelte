@@ -82,8 +82,7 @@
 
   <!-- Header -->
   <div class="text-center mb-8 w-full hub-container">
-    <div class="p5-badge mb-3">SE Scorecard V2</div>
-    <h1 style="font-size:28px;font-weight:800;color:var(--text);letter-spacing:-0.02em">SE Impact</h1>
+    <h1 style="font-size:40px;font-weight:800;color:var(--text);letter-spacing:-0.02em">SE Scorecard</h1>
     <div style="width:40px;height:3px;background:var(--red);border-radius:2px;margin:10px auto 0"></div>
   </div>
 

@@ -89,7 +89,7 @@
 <div class="w-full mx-auto px-4 py-8" style="max-width:min(100%,900px)">
 
   <div style="margin-bottom:20px">
-    <div class="p5-badge" style="margin-bottom:8px">SE Scorecard V2 · {periods.find(p => p.key === $sfPeriod)?.label ?? $sfPeriod}</div>
+    <div class="p5-badge" style="margin-bottom:8px">SE Scorecard · {periods.find(p => p.key === $sfPeriod)?.label ?? $sfPeriod}</div>
     <h1 style="font-size:32px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:2px 2px 0 var(--red)':''}">My Stats</h1>
     <div style="width:50px;height:3px;background:var(--red);{$theme==='p5'?'transform:skewX(-20deg);box-shadow:0 0 8px var(--red)':'border-radius:2px'};margin-top:8px"></div>
   </div>

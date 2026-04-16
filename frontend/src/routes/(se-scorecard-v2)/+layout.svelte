@@ -37,7 +37,7 @@
       onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color = 'var(--red)'; el.style.background = p5 ? 'rgba(232,0,61,0.1)' : 'rgba(242,47,70,0.07)'; }}
       onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color = p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'; el.style.background = 'none'; }}
       title="Click for a surprise"
-    >SE Scorecard V2</button>
+    >SE Scorecard</button>
     <SuggestionBox />
   </div>
 </div>
