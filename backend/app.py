@@ -140,7 +140,7 @@ APPS_DIR = Path(__file__).parent / "apps"
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Routes the platform exposes publicly (no login required)
-_PUBLIC_ROUTES = {"/auth", "/oauth2callback", "/logout", "/simulate", "/api/me"}
+_PUBLIC_ROUTES = {"/auth", "/oauth2callback", "/logout", "/simulate", "/api/me", "/api/se-scorecard-v2/sms"}
 
 # ── Rate limiting (in-memory, per IP) ────────────────────────────────────────
 _rl_store: dict[str, list[float]] = defaultdict(list)

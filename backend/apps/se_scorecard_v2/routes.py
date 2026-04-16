@@ -720,6 +720,23 @@ _TWILIO_ACCOUNT_SID     = os.environ.get("TWILIO_ACCOUNT_SID")
 _TWILIO_AUTH_TOKEN      = os.environ.get("TWILIO_AUTH_TOKEN")
 _TWILIO_PHONE_NUMBER    = "+18446990268"
 
+# SMS pump protection: max texts per phone number per window
+_SMS_RL_LIMIT  = 5    # max messages
+_SMS_RL_WINDOW = 3600 # per hour (seconds)
+_sms_rl_store: dict[str, list[float]] = {}
+
+def _sms_rate_limited(phone: str) -> bool:
+    """Returns True if this phone number has exceeded the SMS rate limit."""
+    now = time.monotonic()
+    cutoff = now - _SMS_RL_WINDOW
+    ts = _sms_rl_store.setdefault(phone, [])
+    while ts and ts[0] < cutoff:
+        ts.pop(0)
+    if len(ts) >= _SMS_RL_LIMIT:
+        return True
+    ts.append(now)
+    return False
+
 
 def _get_firestore():
     global _firestore_client
@@ -873,18 +890,32 @@ def api_suggestions_delete(suggestion_id: str):
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/sms", methods=["POST"])
 def api_sms_webhook():
-    """Twilio SMS webhook — saves inbound texts as suggestions."""
-    # Validate the request came from Twilio
+    """Twilio SMS webhook — saves inbound texts as suggestions.
+
+    Security layers (per https://www.twilio.com/docs/usage/webhooks/webhooks-security):
+    1. HMAC-SHA1 signature validation using the full reconstructed URL and POST params.
+       The URL is reconstructed using X-Forwarded-Proto so it works correctly behind
+       CloudFront/nginx (which terminates TLS and forwards HTTP internally).
+       Skipped only in local dev when TWILIO_AUTH_TOKEN is not set.
+    2. Per-phone-number rate limiting to prevent SMS pumping attacks.
+    """
+    # ── 1. Signature validation ───────────────────────────────────────────────
     if _TWILIO_AUTH_TOKEN:
         from twilio.request_validator import RequestValidator
         validator = RequestValidator(_TWILIO_AUTH_TOKEN)
-        url = request.url
-        # Behind CloudFront/nginx the scheme may be http internally; use https
-        if url.startswith("http://"):
-            url = "https://" + url[7:]
+
+        # Reconstruct the exact URL Twilio signed. Behind a proxy (CloudFront →
+        # nginx → Flask) request.url has scheme=http. Use X-Forwarded-Proto so
+        # the URL matches what Twilio actually called.
+        proto = request.headers.get("X-Forwarded-Proto", "https")
+        url = request.url.replace("http://", f"{proto}://", 1)
+
         sig = request.headers.get("X-Twilio-Signature", "")
+
+        # Pass the parsed form dict — Twilio signs application/x-www-form-urlencoded
+        # params sorted alphabetically appended to the URL.
         if not validator.validate(url, request.form, sig):
-            log.warning("Twilio signature validation failed")
+            log.warning("Twilio signature validation failed (url=%s)", url)
             return "Forbidden", 403
 
     from_number = request.form.get("From", "").strip()
@@ -892,6 +923,11 @@ def api_sms_webhook():
 
     if not from_number or not body:
         return _twiml_reply("No message body received.")
+
+    # ── 2. Per-phone rate limiting (SMS pump protection) ─────────────────────
+    if _sms_rate_limited(from_number):
+        log.warning("SMS rate limit exceeded for %s", from_number)
+        return _twiml_reply("You've sent too many messages. Please wait an hour before trying again.")
 
     if len(body) > 1000:
         return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
