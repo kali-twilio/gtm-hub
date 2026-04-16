@@ -61,6 +61,8 @@
       </div>
       <a
         href={contactHref($msgChannel)}
+        target={$msgChannel === 'whatsapp' ? '_blank' : undefined}
+        rel={$msgChannel === 'whatsapp' ? 'noopener noreferrer' : undefined}
         title="{$msgChannel === 'whatsapp' ? 'WhatsApp' : 'Text'} us feedback"
         style="display:flex;align-items:center;gap:6px;text-decoration:none;padding:3px 8px;border-radius:5px;transition:color 0.15s,background 0.15s;color:{p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'}"
         onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color='var(--red)'; el.style.background=p5?'rgba(232,0,61,0.1)':'rgba(242,47,70,0.07)'; }}

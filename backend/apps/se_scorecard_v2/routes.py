@@ -341,7 +341,12 @@ def _cache_path(team_key: str, period_key: str, icav_min: int = 0) -> Path:
     return OUTPUT_DIR / f"sf_se_data_{team_key}_{period_key}{suffix}.json"
 
 
+_LOCAL_DEV = os.environ.get("LOCAL_DEV") == "1"
+
+
 def _is_fresh(team_key: str, period_key: str, icav_min: int, ttl: int) -> bool:
+    if _LOCAL_DEV:
+        return False
     p = _cache_path(team_key, period_key, icav_min)
     return p.exists() and (time.time() - p.stat().st_mtime) < ttl
 
@@ -353,7 +358,7 @@ def _load_cached(team_key: str, period_key: str, icav_min: int = 0) -> list | No
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0, motion: str = "dsr"):
+def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0, motion: str = "dsr") -> list:
     total   = len(ranked)
     payload = []
     for i, se in enumerate(ranked, 1):
@@ -363,10 +368,12 @@ def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0
         entry["flags"] = sf_analysis.collect_se_flags(se, ranked, motion)
         entry["roast"] = sf_analysis._roast(se, ranked, motion)
         payload.append(entry)
-    p   = _cache_path(team_key, period_key, icav_min)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    tmp.replace(p)
+    if not _LOCAL_DEV:
+        p   = _cache_path(team_key, period_key, icav_min)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload), encoding="utf-8")
+        tmp.replace(p)
+    return payload
 
 
 
@@ -496,10 +503,10 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     if not ses:
         return [], None
     ranked = sf_analysis.rank_ses(ses)
-    _save_cached(ranked, cache_key, period_key, icav_min, team.get("motion", "dsr"))
+    result = _save_cached(ranked, cache_key, period_key, icav_min, team.get("motion", "dsr"))
     log.info("Refreshed %s/%s (min $%s) SE data from Salesforce (%d opps, %d win-rate opps)",
              cache_key, period_key, icav_min, len(opps), len(win_rate_opps))
-    return _load_cached(cache_key, period_key, icav_min), None
+    return result, None
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +572,8 @@ def enrich_me(email: str) -> dict:
     for team_key in TEAMS:
         for p in OUTPUT_DIR.glob(f"sf_se_data_{team_key}_*.json"):
             try:
-                cached = json.loads(p.read_text(encoding="utf-8"))
+                raw    = json.loads(p.read_text(encoding="utf-8"))
+                cached = raw.get("ses", raw) if isinstance(raw, dict) else raw
             except Exception:
                 continue
             se_name = _email_to_se_name(email, cached)
