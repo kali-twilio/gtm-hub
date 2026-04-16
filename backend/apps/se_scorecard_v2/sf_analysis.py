@@ -1412,6 +1412,37 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
 
 
 # ---------------------------------------------------------------------------
+# Funnel win rates
+# ---------------------------------------------------------------------------
+
+def compute_funnel_stats(funnel_opps: list) -> dict:
+    """
+    Compute team-level funnel win rates from opps that reached presales stage >= 1-Qualified.
+
+    overall_win_rate    — Closed Won ÷ all qualified+ opps
+    se_win_rate         — Tech Win (stage 4) ÷ all qualified+ opps
+    tw_conversion_rate  — Closed Won with TW ÷ all TW opps
+    """
+    qualified_count     = len(funnel_opps)
+    tech_win_count      = sum(1 for o in funnel_opps
+                              if o.get("Presales_Stage__c") == "4 - Technical Win Achieved")
+    closed_won_count    = sum(1 for o in funnel_opps
+                              if o.get("StageName") == "Closed Won")
+    closed_won_tw_count = sum(1 for o in funnel_opps
+                              if o.get("StageName") == "Closed Won"
+                              and o.get("Presales_Stage__c") == "4 - Technical Win Achieved")
+    return {
+        "qualified_count":     qualified_count,
+        "tech_win_count":      tech_win_count,
+        "closed_won_count":    closed_won_count,
+        "closed_won_tw_count": closed_won_tw_count,
+        "overall_win_rate":    round(closed_won_count     / qualified_count * 100) if qualified_count > 0 else 0,
+        "se_win_rate":         round(tech_win_count       / qualified_count * 100) if qualified_count > 0 else 0,
+        "tw_conversion_rate":  round(closed_won_tw_count  / tech_win_count  * 100) if tech_win_count  > 0 else 0,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Save se_data.json
 # ---------------------------------------------------------------------------
 

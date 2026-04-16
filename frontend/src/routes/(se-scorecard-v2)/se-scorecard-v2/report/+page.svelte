@@ -322,6 +322,7 @@ const actStatCols = $derived(data ? [
     return 'var(--text-muted)';
   }
 
+  let winRateView = $state<'overall' | 'se' | 'tw'>('overall');
   let activeSection = $state('rankings');
   let navHovered = $state(false);
 
@@ -440,6 +441,92 @@ const actStatCols = $derived(data ? [
     </div>
     {/each}
   </div>
+
+  <!-- Win Rate Funnel Panel -->
+  {#if data.funnel_stats?.qualified_count > 0}
+  {@const fs = data.funnel_stats}
+  <div class="p5-panel" style="margin-bottom:20px;padding:16px 20px">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--red)">Win Rate Analysis</div>
+      <div style="display:flex;gap:6px">
+        {#each ([['overall','Overall Win Rate'],['se','SE Win Rate'],['tw','TW Conversion']] as const) as [key, label]}
+        <button
+          onclick={() => winRateView = key}
+          class="p5-ctrl {winRateView === key ? 'active' : ''}"
+          style="font-size:10px"
+        >{label}</button>
+        {/each}
+      </div>
+    </div>
+
+    {#if winRateView === 'overall'}
+    <div style="display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:48px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text);line-height:1">{fs.overall_win_rate}%</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;font-weight:600">Overall Win Rate</div>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;line-height:1.5">
+          <strong style="color:var(--text)">{fs.closed_won_count}</strong> Closed Won ÷ <strong style="color:var(--text)">{fs.qualified_count}</strong> deals that reached presales stage 1-Qualified or higher
+        </div>
+        <div style="background:rgba(var(--red-rgb),0.08);border-radius:4px;height:8px;overflow:hidden">
+          <div style="height:8px;border-radius:4px;background:{fs.overall_win_rate >= 50 ? ($theme==='twilio'?'#178742':'#10B981') : fs.overall_win_rate >= 30 ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')};width:{fs.overall_win_rate}%;transition:width 0.3s"></div>
+        </div>
+      </div>
+    </div>
+
+    {:else if winRateView === 'se'}
+    <div style="display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:48px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text);line-height:1">{fs.se_win_rate}%</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;font-weight:600">SE Win Rate</div>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;line-height:1.5">
+          <strong style="color:var(--text)">{fs.tech_win_count}</strong> Tech Wins (stage 4) ÷ <strong style="color:var(--text)">{fs.qualified_count}</strong> deals that reached presales stage 1-Qualified or higher
+        </div>
+        <div style="background:rgba(var(--red-rgb),0.08);border-radius:4px;height:8px;overflow:hidden">
+          <div style="height:8px;border-radius:4px;background:{fs.se_win_rate >= 50 ? ($theme==='twilio'?'#178742':'#10B981') : fs.se_win_rate >= 30 ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')};width:{fs.se_win_rate}%;transition:width 0.3s"></div>
+        </div>
+      </div>
+    </div>
+
+    {:else}
+    <div style="display:flex;align-items:flex-end;gap:24px;flex-wrap:wrap">
+      <div>
+        <div style="font-size:48px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text);line-height:1">{fs.tw_conversion_rate}%</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;font-weight:600">TW → Closed Won Conversion</div>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;line-height:1.5">
+          <strong style="color:var(--text)">{fs.closed_won_tw_count}</strong> Closed Won with Tech Win ÷ <strong style="color:var(--text)">{fs.tech_win_count}</strong> total Tech Wins — of deals SE achieved Technical Win, how many converted to revenue
+        </div>
+        <div style="background:rgba(var(--red-rgb),0.08);border-radius:4px;height:8px;overflow:hidden">
+          <div style="height:8px;border-radius:4px;background:{fs.tw_conversion_rate >= 70 ? ($theme==='twilio'?'#178742':'#10B981') : fs.tw_conversion_rate >= 40 ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')};width:{fs.tw_conversion_rate}%;transition:width 0.3s"></div>
+        </div>
+      </div>
+    </div>
+    {/if}
+
+    <!-- All three rates compact summary -->
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px;padding-top:14px;border-top:1px solid rgba(var(--red-rgb),0.08)">
+      {#each [
+        {key:'overall', label:'Overall Win Rate',      num:fs.closed_won_count,    den:fs.qualified_count,  rate:fs.overall_win_rate,   desc:'Closed Won ÷ Qualified+'},
+        {key:'se',      label:'SE Win Rate',           num:fs.tech_win_count,      den:fs.qualified_count,  rate:fs.se_win_rate,         desc:'Tech Win ÷ Qualified+'},
+        {key:'tw',      label:'TW Conversion',         num:fs.closed_won_tw_count, den:fs.tech_win_count,   rate:fs.tw_conversion_rate,  desc:'CW w/ TW ÷ Tech Wins'},
+      ] as m}
+      <button
+        onclick={() => winRateView = m.key as 'overall'|'se'|'tw'}
+        style="text-align:left;background:{winRateView===m.key?'rgba(var(--red-rgb),0.08)':'rgba(var(--red-rgb),0.03)'};border:1px solid {winRateView===m.key?'rgba(var(--red-rgb),0.25)':'rgba(var(--red-rgb),0.08)'};border-radius:6px;padding:10px 12px;cursor:pointer;transition:all 0.15s"
+      >
+        <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted);margin-bottom:4px">{m.label}</div>
+        <div style="font-size:20px;font-weight:900;color:var(--text);line-height:1">{m.rate}%</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-top:3px">{m.num} / {m.den} · {m.desc}</div>
+      </button>
+      {/each}
+    </div>
+  </div>
+  {/if}
 
   <!-- Controls row — sticky -->
   <div style="position:sticky;top:68px;z-index:90;margin:0 -24px;padding:10px 24px;background:var(--bg);border-bottom:1px solid rgba(var(--red-rgb),0.1);backdrop-filter:blur(8px);margin-bottom:0">
