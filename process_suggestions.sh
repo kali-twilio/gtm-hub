@@ -16,6 +16,8 @@
 
 set -euo pipefail
 
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
+
 ###############################################################################
 # 0. Config
 ###############################################################################
@@ -212,23 +214,38 @@ def run(cmd, cwd=None, check=True, capture=False):
         kwargs["text"] = True
     return subprocess.run(cmd, **kwargs)
 
-def writeback(status, suggestion, branch=None):
-    """Stamp status on the Firestore document for this suggestion."""
+DELETE_STATUSES = {"done", "security_blocked"}
+
+def writeback(status, suggestion, branch=None, pr_url=None):
+    """Update or delete the Firestore document for this suggestion.
+    Deletes on done (PR created) or security_blocked — no point keeping them."""
+    doc_ref = db.collection(fs_collection).document(suggestion["id"])
+    if status in DELETE_STATUSES:
+        try:
+            doc_ref.delete()
+            print(f"  Firestore deleted: [{suggestion['id']}] ({status})")
+        except Exception as e:
+            print(f"  WARN: Firestore delete failed: {e}")
+        return
+    # For transient statuses (failed, push_failed, no_changes) just update
     suggestion["status"]       = status
     suggestion["completed_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    if branch:
-        suggestion["branch"] = branch
     update = {"status": status, "completed_at": suggestion["completed_at"]}
     if branch:
-        update["branch"] = branch
+        suggestion["branch"] = branch
+        update["branch"]     = branch
+    if pr_url:
+        suggestion["pr_url"] = pr_url
+        update["pr_url"]     = pr_url
     try:
-        db.collection(fs_collection).document(suggestion["id"]).update(update)
+        doc_ref.update(update)
         print(f"  Firestore writeback: [{suggestion['id']}] → {status}")
     except Exception as e:
         print(f"  WARN: Firestore writeback failed: {e}")
 
-def sanitize_branch(email, created_at):
-    username = email.split('@')[0]
+def sanitize_branch(owner, created_at):
+    # For email, use the local part; for phone or anything else, use as-is
+    username = owner.split('@')[0] if '@' in owner else owner
     safe = re.sub(r'[^a-zA-Z0-9._-]', '-', username).strip('-')
     # Use unix timestamp so branches sort chronologically for the same person
     try:
@@ -330,37 +347,16 @@ def identify_files(suggestion_text, repo_map):
         print(f"  WARN: could not parse file list from haiku ({e}), falling back to full context")
     return []
 
-def build_file_context(file_paths):
-    """Read each identified file and return them as a single inline context block."""
-    blocks = []
-    for rel_path in file_paths:
-        abs_path = os.path.join(repo_dir, rel_path)
-        try:
-            content = open(abs_path).read()
-            blocks.append(f"### {rel_path}\n```\n{content}\n```")
-        except Exception as e:
-            print(f"  WARN: could not read {rel_path}: {e}")
-    return "\n\n".join(blocks)
 
-SYSTEM_PROMPT = textwrap.dedent("""\
-    You are working on gtm-hub, an internal Twilio sales engineering dashboard.
-    Tech stack:
-      - Frontend: SvelteKit (TypeScript), Tailwind CSS, component files are .svelte
-      - Backend: Python Flask, one Blueprint per app under backend/apps/
-      - The se-scorecard-v2 app specifically: backend/apps/se_scorecard_v2/ (routes.py,
-        sf_analysis.py) + a SvelteKit route under frontend/src/routes/se-scorecard-v2/
-      - Shared frontend utilities live in frontend/src/lib/
-    Always follow the existing code style. Do not touch any other app.
-""")
 
 def implement_suggestion(suggestion, repo_map):
     text   = suggestion["text"]
-    email  = suggestion["email"]
+    owner  = suggestion.get("email") or suggestion.get("phone", "anonymous")
     sid    = suggestion["id"]
-    branch = f"suggestion-{sanitize_branch(email, suggestion['created_at'])}"
+    branch = f"suggestion-{sanitize_branch(owner, suggestion.get('created_at', ''))}"
 
     print(f"\n  Suggestion [{sid}]")
-    print(f"  Email : {email}")
+    print(f"  Owner : {owner}")
     print(f"  Branch: {branch}")
     print(f"  Text  : {text}")
 
@@ -378,57 +374,30 @@ def implement_suggestion(suggestion, repo_map):
     target_files = identify_files(text, repo_map)
 
     if target_files:
-        file_context = build_file_context(target_files)
-        files_list   = "\n".join(f"  - {f}" for f in target_files)
-        # Stage only the identified files to limit blast radius
         git_add_cmd  = "git add " + " ".join(f'"{f}"' for f in target_files)
-        context_note = textwrap.dedent(f"""\
-            Focus your changes on these files (already read for you below):
-            {files_list}
-
-            Current file contents:
-            {file_context}
-        """)
+        files_list   = "\n".join(f"  - {f}" for f in target_files)
+        context_note = f"Focus your changes on these files (read them with the Read tool first):\n{files_list}"
     else:
-        # Fallback: give Claude the repo map and let it find files itself
         git_add_cmd  = "git add -A"
-        context_note = textwrap.dedent(f"""\
-            The se-scorecard-v2 file tree is:
-            {repo_map}
-        """)
+        context_note = f"The se-scorecard-v2 file tree is:\n{repo_map}\nRead whatever files you need."
 
-    # ── Step B: implement (Sonnet) ─────────────────────────────────────────
-    prompt = textwrap.dedent(f"""\
-        Implement this suggestion: "{text}" in gtm-hub but only for the se-scorecard-v2 app.
+    TOKEN_ERRORS = ["prompt is too long", "token limit", "context length", "max_tokens",
+                    "rate_limit", "exceeded the 8192"]
+    MAX_CONTINUATIONS = 10
 
-        The se-scorecard-v2 app lives in:
-          - backend:  backend/apps/se_scorecard_v2/
-          - frontend: frontend/src/routes/se-scorecard-v2/  (and related components)
-
-        {context_note}
-
-        Do not modify any other app. After making all changes, you MUST:
-        1. Stage changed files with: {git_add_cmd}
-        2. Commit with a descriptive message: git commit -m "suggestion: {text}"
-
-        The task is NOT complete until you have run git commit successfully.
-        Verify with: git log --oneline -1
-    """)
-
-    TOKEN_ERRORS = ["prompt is too long", "token limit", "context length", "max_tokens", "rate_limit"]
-    MAX_ATTEMPTS = 5
-
-    for attempt in range(1, MAX_ATTEMPTS + 1):
-        print(f"  Step B: claude attempt {attempt}/{MAX_ATTEMPTS} ...", flush=True)
-
-        # Stream output live so progress is visible in the log, while also
-        # collecting it for error detection
+    def run_claude_with_continuation(initial_prompt):
+        """
+        Start a claude -p session and, if it hits the output token limit,
+        resume with --continue until the task is complete or we give up.
+        Session is saved (no --no-session-persistence) so --continue works.
+        Returns (success: bool, last_output: str).
+        """
+        # ── Initial call ──────────────────────────────────────────────────
+        print("  Step B: starting ...", flush=True)
         proc = subprocess.Popen(
-            ["claude", "-p", prompt,
+            ["claude", "-p", initial_prompt,
              "--model", "sonnet",
-             "--dangerously-skip-permissions",
-             "--no-session-persistence",
-             "--append-system-prompt", SYSTEM_PROMPT],
+             "--dangerously-skip-permissions"],
             cwd=repo_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -442,19 +411,62 @@ def implement_suggestion(suggestion, repo_map):
         output = "".join(output_lines)
 
         if proc.returncode == 0:
-            print("  claude succeeded.")
-            break
+            return True, output
 
-        if any(e in output.lower() for e in TOKEN_ERRORS):
-            print(f"  Hit token/rate limit on attempt {attempt}, retrying...")
-            continue
+        if not any(e in output.lower() for e in TOKEN_ERRORS):
+            print(f"  claude failed (rc={proc.returncode}):")
+            print(output[-1000:])
+            return False, output
 
-        print(f"  claude failed (rc={proc.returncode}):")
-        print(output[-2000:])
-        writeback("failed", suggestion)
-        return False
-    else:
-        print(f"  Exhausted {MAX_ATTEMPTS} attempts, skipping.")
+        # ── Continue until done ───────────────────────────────────────────
+        for cont in range(1, MAX_CONTINUATIONS + 1):
+            print(f"  Step B: continuing (pass {cont}/{MAX_CONTINUATIONS}) ...", flush=True)
+            proc = subprocess.Popen(
+                ["claude", "--continue", "-p", "continue",
+                 "--model", "sonnet",
+                 "--dangerously-skip-permissions"],
+                cwd=repo_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            output_lines = []
+            for line in proc.stdout:
+                print(f"    {line}", end="", flush=True)
+                output_lines.append(line)
+            proc.wait()
+            output = "".join(output_lines)
+
+            if proc.returncode == 0:
+                return True, output
+
+            if not any(e in output.lower() for e in TOKEN_ERRORS):
+                print(f"  claude failed on continuation {cont} (rc={proc.returncode}):")
+                print(output[-1000:])
+                return False, output
+
+        print(f"  Exhausted {MAX_CONTINUATIONS} continuations.")
+        return False, ""
+
+    # ── Step B: single claude session with continuation support ───────────
+    prompt = textwrap.dedent(f"""\
+        Implement this suggestion in gtm-hub (se-scorecard-v2 app only): "{text}"
+
+        The se-scorecard-v2 app lives in:
+          - backend:  backend/apps/se_scorecard_v2/
+          - frontend: frontend/src/routes/se-scorecard-v2/  (and related components)
+
+        {context_note}
+
+        Do not modify any other app. After making all changes, you MUST:
+        1. Stage changed files: {git_add_cmd}
+        2. Commit: git commit -m "suggestion: {text[:80]}"
+
+        The task is NOT complete until git commit has run successfully.
+    """)
+
+    ok, _ = run_claude_with_continuation(prompt)
+    if not ok:
         writeback("failed", suggestion)
         return False
 
@@ -465,7 +477,7 @@ def implement_suggestion(suggestion, repo_map):
         print("  Staging and committing leftover changes ...")
         add_args = target_files if target_files else ["-A"]
         run(["git", "add"] + add_args, cwd=repo_dir)
-        run(["git", "commit", "-m", f"suggestion: {text}"], cwd=repo_dir, check=False)
+        run(["git", "commit", "-m", f"suggestion: {text[:80]}"], cwd=repo_dir, check=False)
 
     diff_text = run(["git", "diff", "main...HEAD"], cwd=repo_dir, capture=True).stdout
     if not diff_text.strip():
@@ -473,20 +485,21 @@ def implement_suggestion(suggestion, repo_map):
         writeback("no_changes", suggestion)
         return False
 
-    # ── Security review (Haiku — diff is a classification task) ───────────
-    sec_prompt = textwrap.dedent(f"""\
-        Review the following git diff for security issues.
-        Focus on: SQL/shell/XSS injection, exposed secrets or credentials,
-        broken authentication, insecure direct object references, path traversal,
-        and any other OWASP Top-10 risks.
-
-        Reply with ONLY one of:
-          SAFE   — no significant security issues
-          UNSAFE — followed by a brief description of the issue(s)
-
-        Diff:
-        {diff_text[:8000]}
-    """)
+    # ── Security review (Haiku — classify only the diff lines) ───────────
+    # Feed ONLY the raw diff — no surrounding context — to avoid hallucination
+    # about code that appears elsewhere in the conversation.
+    sec_prompt = (
+        "You are a security reviewer. Read the git diff below and reply with ONLY:\n"
+        "  SAFE   — if there are no significant security issues in the changed lines\n"
+        "  UNSAFE <reason> — if the changed lines introduce a real security risk\n\n"
+        "Rules:\n"
+        "- Judge ONLY the lines prefixed with + or - in the diff.\n"
+        "- Do NOT comment on code that is not in the diff.\n"
+        "- Hardcoded reference data (e.g. revenue figures, thresholds) is NOT a risk.\n"
+        "- Minor style issues are NOT security issues.\n\n"
+        "Diff:\n"
+        + diff_text[:6000]
+    )
 
     sec_result = subprocess.run(
         ["claude", "-p", sec_prompt,
@@ -515,8 +528,25 @@ def implement_suggestion(suggestion, repo_map):
         return False
 
     print(f"  Done — branch '{branch}' pushed.")
-    writeback("done", suggestion, branch=branch)
+
+    # ── Open a pull request ────────────────────────────────────────────────
+    pr_result = subprocess.run(
+        ["gh", "pr", "create",
+         "--title", f"Suggestion: {text[:72]}",
+         "--body", f"**Submitted by:** {owner}\n\n**Suggestion:**\n{text}\n\n---\n*Auto-implemented by process_suggestions.sh*",
+         "--head", branch,
+         "--base", "main"],
+        cwd=repo_dir, capture_output=True, text=True,
+    )
+    if pr_result.returncode == 0:
+        pr_url = pr_result.stdout.strip()
+        print(f"  PR created: {pr_url}")
+        writeback("done", suggestion, branch=branch, pr_url=pr_url)
+    else:
+        print(f"  WARN: PR creation failed: {pr_result.stderr.strip()[:200]}")
+        writeback("done", suggestion, branch=branch)
     return True
+
 
 # ── Build repo map once, reuse for every suggestion ───────────────────────
 print("  Building repo map ...")
@@ -527,8 +557,12 @@ print(repo_map)
 ok_count = fail_count = 0
 
 for i, suggestion in enumerate(suggestions, 1):
-    if suggestion.get("status") in ("done", "security_blocked"):
-        print(f"\n[{i}/{len(suggestions)}] Skipping (already {suggestion['status']}): {suggestion['text']}")
+    status = suggestion.get("status")
+    branch = suggestion.get("branch")
+
+    if status in ("done", "security_blocked"):
+        # These should have been deleted from Firestore — if still present, skip
+        print(f"\n[{i}/{len(suggestions)}] Skipping (already {status}): {suggestion['text'][:80]}")
         continue
 
     print(f"\n[{i}/{len(suggestions)}] Processing suggestion ...")
