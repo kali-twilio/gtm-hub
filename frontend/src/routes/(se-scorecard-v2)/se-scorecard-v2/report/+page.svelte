@@ -1048,6 +1048,7 @@ const actStatCols = $derived(data ? [
         <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['#','SE','Value','Motion','AE','Account','Product'] as h}<th title={h==='SE'?seLevelTip:undefined} style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};{h==='SE'&&seLevelTip?'cursor:help;border-bottom:1px dashed rgba(var(--red-rgb),0.4)':''}">{h}</th>{/each}</tr></thead>
         <tbody>
           {#each dealSorted as se, i}
+          {@const sfOppUrl = se.largest_deal_id && data.sf_instance_url ? `${data.sf_instance_url}/${se.largest_deal_id}` : null}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
             <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
             <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
@@ -1058,7 +1059,11 @@ const actStatCols = $derived(data ? [
               {:else}—{/if}
             </td>
             <td style="padding:10px 16px;color:var(--text-muted)">{se.largest_deal_dsr || '—'}</td>
-            <td style="padding:10px 16px;font-weight:600;color:var(--text)">{se.largest_deal_acct || se.largest_deal.split(' - ')[0] || '—'}</td>
+            <td style="padding:10px 16px;font-weight:600;color:var(--text)">
+              {#if sfOppUrl}
+              <a href={sfOppUrl} target="_blank" rel="noopener noreferrer" style="color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.largest_deal_acct || se.largest_deal.split(' - ')[0] || '—'}</a>
+              {:else}{se.largest_deal_acct || se.largest_deal.split(' - ')[0] || '—'}{/if}
+            </td>
             <td style="padding:10px 16px;color:var(--text-muted);font-size:12px">{se.largest_deal_product || '—'}</td>
           </tr>
           {/each}

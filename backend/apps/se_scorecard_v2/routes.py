@@ -804,6 +804,7 @@ def api_report():
         "quarter":          period["label"],
         "team_label":       team_label,
         "motion":           team.get("motion", "dsr"),
+        "sf_instance_url":  sf.instance_url,
     })
 
 

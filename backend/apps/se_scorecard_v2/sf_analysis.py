@@ -332,6 +332,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
             return "act" if _is_activate(opp) else ("exp" if _is_expansion(opp) else "act")
 
         tw_opps_detail = sorted([{
+            "id":           opp.get("Id") or "",
             "name":         opp.get("Name") or "",
             "product":      _opp_product(opp.get("Name") or ""),
             "owner":        ((opp.get("Owner") or {}).get("Name") or ""),
@@ -362,6 +363,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
         tw_icavs = [(o, _icav(o)) for o in tw_opps]
         largest_opp, largest_val = max(tw_icavs, key=lambda x: x[1]) if tw_icavs else (None, 0)
         largest_name   = (largest_opp.get("Name") or "") if largest_opp else ""
+        largest_id     = (largest_opp.get("Id") or "") if largest_opp else ""
         largest_dsr    = ((largest_opp.get("Owner") or {}).get("Name") or "") if largest_opp else ""
         largest_acct   = ((largest_opp.get("Account") or {}).get("Name") or "") if largest_opp else ""
         # Product is the second segment of the opp name: "Account - Product - Description"
@@ -502,6 +504,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
             "meeting_exp_outq":      0,  # meetings on future Expansion opps (pipeline building)
             "meeting_exp_outq_icav": 0,  # iACV of those future Expansion opps
             "largest_deal":         largest_name,
+            "largest_deal_id":      largest_id,
             "largest_deal_acct":    largest_acct,
             "largest_deal_product": largest_product,
             "largest_deal_value":   largest_val,
