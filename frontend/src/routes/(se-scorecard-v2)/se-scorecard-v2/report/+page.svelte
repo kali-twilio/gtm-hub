@@ -442,7 +442,7 @@ const actStatCols = $derived(data ? [
   </div>
 
   <!-- Controls row — sticky -->
-  <div style="position:sticky;top:68px;z-index:150;margin:0 -24px;padding:10px 24px;background:var(--bg);border-bottom:1px solid rgba(var(--red-rgb),0.1);backdrop-filter:blur(8px);margin-bottom:0">
+  <div style="position:sticky;top:68px;z-index:90;margin:0 -24px;padding:10px 24px;background:var(--bg);border-bottom:1px solid rgba(var(--red-rgb),0.1);backdrop-filter:blur(8px);margin-bottom:0">
   <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
 
     <!-- View toggle -->
