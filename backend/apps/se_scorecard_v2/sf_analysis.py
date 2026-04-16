@@ -77,8 +77,8 @@ def _quarter_mrr_delta(acct: dict, close_date_str: str) -> tuple[int, int, int]:
 FIELD_CONFIG = {
     # iACV field on Opportunity (from dashboard: Comms_Segment_Combined_iACV__c)
     "icav_field": "Comms_Segment_Combined_iACV__c",
-    # eARR field on Opportunity — estimated Annual Recurring Revenue
-    "earr_field": "Comms_Segment_Combined_eARR__c",
+    # eARR field on Opportunity — eARR(post-launch) No Decimal
+    "earr_field": "eARR_post_launch_No_Decimal__c",
 
     # SE is the Technical Lead on the opportunity (not the owner/AE)
     "se_name_field": "Technical_Lead__r.Name",
