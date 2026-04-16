@@ -39,22 +39,15 @@
       title="Click for a surprise"
     >SE Scorecard</button>
     <SuggestionBox />
-    <div style="width:1px;height:22px;background:{p5 ? 'rgba(232,0,61,0.3)' : 'rgba(13,18,43,0.12)'}"></div>
     <a
       href="sms:+18446990268"
-      title="Text this number to send feedback"
-      style="display:flex;align-items:center;gap:7px;text-decoration:none;padding:5px 11px;border-radius:20px;transition:background 0.15s,box-shadow 0.15s;
-        {p5
-          ? 'background:rgba(232,0,61,0.15);border:1px solid rgba(232,0,61,0.4);'
-          : 'background:rgba(242,47,70,0.07);border:1px solid rgba(242,47,70,0.25);'}"
-      onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.background=p5?'rgba(232,0,61,0.25)':'rgba(242,47,70,0.14)'; el.style.boxShadow=p5?'0 0 10px rgba(232,0,61,0.3)':'0 2px 8px rgba(242,47,70,0.18)'; }}
-      onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.background=p5?'rgba(232,0,61,0.15)':'rgba(242,47,70,0.07)'; el.style.boxShadow='none'; }}
+      title="Text us feedback"
+      style="display:flex;align-items:center;gap:5px;text-decoration:none;padding:4px 8px;border-radius:5px;transition:color 0.15s,background 0.15s;font-size:12px;font-weight:600;color:{p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'}"
+      onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color='var(--red)'; el.style.background=p5?'rgba(232,0,61,0.1)':'rgba(242,47,70,0.07)'; }}
+      onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color=p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'; el.style.background='none'; }}
     >
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="color:{p5?'rgba(232,0,61,0.9)':'var(--red)'}"><rect x="1" y="2" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M4 14l2-2h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
-      <span style="display:flex;flex-direction:column;line-height:1.2">
-        <span style="font-size:9px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:{p5?'rgba(255,255,255,0.5)':'rgba(13,18,43,0.45)'}">Text feedback</span>
-        <span style="font-size:13px;font-weight:700;letter-spacing:0.01em;color:{p5?'#ff6b6b':'var(--red)'}">(844) 699-0268</span>
-      </span>
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" style="opacity:0.8"><rect x="1" y="2" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M4 14l2-2h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      <span style="font-size:15px;font-weight:700;letter-spacing:0.01em">(844) 699-0268</span>
     </a>
   </div>
 </div>
