@@ -1084,6 +1084,98 @@ def _twiml_empty():
     return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype="text/xml")
 
 
+# ---------------------------------------------------------------------------
+# AI Chatbot — answers questions about the loaded Salesforce data
+# ---------------------------------------------------------------------------
+
+_ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+
+
+def _build_chat_context(ses: list, team_key: str, period_key: str) -> str:
+    """Serialize SE data into a compact text block for Claude."""
+    team  = TEAMS.get(team_key, {})
+    info  = _period_info(period_key)
+    lines = [
+        f"SE Scorecard data — team: {team.get('label', team_key)}, period: {info['label']}",
+        f"Total SEs: {len(ses)}",
+        "",
+    ]
+    for se in ses:
+        lines.append(f"SE: {se['name']} | title: {se.get('title','')} | email: {se.get('email','')}")
+        lines.append(f"  Rank: {se.get('rank','?')} | Tier: {se.get('tier','?')} | Total iACV: ${se.get('total_icav',0):,}")
+        lines.append(f"  Activate wins: {se.get('act_wins',0)} iACV ${se.get('act_icav',0):,} | Expansion wins: {se.get('exp_wins',0)} iACV ${se.get('exp_icav',0):,}")
+        lines.append(f"  Win rate: {se.get('win_rate',0)}% ({se.get('closed_won',0)}W/{se.get('closed_lost',0)}L)")
+        lines.append(f"  Largest deal: {se.get('largest_deal','')} (${se.get('largest_deal_value',0):,}) acct: {se.get('largest_deal_acct','')}")
+        # Top deals with notes
+        for opp in (se.get("tw_opps_detail") or [])[:10]:
+            notes_flag = "[has_notes]" if opp.get("has_notes") else "[no_notes]"
+            history_flag = "[has_history]" if opp.get("has_history") else "[no_history]"
+            lines.append(f"    deal: {opp.get('name','')} | product: {opp.get('product','')} | iACV: ${opp.get('icav',0):,} | close: {opp.get('close_date','')} | motion: {opp.get('motion','')} | {notes_flag} {history_flag} | note_entries: {opp.get('note_entries',0)} | notes_len: {opp.get('notes_len',0)}")
+        # Expansion account detail
+        for acct in (se.get("exp_account_detail") or [])[:5]:
+            lines.append(f"    exp_acct: {acct.get('acct_name','')} | ARR: ${acct.get('arr',0):,} | MRR delta: ${acct.get('mrr_delta',0):,}/mo | MRR%: {acct.get('mrr_pct',0)}%")
+        roast = se.get("roast", "")
+        if roast:
+            lines.append(f"  Summary: {roast}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/chat", methods=["POST"])
+def api_chat():
+    """AI chatbot — answers questions about the Salesforce SE scorecard data."""
+    if not _ANTHROPIC_API_KEY:
+        return jsonify({"error": "AI chatbot is not configured (missing ANTHROPIC_API_KEY)."}), 503
+
+    body       = request.get_json(silent=True) or {}
+    message    = (body.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+    if len(message) > 2000:
+        return jsonify({"error": "message too long (max 2000 chars)"}), 400
+
+    team_key    = body.get("team", _DEFAULT_TEAM)
+    period_key  = body.get("period", _default_period())
+    icav_min, err = _parse_icav_min(body.get("icav_min"))
+    if err:
+        return jsonify({"error": err}), 400
+    subteam_key = body.get("subteam", "")
+
+    ses, err = _get_data(team_key, period_key, icav_min, subteam_key)
+    if err:
+        return jsonify({"error": f"Could not load data: {err}"}), 503
+    if not ses:
+        return jsonify({"answer": "No SE data is available for the selected team and period."}), 200
+
+    context = _build_chat_context(ses, team_key, period_key)
+
+    system_prompt = (
+        "You are an AI assistant embedded in the Twilio SE Scorecard dashboard. "
+        "You have access to Salesforce opportunity data for a team of Solutions Engineers. "
+        "Answer questions clearly and concisely using the data provided. "
+        "When summarising SE notes or call activity, base your answer on the note metadata "
+        "(notes_len, note_entries, has_notes, has_history) since full note text is not included. "
+        "Be professional and helpful. Format numbers with $ and K/M suffixes."
+    )
+
+    try:
+        import anthropic
+        client = anthropic.Anthropic(api_key=_ANTHROPIC_API_KEY)
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=1024,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": f"Here is the current SE scorecard data:\n\n{context}\n\nQuestion: {message}"},
+            ],
+        )
+        answer = resp.content[0].text if resp.content else "No response generated."
+        return jsonify({"answer": answer})
+    except Exception as e:
+        log.error("Chat API error: %s", e)
+        return jsonify({"error": "AI request failed. Please try again."}), 503
+
+
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")
 def api_rankings():
     team_key    = request.args.get("team", _DEFAULT_TEAM)
