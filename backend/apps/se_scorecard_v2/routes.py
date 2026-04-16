@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import boto3
+import requests as http_requests
 from flask import Blueprint, jsonify, request, session
 
 from salesforce import sf
@@ -710,30 +710,34 @@ def api_report():
 # write syncs back to S3, so data survives redeploys too.
 # ---------------------------------------------------------------------------
 
-_SUGGESTIONS_FILE   = OUTPUT_DIR / "suggestions.json"
-_SUGGESTIONS_BUCKET = os.environ.get("BUCKET", "kali-gtm-hub-deploy")
-_SUGGESTIONS_REGION = os.environ.get("REGION", "us-west-2")
-_SUGGESTIONS_PROFILE = os.environ.get("PROFILE")
-_SUGGESTIONS_KEY    = "suggestions/se-scorecard-v2.json"
-_SUGGESTIONS_MAX    = 500
-
-
-def _s3_client():
-    if _SUGGESTIONS_PROFILE:
-        boto_session = boto3.Session(profile_name=_SUGGESTIONS_PROFILE, region_name=_SUGGESTIONS_REGION)
-        return boto_session.client("s3")
-    return boto3.client("s3", region_name=_SUGGESTIONS_REGION)
+_SUGGESTIONS_FILE    = OUTPUT_DIR / "suggestions.json"
+_SUGGESTIONS_MAX     = 500
+_SUGGESTIONS_PUT_URL = os.environ.get("SUGGESTIONS_PUT_URL")   # pre-signed PUT URL, injected at deploy time
+_SUGGESTIONS_PROFILE = os.environ.get("PROFILE")               # set in deploy.env for local dev only
 
 
 def _s3_sync(items: list) -> None:
-    """Best-effort push to S3 — never raises, so a sync failure doesn't block the response."""
+    """Best-effort push to S3. Uses pre-signed PUT URL (production) or boto3 profile (local dev)."""
+    body = json.dumps(items, ensure_ascii=False, indent=2).encode("utf-8")
     try:
-        _s3_client().put_object(
-            Bucket=_SUGGESTIONS_BUCKET,
-            Key=_SUGGESTIONS_KEY,
-            Body=json.dumps(items, ensure_ascii=False, indent=2).encode("utf-8"),
-            ContentType="application/json",
-        )
+        if _SUGGESTIONS_PUT_URL:
+            resp = http_requests.put(
+                _SUGGESTIONS_PUT_URL,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                timeout=5,
+            )
+            if not resp.ok:
+                log.warning("S3 presigned PUT failed: %s %s", resp.status_code, resp.text[:200])
+        elif _SUGGESTIONS_PROFILE:
+            import boto3
+            boto_session = boto3.Session(profile_name=_SUGGESTIONS_PROFILE, region_name=os.environ.get("REGION", "us-west-2"))
+            boto_session.client("s3").put_object(
+                Bucket=os.environ.get("BUCKET", "kali-gtm-hub-deploy"),
+                Key="suggestions/se-scorecard-v2.json",
+                Body=body,
+                ContentType="application/json",
+            )
     except Exception as e:
         log.warning("S3 sync failed (suggestions still saved locally): %s", e)
 

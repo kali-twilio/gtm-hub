@@ -111,6 +111,7 @@ SECRET_KEY=${SECRET_KEY}
 FRONTEND_URL=https://${DOMAIN}
 BUCKET=${BUCKET}
 REGION=${REGION}
+SUGGESTIONS_PUT_URL=${SUGGESTIONS_PUT_URL}
 SALESFORCE_INSTANCE_URL=${SALESFORCE_INSTANCE_URL:-}
 SALESFORCE_CLIENT_ID=${SALESFORCE_CLIENT_ID:-}
 SALESFORCE_CLIENT_SECRET=${SALESFORCE_CLIENT_SECRET:-}
@@ -139,9 +140,13 @@ BACKEND_URL_S3=$(aws s3 presign  s3://$BUCKET/backend.tar.gz   --profile "$PROFI
 FRONTEND_URL_S3=$(aws s3 presign s3://$BUCKET/frontend.tar.gz  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
 SECRETS_URL_S3=$(aws s3 presign  s3://$BUCKET/secrets.env      --profile "$PROFILE" --region "$REGION" --expires-in $SECRETS_EXPIRES)
 
-# Pre-signed URL to seed suggestions at boot (empty JSON array if key doesn't exist yet)
-SUGGESTIONS_URL_S3=$(aws s3 presign s3://$BUCKET/suggestions/se-scorecard-v2.json \
+# Pre-signed URLs for suggestions: GET to seed at boot, PUT to sync back to S3 from instance
+# PUT URL valid for 7 days (604800s) — long enough to cover any reasonable deploy interval
+SUGGESTIONS_GET_URL=$(aws s3 presign s3://$BUCKET/suggestions/se-scorecard-v2.json \
   --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES 2>/dev/null || true)
+SUGGESTIONS_PUT_URL=$(aws s3 presign s3://$BUCKET/suggestions/se-scorecard-v2.json \
+  --profile "$PROFILE" --region "$REGION" --expires-in 604800 \
+  --http-method PUT 2>/dev/null || true)
 
 
 # ── 4. Build boot script (NO secret values — only a short-lived URL) ─────────
@@ -159,9 +164,9 @@ yum install -y python3 python3-pip nginx
 mkdir -p /app/outputs /var/www/scorecard
 cd /app
 
-# Seed suggestions from S3 so data survives redeploys (best-effort — no credentials needed)
-if [ -n '${SUGGESTIONS_URL_S3}' ]; then
-  curl -sf '${SUGGESTIONS_URL_S3}' -o /app/outputs/suggestions.json 2>/dev/null || true
+# Seed suggestions from S3 at boot so data survives redeploys
+if [ -n '${SUGGESTIONS_GET_URL}' ]; then
+  curl -sf '${SUGGESTIONS_GET_URL}' -o /app/outputs/suggestions.json 2>/dev/null || true
 fi
 
 curl -sL '${BACKEND_URL_S3}' -o /tmp/backend.tar.gz
