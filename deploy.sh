@@ -26,7 +26,7 @@ fi
 source deploy.env
 
 # Validate required vars
-for var in OWNER PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL; do
+for var in OWNER PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN; do
   if [ -z "${!var}" ]; then
     echo "ERROR: $var is not set in deploy.env"
     exit 1
@@ -145,6 +145,8 @@ BUCKET=${BUCKET}
 REGION=${REGION}
 FIRESTORE_PROJECT=${FIRESTORE_PROJECT}
 FIRESTORE_CREDENTIALS_B64=${FIRESTORE_CREDENTIALS_B64}
+TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
 SALESFORCE_INSTANCE_URL=${SALESFORCE_INSTANCE_URL:-}
 SALESFORCE_CLIENT_ID=${SALESFORCE_CLIENT_ID:-}
 SALESFORCE_CLIENT_SECRET=${SALESFORCE_CLIENT_SECRET:-}
@@ -345,7 +347,23 @@ aws ec2 associate-address \
 
 rm -f "$USERDATA_FILE"
 
-# ── 7. Delete secrets file from S3 once instance signals setup complete ───────
+# ── 7. Register Twilio SMS webhook ───────────────────────────────────────────
+WEBHOOK_URL="https://${DOMAIN}/api/se-scorecard-v2/sms"
+echo "Registering Twilio SMS webhook: $WEBHOOK_URL"
+_PHONE_SID=$(curl -s -u "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
+  "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers.json?PhoneNumber=%2B18446990268" \
+  | python3 -c "import sys,json; nums=json.load(sys.stdin).get('incoming_phone_numbers',[]); print(nums[0]['sid'] if nums else '')" 2>/dev/null)
+if [ -n "$_PHONE_SID" ]; then
+  curl -s -X POST -u "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
+    "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers/${_PHONE_SID}.json" \
+    --data-urlencode "SmsUrl=${WEBHOOK_URL}" \
+    --data-urlencode "SmsMethod=POST" > /dev/null
+  echo "Webhook registered on phone SID ${_PHONE_SID}."
+else
+  echo "Warning: could not find phone number SID — set webhook manually in Twilio console to ${WEBHOOK_URL}"
+fi
+
+# ── 8. Delete secrets file from S3 once instance is booted ────────────────── once instance signals setup complete ───────
 # Instance is running — give it 3 min to finish downloading secrets, then delete
 echo "Waiting 3 minutes for instance to fetch secrets, then cleaning up S3..."
 sleep 180

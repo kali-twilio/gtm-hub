@@ -73,6 +73,7 @@ export interface Suggestion {
   id:         string;
   text:       string;
   author:     string;
+  source:     'web' | 'sms';
   created_at: string;
   is_mine:    boolean;
 }

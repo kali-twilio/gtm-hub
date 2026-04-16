@@ -716,6 +716,10 @@ _FIRESTORE_CREDENTIALS  = os.environ.get("FIRESTORE_CREDENTIALS_B64")  # base64-
 _FIRESTORE_COLLECTION   = "se-scorecard-v2-suggestions"
 _firestore_client       = None
 
+_TWILIO_ACCOUNT_SID     = os.environ.get("TWILIO_ACCOUNT_SID")
+_TWILIO_AUTH_TOKEN      = os.environ.get("TWILIO_AUTH_TOKEN")
+_TWILIO_PHONE_NUMBER    = "+18446990268"
+
 
 def _get_firestore():
     global _firestore_client
@@ -745,6 +749,42 @@ def _masked(email: str) -> str:
     return email.split("@")[0] if email else "anonymous"
 
 
+def _lookup_caller_name(phone: str) -> str | None:
+    """Use Twilio Lookup to get a caller name for a phone number. Returns None on failure."""
+    if not (_TWILIO_ACCOUNT_SID and _TWILIO_AUTH_TOKEN):
+        return None
+    try:
+        resp = http_requests.get(
+            f"https://lookups.twilio.com/v2/PhoneNumbers/{phone}",
+            params={"Fields": "caller_name"},
+            auth=(_TWILIO_ACCOUNT_SID, _TWILIO_AUTH_TOKEN),
+            timeout=5,
+        )
+        if resp.ok:
+            data = resp.json()
+            name = (data.get("caller_name") or {}).get("caller_name")
+            if name and name.strip():
+                return name.strip().title()
+    except Exception as e:
+        log.warning("Twilio Lookup failed for %s: %s", phone, e)
+    return None
+
+
+def _display_author(doc: dict) -> str:
+    """Return display name: email prefix, Lookup name, or formatted phone."""
+    source = doc.get("source", "web")
+    if source == "sms":
+        phone = doc.get("phone", "")
+        name = doc.get("caller_name")
+        if name:
+            return name
+        # Format +18005551234 → (800) 555-1234
+        if phone.startswith("+1") and len(phone) == 12:
+            return f"({phone[2:5]}) {phone[5:8]}-{phone[8:]}"
+        return phone or "SMS"
+    return _masked(doc.get("email", ""))
+
+
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/suggestions", methods=["GET"])
 def api_suggestions_list():
     current_email = session.get("user_email", "")
@@ -759,7 +799,8 @@ def api_suggestions_list():
             items.append({
                 "id":         doc.id,
                 "text":       s.get("text", ""),
-                "author":     _masked(s.get("email", "")),
+                "author":     _display_author(s),
+                "source":     s.get("source", "web"),
                 "created_at": s.get("created_at", ""),
                 "is_mine":    s.get("email", "") == current_email,
             })
@@ -792,12 +833,14 @@ def api_suggestions_create():
         db.collection(_FIRESTORE_COLLECTION).document(doc_id).set({
             "email":      email,
             "text":       text,
+            "source":     "web",
             "created_at": created_at,
         })
         return jsonify({
             "id":         doc_id,
             "text":       text,
             "author":     _masked(email),
+            "source":     "web",
             "created_at": created_at,
             "is_mine":    True,
         }), 201
@@ -826,6 +869,69 @@ def api_suggestions_delete(suggestion_id: str):
     except Exception as e:
         log.error("Firestore delete failed: %s", e)
         return jsonify({"error": "Failed to delete suggestion"}), 503
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/sms", methods=["POST"])
+def api_sms_webhook():
+    """Twilio SMS webhook — saves inbound texts as suggestions."""
+    # Validate the request came from Twilio
+    if _TWILIO_AUTH_TOKEN:
+        from twilio.request_validator import RequestValidator
+        validator = RequestValidator(_TWILIO_AUTH_TOKEN)
+        url = request.url
+        # Behind CloudFront/nginx the scheme may be http internally; use https
+        if url.startswith("http://"):
+            url = "https://" + url[7:]
+        sig = request.headers.get("X-Twilio-Signature", "")
+        if not validator.validate(url, request.form, sig):
+            log.warning("Twilio signature validation failed")
+            return "Forbidden", 403
+
+    from_number = request.form.get("From", "").strip()
+    body = request.form.get("Body", "").strip()
+
+    if not from_number or not body:
+        return _twiml_reply("No message body received.")
+
+    if len(body) > 1000:
+        return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
+
+    db = _get_firestore()
+    if db is None:
+        log.error("Firestore unavailable for SMS suggestion from %s", from_number)
+        return _twiml_reply("Sorry, we couldn't save your suggestion right now. Please try again later.")
+
+    try:
+        count = len(db.collection(_FIRESTORE_COLLECTION).limit(_SUGGESTIONS_MAX + 1).get())
+        if count >= _SUGGESTIONS_MAX:
+            return _twiml_reply("Sorry, we've reached our suggestion limit for now. Thank you for your interest!")
+
+        # Try Twilio Lookup for caller name
+        caller_name = _lookup_caller_name(from_number)
+
+        doc_id = str(uuid.uuid4())
+        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        doc = {
+            "phone":      from_number,
+            "text":       body,
+            "source":     "sms",
+            "created_at": created_at,
+        }
+        if caller_name:
+            doc["caller_name"] = caller_name
+        db.collection(_FIRESTORE_COLLECTION).document(doc_id).set(doc)
+        log.info("SMS suggestion saved from %s (%s)", from_number, caller_name or "unknown")
+        return _twiml_reply("Thanks for your suggestion! We'll review it soon.")
+    except Exception as e:
+        log.error("Firestore SMS save failed: %s", e)
+        return _twiml_reply("Sorry, something went wrong. Please try again.")
+
+
+def _twiml_reply(message: str):
+    """Return a minimal TwiML response."""
+    from flask import Response
+    twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{message}</Message></Response>'
+    return Response(twiml, mimetype="text/xml")
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")

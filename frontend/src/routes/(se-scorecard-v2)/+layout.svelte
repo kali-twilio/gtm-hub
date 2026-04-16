@@ -39,6 +39,17 @@
       title="Click for a surprise"
     >SE Scorecard</button>
     <SuggestionBox />
+    <div style="width:1px;height:22px;background:{p5 ? 'rgba(232,0,61,0.3)' : 'rgba(13,18,43,0.12)'}"></div>
+    <a
+      href="sms:+18446990268"
+      title="Text us a suggestion"
+      style="display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;color:{p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'};text-decoration:none;padding:2px 4px;border-radius:4px;transition:color 0.15s,background 0.15s"
+      onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color='var(--red)'; el.style.background=p5?'rgba(232,0,61,0.1)':'rgba(242,47,70,0.07)'; }}
+      onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color=p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'; el.style.background='none'; }}
+    >
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style="opacity:0.8"><rect x="1" y="2" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.4"/><path d="M4 14l2-2h6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+      (844) 699-0268
+    </a>
   </div>
 </div>
 
