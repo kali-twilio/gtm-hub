@@ -10,7 +10,7 @@
 
   let teams: Team[] = $state([]);
   let periods: Period[] = $state([]);
-  let summary: { total: number; team_icav: number; team_wins: number; team_arr: number; team_label: string; quarter: string; se_icav_pct: number | null } | null = $state(null);
+  let summary: { total: number; team_icav: number; team_wins: number; team_arr: number; team_label: string; quarter: string; se_icav_pct: number | null; team_total_icav: number | null } | null = $state(null);
   let loading = $state(false);
   let showLoading = $state(false);
   let error = $state('');
@@ -26,7 +26,7 @@
     const r = await fetch(`/api/se-scorecard-v2/data/report?team=${teamKey}&period=${periodKey}${sub}`);
     if (r.ok) {
       const d = await r.json();
-      summary = { total: d.total, team_icav: d.team_icav, team_wins: d.team_wins, team_arr: d.team_arr ?? 0, team_label: d.team_label, quarter: d.quarter, se_icav_pct: d.se_icav_pct ?? null };
+      summary = { total: d.total, team_icav: d.team_icav, team_wins: d.team_wins, team_arr: d.team_arr ?? 0, team_label: d.team_label, quarter: d.quarter, se_icav_pct: d.se_icav_pct ?? null, team_total_icav: d.team_total_icav ?? null };
     } else {
       const d = await r.json().catch(() => ({}));
       error = d.error || 'Failed to load data.';
@@ -186,13 +186,18 @@
 
   <!-- Summary stats -->
   {@const summaryStats = [
-    { label: 'SE-Influenced iACV', val: fmt(summary.team_icav) },
-    ...(summary.se_icav_pct !== null ? [{ label: 'SE Impact %', val: summary.se_icav_pct + '%' }] : []),
-    ...(summary.team_arr > 0 ? [{ label: 'Acct ARR', val: fmt(summary.team_arr) }] : []),
-    { label: 'TW Closed Won', val: String(summary.team_wins) },
-    { label: 'SEs',           val: String(summary.total) },
+    ...(summary.team_arr > 0 ? [{ label: 'Acct ARR', val: fmt(summary.team_arr), sub: null }] : []),
+    { label: 'TW Closed Won', val: String(summary.team_wins), sub: null },
+    { label: 'SEs',           val: String(summary.total),     sub: null },
   ]}
-  <div class="w-full hub-container" style="display:grid;grid-template-columns:repeat({summaryStats.length}, 1fr);gap:8px;margin-bottom:20px">
+  <div class="w-full hub-container" style="display:grid;grid-template-columns:repeat({summaryStats.length + 1}, 1fr);gap:8px;margin-bottom:20px">
+    <div class="p5-stat-chip" style="text-align:center">
+      <div style="font-size:9px;color:var(--red);font-weight:800;text-transform:uppercase;letter-spacing:0.2em;margin-bottom:6px">Total SE iACV</div>
+      <div style="font-size:26px;font-weight:900;color:var(--text);line-height:1">{fmt(summary.team_icav)}</div>
+      {#if summary.se_icav_pct !== null && summary.team_total_icav !== null}
+      <div style="font-size:11px;color:var(--text-muted);font-weight:600;margin-top:5px">{summary.se_icav_pct}% · {fmt(summary.team_total_icav)} total</div>
+      {/if}
+    </div>
     {#each summaryStats as s}
     <div class="p5-stat-chip" style="text-align:center">
       <div style="font-size:9px;color:var(--red);font-weight:800;text-transform:uppercase;letter-spacing:0.2em;margin-bottom:6px">{s.label}</div>
