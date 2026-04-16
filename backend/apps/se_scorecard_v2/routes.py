@@ -704,55 +704,41 @@ def api_report():
 
 
 # ---------------------------------------------------------------------------
-# Suggestion box
-# Writes to a local JSON file (survives process restarts within the same
-# instance). The deploy script seeds the file from S3 at boot, and every
-# write syncs back to S3, so data survives redeploys too.
+# Suggestion box — backed by Google Firestore (twilio-ckbrox project)
+# FIRESTORE_PROJECT and FIRESTORE_CREDENTIALS (service account JSON, single
+# line) are injected via secrets.env at deploy time and backend/apps/
+# se_scorecard_v2/.env for local dev.
 # ---------------------------------------------------------------------------
 
-_SUGGESTIONS_FILE    = OUTPUT_DIR / "suggestions.json"
-_SUGGESTIONS_MAX     = 500
-_SUGGESTIONS_PUT_URL = os.environ.get("SUGGESTIONS_PUT_URL")   # pre-signed PUT URL, injected at deploy time
-_SUGGESTIONS_PROFILE = os.environ.get("PROFILE")               # set in deploy.env for local dev only
+_SUGGESTIONS_MAX        = 500
+_FIRESTORE_PROJECT      = os.environ.get("FIRESTORE_PROJECT")
+_FIRESTORE_CREDENTIALS  = os.environ.get("FIRESTORE_CREDENTIALS_B64")  # base64-encoded JSON
+_FIRESTORE_COLLECTION   = "se-scorecard-v2-suggestions"
+_firestore_client       = None
 
 
-def _s3_sync(items: list) -> None:
-    """Best-effort push to S3. Uses pre-signed PUT URL (production) or boto3 profile (local dev)."""
-    body = json.dumps(items, ensure_ascii=False, indent=2).encode("utf-8")
+def _get_firestore():
+    global _firestore_client
+    if _firestore_client is not None:
+        return _firestore_client
     try:
-        if _SUGGESTIONS_PUT_URL:
-            resp = http_requests.put(
-                _SUGGESTIONS_PUT_URL,
-                data=body,
-                headers={"Content-Type": "application/json"},
-                timeout=5,
+        from google.cloud import firestore
+        from google.oauth2 import service_account
+        if _FIRESTORE_CREDENTIALS:
+            import base64
+            info = json.loads(base64.b64decode(_FIRESTORE_CREDENTIALS).decode())
+            creds = service_account.Credentials.from_service_account_info(
+                info,
+                scopes=["https://www.googleapis.com/auth/datastore"],
             )
-            if not resp.ok:
-                log.warning("S3 presigned PUT failed: %s %s", resp.status_code, resp.text[:200])
-        elif _SUGGESTIONS_PROFILE:
-            import boto3
-            boto_session = boto3.Session(profile_name=_SUGGESTIONS_PROFILE, region_name=os.environ.get("REGION", "us-west-2"))
-            boto_session.client("s3").put_object(
-                Bucket=os.environ.get("BUCKET", "kali-gtm-hub-deploy"),
-                Key="suggestions/se-scorecard-v2.json",
-                Body=body,
-                ContentType="application/json",
-            )
+            _firestore_client = firestore.Client(project=_FIRESTORE_PROJECT, credentials=creds)
+        else:
+            # Local dev fallback: use gcloud application default credentials
+            _firestore_client = firestore.Client(project=_FIRESTORE_PROJECT)
+        return _firestore_client
     except Exception as e:
-        log.warning("S3 sync failed (suggestions still saved locally): %s", e)
-
-
-def _load_suggestions() -> list:
-    if not _SUGGESTIONS_FILE.exists():
-        return []
-    return json.loads(_SUGGESTIONS_FILE.read_text(encoding="utf-8"))
-
-
-def _save_suggestions(items: list) -> None:
-    tmp = _SUGGESTIONS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(_SUGGESTIONS_FILE)
-    _s3_sync(items)
+        log.error("Firestore init failed: %s", e)
+        return None
 
 
 def _masked(email: str) -> str:
@@ -762,14 +748,25 @@ def _masked(email: str) -> str:
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/suggestions", methods=["GET"])
 def api_suggestions_list():
     current_email = session.get("user_email", "")
-    items = _load_suggestions()
-    return jsonify([{
-        "id":         s["id"],
-        "text":       s["text"],
-        "author":     _masked(s["email"]),
-        "created_at": s["created_at"],
-        "is_mine":    s["email"] == current_email,
-    } for s in items])
+    db = _get_firestore()
+    if db is None:
+        return jsonify({"error": "Storage unavailable"}), 503
+    try:
+        docs = db.collection(_FIRESTORE_COLLECTION).order_by("created_at", direction="DESCENDING").stream()
+        items = []
+        for doc in docs:
+            s = doc.to_dict()
+            items.append({
+                "id":         doc.id,
+                "text":       s.get("text", ""),
+                "author":     _masked(s.get("email", "")),
+                "created_at": s.get("created_at", ""),
+                "is_mine":    s.get("email", "") == current_email,
+            })
+        return jsonify(items)
+    except Exception as e:
+        log.error("Firestore list failed: %s", e)
+        return jsonify({"error": "Failed to load suggestions"}), 503
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/suggestions", methods=["POST"])
@@ -783,24 +780,30 @@ def api_suggestions_create():
         return jsonify({"error": "text is required"}), 400
     if len(text) > 1000:
         return jsonify({"error": "text too long (max 1000 chars)"}), 400
-    items = _load_suggestions()
-    if len(items) >= _SUGGESTIONS_MAX:
-        return jsonify({"error": "Suggestion limit reached"}), 429
-    item = {
-        "id":         str(uuid.uuid4()),
-        "email":      email,
-        "text":       text,
-        "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-    }
-    items.append(item)
-    _save_suggestions(items)
-    return jsonify({
-        "id":         item["id"],
-        "text":       item["text"],
-        "author":     _masked(email),
-        "created_at": item["created_at"],
-        "is_mine":    True,
-    }), 201
+    db = _get_firestore()
+    if db is None:
+        return jsonify({"error": "Storage unavailable"}), 503
+    try:
+        count = len(db.collection(_FIRESTORE_COLLECTION).limit(_SUGGESTIONS_MAX + 1).get())
+        if count >= _SUGGESTIONS_MAX:
+            return jsonify({"error": "Suggestion limit reached"}), 429
+        doc_id = str(uuid.uuid4())
+        created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        db.collection(_FIRESTORE_COLLECTION).document(doc_id).set({
+            "email":      email,
+            "text":       text,
+            "created_at": created_at,
+        })
+        return jsonify({
+            "id":         doc_id,
+            "text":       text,
+            "author":     _masked(email),
+            "created_at": created_at,
+            "is_mine":    True,
+        }), 201
+    except Exception as e:
+        log.error("Firestore create failed: %s", e)
+        return jsonify({"error": "Failed to save suggestion"}), 503
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/suggestions/<suggestion_id>", methods=["DELETE"])
@@ -808,15 +811,21 @@ def api_suggestions_delete(suggestion_id: str):
     email = session.get("user_email", "")
     if not email:
         return jsonify({"error": "Unauthorized"}), 401
-    items = _load_suggestions()
-    match = next((s for s in items if s["id"] == suggestion_id), None)
-    if not match:
-        return jsonify({"error": "Not found"}), 404
-    if match["email"] != email:
-        return jsonify({"error": "Forbidden"}), 403
-    items = [s for s in items if s["id"] != suggestion_id]
-    _save_suggestions(items)
-    return "", 204
+    db = _get_firestore()
+    if db is None:
+        return jsonify({"error": "Storage unavailable"}), 503
+    try:
+        ref = db.collection(_FIRESTORE_COLLECTION).document(suggestion_id)
+        doc = ref.get()
+        if not doc.exists:
+            return jsonify({"error": "Not found"}), 404
+        if doc.to_dict().get("email") != email:
+            return jsonify({"error": "Forbidden"}), 403
+        ref.delete()
+        return "", 204
+    except Exception as e:
+        log.error("Firestore delete failed: %s", e)
+        return jsonify({"error": "Failed to delete suggestion"}), 503
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")

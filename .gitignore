@@ -18,6 +18,9 @@ __pycache__/
 # Temp files
 /tmp/
 
+# Suggestion processing logs (contain email addresses and suggestion content)
+process_suggestions.log
+
 # Deployment secrets — copy deploy.env.example to deploy.env and fill in values
 deploy.env
 
