@@ -99,6 +99,34 @@ export async function deleteSuggestion(id: string): Promise<boolean> {
   return r.ok;
 }
 
+// ---------------------------------------------------------------------------
+// Manager notes — per-SE notes stored in Firestore, scoped to team+period
+// ---------------------------------------------------------------------------
+
+export interface ManagerNote {
+  id:          string;
+  se_name:     string;
+  note:        string;
+  updated_at:  string;
+  updated_by:  string;
+}
+
+export async function getManagerNotes(team: string, period: string): Promise<ManagerNote[]> {
+  const r = await fetch(`/api/se-scorecard-v2/manager-notes?team=${encodeURIComponent(team)}&period=${encodeURIComponent(period)}`);
+  if (!r.ok) return [];
+  return r.json();
+}
+
+export async function upsertManagerNote(team: string, period: string, se_name: string, note: string): Promise<ManagerNote | null> {
+  const r = await fetch('/api/se-scorecard-v2/manager-notes', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ team, period, se_name, note }),
+  });
+  if (!r.ok) return null;
+  return r.json();
+}
+
 export function fmt(n: number): string {
   if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;

@@ -5,6 +5,7 @@ Current quarter: 10-minute TTL. Historical quarters/years: 1-week TTL.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -1172,6 +1173,110 @@ def api_sms_webhook():
     preview = body[:80] + ("..." if len(body) > 80 else "")
     _sms_pending[from_number] = (body, lookup["caller_name"], time.time() + _SMS_CONFIRM_TTL)
     return _twiml_reply(f'Confirm your suggestion? Reply Y to save or N to cancel:\n"{preview}"')
+
+
+_MANAGER_NOTES_COLLECTION = "se-scorecard-v2-manager-notes"
+_NOTE_MAX_LEN = 4000
+
+
+def _note_doc_id(team: str, period: str, se_name: str) -> str:
+    """Stable document ID scoped to team + period + SE name."""
+    key = f"{team}|{period}|{se_name}"
+    return hashlib.sha256(key.encode()).hexdigest()[:32]
+
+
+def _validate_team_period(team_key: str, period_key: str):
+    """Return (team_key, period_key, error) after sanitising inputs."""
+    if team_key not in TEAMS:
+        return None, None, f"Unknown team '{team_key}'"
+    if not re.match(r"^\d{4}_(Q[1-4]|FY)$", period_key):
+        return None, None, "Invalid period format"
+    return team_key, period_key, None
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/manager-notes", methods=["GET"])
+def api_manager_notes_list():
+    email = session.get("user_email", "")
+    if not email:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    team_key   = request.args.get("team", "")
+    period_key = request.args.get("period", "")
+    team_key, period_key, err = _validate_team_period(team_key, period_key)
+    if err:
+        return jsonify({"error": err}), 400
+
+    db = _get_firestore()
+    if db is None:
+        return jsonify({"error": "Storage unavailable"}), 503
+
+    try:
+        docs = (db.collection(_MANAGER_NOTES_COLLECTION)
+                  .where("team", "==", team_key)
+                  .where("period", "==", period_key)
+                  .stream())
+        items = []
+        for doc in docs:
+            d = doc.to_dict()
+            items.append({
+                "id":         doc.id,
+                "se_name":    d.get("se_name", ""),
+                "note":       d.get("note", ""),
+                "updated_at": d.get("updated_at", ""),
+                "updated_by": _masked(d.get("updated_by", "")),
+            })
+        return jsonify(items)
+    except Exception as e:
+        log.error("Firestore manager notes list failed: %s", e)
+        return jsonify({"error": "Failed to load notes"}), 503
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/manager-notes", methods=["PUT"])
+def api_manager_notes_upsert():
+    email = session.get("user_email", "")
+    if not email:
+        return jsonify({"error": "Unauthorized"}), 401
+
+    body = request.get_json(silent=True) or {}
+    team_key   = (body.get("team")   or "").strip()
+    period_key = (body.get("period") or "").strip()
+    se_name    = (body.get("se_name") or "").strip()
+    note       = (body.get("note")    or "").strip()
+
+    team_key, period_key, err = _validate_team_period(team_key, period_key)
+    if err:
+        return jsonify({"error": err}), 400
+    if not se_name:
+        return jsonify({"error": "se_name is required"}), 400
+    if len(note) > _NOTE_MAX_LEN:
+        return jsonify({"error": f"note too long (max {_NOTE_MAX_LEN} chars)"}), 400
+
+    db = _get_firestore()
+    if db is None:
+        return jsonify({"error": "Storage unavailable"}), 503
+
+    try:
+        doc_id     = _note_doc_id(team_key, period_key, se_name)
+        updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        payload    = {
+            "team":       team_key,
+            "period":     period_key,
+            "se_name":    se_name,
+            "note":       note,
+            "updated_at": updated_at,
+            "updated_by": email,
+        }
+        db.collection(_MANAGER_NOTES_COLLECTION).document(doc_id).set(payload)
+        return jsonify({
+            "id":         doc_id,
+            "se_name":    se_name,
+            "note":       note,
+            "updated_at": updated_at,
+            "updated_by": _masked(email),
+        })
+    except Exception as e:
+        log.error("Firestore manager notes upsert failed: %s", e)
+        return jsonify({"error": "Failed to save note"}), 503
 
 
 def _twiml_reply(message: str):

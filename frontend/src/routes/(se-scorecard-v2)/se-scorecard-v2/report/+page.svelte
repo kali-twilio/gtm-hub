@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getSFReport, fmt, fmtMrr } from '$lib/api';
+  import { getSFReport, fmt, fmtMrr, getManagerNotes, upsertManagerNote, type ManagerNote } from '$lib/api';
   import { theme, sfTeam, sfPeriod, sfSubteam, user } from '$lib/stores';
   import { tc, fc } from '$lib/colors';
 
@@ -333,6 +333,7 @@ const actStatCols = $derived(data ? [
     { id: 'notes',     label: 'Notes Quality',   show: !notesFilter },
     { id: 'trends',    label: 'Trends & Flags' },
     { id: 'recs',      label: 'Recommendations', show: !!(data.recommendations?.length) },
+    { id: 'mgr-notes', label: 'Manager Notes' },
     { id: 'profiles',  label: 'SE Profiles' },
   ].filter((s: any) => s.show !== false) : []);
 
@@ -376,11 +377,48 @@ const actStatCols = $derived(data ? [
     if (min === icavMin) return;
     icavMin = min;
     icavLoading = true;
-    data = await getSFReport($sfTeam, $sfPeriod, min, $sfSubteam);
+    [data] = await Promise.all([
+      getSFReport($sfTeam, $sfPeriod, min, $sfSubteam),
+      loadNotes(),
+    ]);
     icavLoading = false;
   }
 
-  onMount(async () => { data = await getSFReport($sfTeam, $sfPeriod, icavMin, $sfSubteam); });
+  // Manager notes
+  let managerNotes = $state<ManagerNote[]>([]);
+  let editingNote  = $state<string | null>(null);   // se_name being edited
+  let editDraft    = $state('');
+  let noteSaving   = $state(false);
+
+  function noteFor(seName: string): ManagerNote | undefined {
+    return managerNotes.find(n => n.se_name === seName);
+  }
+
+  function startEditNote(seName: string) {
+    editingNote = seName;
+    editDraft   = noteFor(seName)?.note ?? '';
+  }
+
+  async function saveNote(seName: string) {
+    noteSaving = true;
+    const saved = await upsertManagerNote($sfTeam, $sfPeriod, seName, editDraft);
+    if (saved) {
+      const idx = managerNotes.findIndex(n => n.se_name === seName);
+      if (idx >= 0) managerNotes[idx] = saved;
+      else managerNotes = [...managerNotes, saved];
+    }
+    editingNote = null;
+    noteSaving  = false;
+  }
+
+  async function loadNotes() {
+    managerNotes = await getManagerNotes($sfTeam, $sfPeriod);
+  }
+
+  onMount(async () => {
+    data = await getSFReport($sfTeam, $sfPeriod, icavMin, $sfSubteam);
+    loadNotes();
+  });
 </script>
 
 {#if $user?.sf_access === 'se_restricted'}
@@ -1156,6 +1194,62 @@ const actStatCols = $derived(data ? [
     </div>
   </div>
   {/if}
+
+  <!-- Manager Notes -->
+  <div id="mgr-notes" class="p5-panel" style="margin-bottom:20px">
+    <div class="p5-panel-header">
+      <h2 class="p5-panel-header-title">Manager Notes</h2>
+    </div>
+    <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">
+      Private notes per SE for this period — synced with SE-level account context. Visible to all managers viewing this report.
+    </div>
+    <div style="padding:12px 16px;display:flex;flex-direction:column;gap:8px">
+      {#each filteredRanked as se}
+      {@const existing = noteFor(se.name)}
+      {@const isEditing = editingNote === se.name}
+      <div style="border:1px solid rgba(var(--red-rgb),{isEditing?'0.25':'0.08'});border-radius:6px;padding:12px 14px;background:rgba(var(--red-rgb),{isEditing?'0.04':'0.01'});transition:background 0.15s">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+          <div style="flex:1">
+            <div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:4px">{se.name}
+              {#if existing?.updated_at}
+              <span style="font-size:10px;font-weight:400;color:var(--text-faint);margin-left:8px">last updated {existing.updated_at.slice(0,10)} by {existing.updated_by}</span>
+              {/if}
+            </div>
+            {#if isEditing}
+            <textarea
+              bind:value={editDraft}
+              rows="4"
+              style="width:100%;box-sizing:border-box;background:{$theme==='twilio'?'#fff':'#1a1a2e'};color:var(--text);border:1px solid rgba(var(--red-rgb),0.3);border-radius:4px;padding:8px 10px;font-size:13px;line-height:1.5;resize:vertical;outline:none;font-family:inherit"
+              placeholder="Add notes about this SE's open opportunities, pipeline context, coaching focus…"
+            ></textarea>
+            <div style="display:flex;gap:8px;margin-top:6px">
+              <button
+                onclick={() => saveNote(se.name)}
+                disabled={noteSaving}
+                style="padding:5px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;background:var(--red);color:#fff;border:none;border-radius:4px;cursor:pointer;opacity:{noteSaving?0.6:1}"
+              >{noteSaving ? 'Saving…' : 'Save'}</button>
+              <button
+                onclick={() => { editingNote = null; }}
+                style="padding:5px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;background:transparent;color:var(--text-muted);border:1px solid rgba(var(--red-rgb),0.2);border-radius:4px;cursor:pointer"
+              >Cancel</button>
+            </div>
+            {:else if existing?.note}
+            <div style="font-size:13px;color:var(--text-muted);line-height:1.6;white-space:pre-wrap">{existing.note}</div>
+            {:else}
+            <div style="font-size:12px;color:var(--text-faint);font-style:italic">No notes yet</div>
+            {/if}
+          </div>
+          {#if !isEditing}
+          <button
+            onclick={() => startEditNote(se.name)}
+            style="flex-shrink:0;padding:4px 10px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;background:transparent;color:var(--text-muted);border:1px solid rgba(var(--red-rgb),0.2);border-radius:4px;cursor:pointer;white-space:nowrap"
+          >{existing?.note ? 'Edit' : '+ Add Note'}</button>
+          {/if}
+        </div>
+      </div>
+      {/each}
+    </div>
+  </div>
 
   <!-- SE Profiles grid -->
   <div id="profiles">
