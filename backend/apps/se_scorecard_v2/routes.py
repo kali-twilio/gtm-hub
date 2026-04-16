@@ -178,6 +178,7 @@ _DEFAULT_TEAM = "digital_sales"
 # ---------------------------------------------------------------------------
 
 _ICAV_FIELD = sf_analysis.FIELD_CONFIG["icav_field"]
+_EARR_FIELD = sf_analysis.FIELD_CONFIG["earr_field"]
 _TEAM_FIELD = sf_analysis.FIELD_CONFIG["team_field"]
 
 _QUARTER_ENDS   = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
@@ -241,7 +242,7 @@ def _build_soql(team_filter: str, start: str, end: str, icav_min: int = 0) -> st
     """All Closed Won opps. Presales_Stage__c included to tag TW vs non-TW."""
     icav_clause = f"AND {_ICAV_FIELD} >= {icav_min} " if icav_min > 0 else ""
     return (
-        f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, {_TEAM_FIELD}, Presales_Stage__c, "
+        f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, {_EARR_FIELD}, {_TEAM_FIELD}, Presales_Stage__c, "
         f"Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.Title, "
         f"Owner.Name, Owner.UserRole.Name, "
         f"Sales_Engineer_Notes__c, SE_Notes_History__c, "
@@ -779,6 +780,7 @@ def api_report():
         "total":            total,
         "icav_min":         icav_min,
         "team_icav":        se_icav,
+        "team_earr":        sum(s.get("total_earr", 0) for s in ses_list),
         "team_wins":        sum(s["act_wins"] + s["exp_wins"] for s in ses_list),
         "team_arr":         sum(s.get("exp_arr_total", 0) for s in ses_list),
         "team_total_icav":  team_total_icav,

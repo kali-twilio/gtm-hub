@@ -77,6 +77,8 @@ def _quarter_mrr_delta(acct: dict, close_date_str: str) -> tuple[int, int, int]:
 FIELD_CONFIG = {
     # iACV field on Opportunity (from dashboard: Comms_Segment_Combined_iACV__c)
     "icav_field": "Comms_Segment_Combined_iACV__c",
+    # eARR field on Opportunity — estimated Annual Recurring Revenue
+    "earr_field": "Comms_Segment_Combined_eARR__c",
 
     # SE is the Technical Lead on the opportunity (not the owner/AE)
     "se_name_field": "Technical_Lead__r.Name",
@@ -111,6 +113,14 @@ def fmt(amount):
 
 def _icav(opp: dict) -> int:
     val = opp.get(FIELD_CONFIG["icav_field"]) or 0
+    try:
+        return int(float(val))
+    except (TypeError, ValueError):
+        return 0
+
+
+def _earr(opp: dict) -> int:
+    val = opp.get(FIELD_CONFIG["earr_field"]) or 0
     try:
         return int(float(val))
     except (TypeError, ValueError):
@@ -245,7 +255,9 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
                 "email":          email,
                 "title":          _se_title(opp),
                 "act_icavs":      [],   # TW activate wins
+                "act_earrs":      [],   # TW activate wins eARR
                 "exp_icavs":      [],   # TW expansion wins
+                "exp_earrs":      [],   # TW expansion wins eARR
                 "non_tw_act_icavs": [], # non-TW activate wins
                 "non_tw_exp_icavs": [], # non-TW expansion wins
                 "all_opps":       [],
@@ -253,6 +265,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
             }
 
         icav  = _icav(opp)
+        earr  = _earr(opp)
         is_tw = opp.get("Presales_Stage__c") == "4 - Technical Win Achieved"
         by_se[name]["all_opps"].append(opp)
 
@@ -262,11 +275,14 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
         if is_tw:
             if is_act:
                 by_se[name]["act_icavs"].append(icav)
+                by_se[name]["act_earrs"].append(earr)
             elif is_exp:
                 by_se[name]["exp_icavs"].append(icav)
+                by_se[name]["exp_earrs"].append(earr)
                 by_se[name]["exp_tw_opps"].append(opp)
             else:
                 by_se[name]["act_icavs"].append(icav)  # fallback
+                by_se[name]["act_earrs"].append(earr)  # fallback
         else:
             if is_act:
                 by_se[name]["non_tw_act_icavs"].append(icav)
@@ -278,19 +294,24 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
     ses = []
     for name, d in by_se.items():
         act_icavs = d["act_icavs"]
+        act_earrs = d["act_earrs"]
         exp_icavs = d["exp_icavs"]
+        exp_earrs = d["exp_earrs"]
 
         act_wins   = len(act_icavs)
         act_icav   = sum(act_icavs)
+        act_earr   = sum(act_earrs)
         act_avg    = round(statistics.mean(act_icavs)) if act_icavs else 0
         act_median = round(statistics.median(act_icavs)) if act_icavs else 0
 
         exp_wins   = len(exp_icavs)
         exp_icav   = sum(exp_icavs)
+        exp_earr   = sum(exp_earrs)
         exp_avg    = round(statistics.mean(exp_icavs)) if exp_icavs else 0
         exp_median = round(statistics.median(exp_icavs)) if exp_icavs else 0
 
         total_icav = act_icav + exp_icav
+        total_earr = act_earr + exp_earr
 
         # Non-TW closed won (supplemental — not used for ranking)
         non_tw_act_icavs = d["non_tw_act_icavs"]
@@ -316,6 +337,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
             "owner":        ((opp.get("Owner") or {}).get("Name") or ""),
             "close_date":   opp.get("CloseDate") or "",
             "icav":         _icav(opp),
+            "earr":         _earr(opp),
             "motion":       _opp_motion(opp),
             "has_notes":    bool(opp.get("Sales_Engineer_Notes__c")),
             "has_history":  bool(opp.get("SE_Notes_History__c")),
@@ -445,10 +467,12 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
             "title":             d.get("title", ""),
             "act_wins":          act_wins,
             "act_icav":          act_icav,
+            "act_earr":          act_earr,
             "act_avg":           act_avg,
             "act_median":        act_median,
             "exp_wins":          exp_wins,
             "exp_icav":          exp_icav,
+            "exp_earr":          exp_earr,
             "exp_avg":           exp_avg,
             "exp_median":        exp_median,
             "top_dsr":           "",
@@ -494,6 +518,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
         }
 
         se["total_icav"]       = total_icav
+        se["total_earr"]       = total_earr
         se["future_emails"]    = 0
         se["future_pct"]       = 0
         se["act_target_pct"]   = 0
