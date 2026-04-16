@@ -104,11 +104,22 @@ rm /tmp/backend.tar.gz /tmp/frontend.tar.gz
 # Write secrets to a temp file, upload to S3, then delete locally.
 SECRETS_FILE=$(mktemp /tmp/secrets.XXXXXX.env)
 chmod 600 "$SECRETS_FILE"
+# Export AWS credentials from the deploy profile so the EC2 instance can access S3
+AWS_CREDS=$(aws configure export-credentials --profile "$PROFILE" --format env-no-export 2>/dev/null || true)
+AWS_KEY_ID=$(echo "$AWS_CREDS"     | grep ^AWS_ACCESS_KEY_ID     | cut -d= -f2-)
+AWS_SECRET=$(echo "$AWS_CREDS"     | grep ^AWS_SECRET_ACCESS_KEY | cut -d= -f2-)
+AWS_SESSION=$(echo "$AWS_CREDS"    | grep ^AWS_SESSION_TOKEN     | cut -d= -f2-)
+
 cat > "$SECRETS_FILE" << SECRETS
 GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
 GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
 SECRET_KEY=${SECRET_KEY}
 FRONTEND_URL=https://${DOMAIN}
+BUCKET=${BUCKET}
+REGION=${REGION}
+AWS_ACCESS_KEY_ID=${AWS_KEY_ID}
+AWS_SECRET_ACCESS_KEY=${AWS_SECRET}
+AWS_SESSION_TOKEN=${AWS_SESSION}
 SALESFORCE_INSTANCE_URL=${SALESFORCE_INSTANCE_URL:-}
 SALESFORCE_CLIENT_ID=${SALESFORCE_CLIENT_ID:-}
 SALESFORCE_CLIENT_SECRET=${SALESFORCE_CLIENT_SECRET:-}
