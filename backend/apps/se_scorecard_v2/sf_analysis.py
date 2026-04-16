@@ -1417,6 +1417,175 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
 
 import json
 
+# ---------------------------------------------------------------------------
+# Mismatch report — Forecast Category vs Presales Stage alignment check
+# ---------------------------------------------------------------------------
+
+_FORECAST_STAGE_RULES: dict[str, list[str]] = {
+    "Pipeline":    ["Qualified", "Discovery"],
+    "Best Case":   ["Discovery", "Technical Evaluation", "Technical Win Achieved"],
+    "Most Likely": ["Technical Win Achieved"],
+    "Commit":      ["Technical Win Achieved"],
+}
+
+_PRESALES_STAGE_LABEL: dict[str, str] = {
+    "1 - Qualified":             "Qualified",
+    "2 - Discovery":             "Discovery",
+    "3 - Technical Evaluation":  "Technical Evaluation",
+    "4 - Technical Win Achieved":"Technical Win Achieved",
+}
+
+
+def _presales_short(raw: str | None) -> str:
+    return _PRESALES_STAGE_LABEL.get((raw or "").strip(), (raw or "").strip() or "Not Set")
+
+
+def _check_stage_mismatch(opp: dict) -> list[str]:
+    """Return list of mismatch reason strings for one opportunity, or [] if aligned."""
+    fc = (opp.get("ForecastCategoryName") or "").strip()
+    ps_raw = (opp.get("Presales_Stage__c") or "").strip()
+    ps = _presales_short(ps_raw)
+
+    reasons = []
+    if fc in _FORECAST_STAGE_RULES:
+        allowed = _FORECAST_STAGE_RULES[fc]
+        if ps not in allowed:
+            reasons.append(
+                f"Forecast '{fc}' requires Presales Stage in {allowed} but is '{ps}'"
+            )
+    elif fc:
+        reasons.append(f"Unknown forecast category '{fc}'")
+
+    return reasons
+
+
+def _note_sentiment(text: str | None) -> str:
+    """Very lightweight keyword-based sentiment for SE notes: 'positive', 'negative', 'neutral'."""
+    if not text:
+        return "neutral"
+    t = text.lower()
+    pos_kw = ["technical win", "strong", "confident", "champion", "committed",
+              "approved", "signed", "green", "on track", "won", "tw achieved"]
+    neg_kw = ["risk", "concern", "delay", "blocker", "stalled", "no response",
+              "lost", "competitor", "uncertain", "pushed", "red", "at risk",
+              "not committed", "not engaged", "missing", "no champion"]
+    pos = sum(1 for k in pos_kw if k in t)
+    neg = sum(1 for k in neg_kw if k in t)
+    if pos > neg + 1:
+        return "positive"
+    if neg > pos:
+        return "negative"
+    return "neutral"
+
+
+def _notes_sentiment_mismatch(opp: dict) -> str | None:
+    """Return a description if SE notes and DSR notes have conflicting sentiment."""
+    se_notes  = opp.get("Sales_Engineer_Notes__c") or ""
+    dsr_notes = opp.get("DSR_Notes__c") or opp.get("SE_Notes_History__c") or ""
+    if not se_notes or not dsr_notes:
+        return None
+    se_sent  = _note_sentiment(se_notes)
+    dsr_sent = _note_sentiment(dsr_notes)
+    if se_sent == "positive" and dsr_sent == "negative":
+        return "SE notes are positive but DSR notes suggest risk/concern"
+    if se_sent == "negative" and dsr_sent == "positive":
+        return "DSR notes are positive but SE notes suggest risk/concern"
+    return None
+
+
+def build_mismatch_report(opps: list, icav_field: str) -> dict:
+    """
+    Given a list of open pipeline Opportunity dicts for the current quarter,
+    check each against the stage-alignment rules and sentiment cross-check.
+
+    Returns:
+      {
+        "mismatched": [ { opp fields + "mismatches": [...], "icav": int } ],
+        "total_icav_mismatched": int,
+        "total_icav_all": int,
+        "mismatch_count": int,
+        "total_count": int,
+        "insights": [ str ],
+      }
+    """
+    mismatched = []
+    total_icav_all = 0
+    total_icav_mismatched = 0
+
+    fc_icav: dict[str, int] = {}     # iACV by forecast category in mismatches
+    fc_counts: dict[str, int] = {}   # count by forecast category in mismatches
+    stage_icav: dict[str, int] = {}  # iACV by presales stage in mismatches
+
+    for opp in opps:
+        raw_icav = opp.get(icav_field) or 0
+        try:
+            icav = int(float(raw_icav))
+        except (TypeError, ValueError):
+            icav = 0
+        total_icav_all += icav
+
+        reasons = _check_stage_mismatch(opp)
+        sent_issue = _notes_sentiment_mismatch(opp)
+        if sent_issue:
+            reasons.append(sent_issue)
+
+        if not reasons:
+            continue
+
+        fc = (opp.get("ForecastCategoryName") or "").strip()
+        ps = _presales_short(opp.get("Presales_Stage__c"))
+
+        total_icav_mismatched += icav
+        fc_icav[fc]   = fc_icav.get(fc, 0) + icav
+        fc_counts[fc] = fc_counts.get(fc, 0) + 1
+        stage_icav[ps] = stage_icav.get(ps, 0) + icav
+
+        mismatched.append({
+            "id":             opp.get("Id") or "",
+            "name":           opp.get("Name") or "",
+            "account":        ((opp.get("Account") or {}).get("Name") or ""),
+            "close_date":     opp.get("CloseDate") or "",
+            "icav":           icav,
+            "forecast_cat":   fc,
+            "presales_stage": ps,
+            "se_name":        ((opp.get("Technical_Lead__r") or {}).get("Name") or ""),
+            "owner":          ((opp.get("Owner") or {}).get("Name") or ""),
+            "mismatches":     reasons,
+        })
+
+    mismatched.sort(key=lambda x: x["icav"], reverse=True)
+
+    # Generate insights
+    insights: list[str] = []
+    if fc_icav:
+        top_fc, top_fc_icav = max(fc_icav.items(), key=lambda x: x[1])
+        pct = round(top_fc_icav / total_icav_mismatched * 100) if total_icav_mismatched else 0
+        insights.append(
+            f"Most mismatch iACV is in '{top_fc}' ({fmt(top_fc_icav)}, {pct}% of mismatched total)."
+        )
+
+    if stage_icav:
+        top_stage, top_stage_icav = max(stage_icav.items(), key=lambda x: x[1])
+        insights.append(
+            f"Presales Stage '{top_stage}' accounts for {fmt(top_stage_icav)} of mismatched iACV."
+        )
+
+    if total_icav_all > 0:
+        mismatch_pct = round(total_icav_mismatched / total_icav_all * 100)
+        insights.append(
+            f"{mismatch_pct}% of total pipeline iACV ({fmt(total_icav_mismatched)} of {fmt(total_icav_all)}) is mismatched."
+        )
+
+    return {
+        "mismatched":           mismatched,
+        "total_icav_mismatched": total_icav_mismatched,
+        "total_icav_all":       total_icav_all,
+        "mismatch_count":       len(mismatched),
+        "total_count":          len(opps),
+        "insights":             insights,
+    }
+
+
 def save_data(ranked, output_dir):
     total   = len(ranked)
     payload = []

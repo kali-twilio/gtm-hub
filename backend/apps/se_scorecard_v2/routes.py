@@ -279,6 +279,16 @@ def _build_win_rate_soql(team_filter: str, start: str, end: str) -> str:
     )
 
 
+_SOQL_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _safe_date(value: str) -> str:
+    """Raise ValueError if value is not a plain YYYY-MM-DD date string."""
+    if not _SOQL_DATE_RE.match(value):
+        raise ValueError(f"Invalid SOQL date value: {value!r}")
+    return value
+
+
 def _build_pipeline_soql(team_filter: str, end: str) -> str:
     """Open opps closing after the period — used to classify out-q email targets."""
     return (
@@ -287,7 +297,28 @@ def _build_pipeline_soql(team_filter: str, end: str) -> str:
         f"WHERE StageName NOT IN ('Closed Won', 'Closed Lost') "
         f"AND {team_filter} "
         f"AND Technical_Lead__c != null "
-        f"AND CloseDate > {end}"
+        f"AND CloseDate > {_safe_date(end)}"
+    )
+
+
+def _build_mismatch_soql(team_filter: str, start: str, end: str) -> str:
+    """Open pipeline opps in the current quarter for mismatch stage/forecast analysis."""
+    return (
+        f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, ForecastCategoryName, "
+        f"Presales_Stage__c, "
+        f"Technical_Lead__r.Name, Technical_Lead__r.Email, "
+        f"Owner.Name, Owner.UserRole.Name, "
+        f"Account.Name, "
+        f"Sales_Engineer_Notes__c, SE_Notes_History__c "
+        f"FROM Opportunity "
+        f"WHERE StageName NOT IN ('Closed Won', 'Closed Lost') "
+        f"AND {team_filter} "
+        f"AND Technical_Lead__c != null "
+        f"AND CloseDate >= {_safe_date(start)} "
+        f"AND CloseDate <= {_safe_date(end)} "
+        f"AND {_ICAV_FIELD} > 0 "
+        f"ORDER BY {_ICAV_FIELD} DESC "
+        f"LIMIT 200"
     )
 
 
@@ -1082,6 +1113,44 @@ def _twiml_empty():
     """Return an empty TwiML response — no reply sent."""
     from flask import Response
     return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype="text/xml")
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/mismatch")
+def api_mismatch():
+    """Forecast Category vs Presales Stage mismatch report for current-quarter pipeline."""
+    team_key    = request.args.get("team", _DEFAULT_TEAM)
+    period_key  = request.args.get("period", _default_period())
+    subteam_key = request.args.get("subteam", "")
+
+    team = TEAMS.get(team_key)
+    if not team:
+        return jsonify({"error": f"Unknown team '{team_key}'"}), 400
+
+    soql_filter = team["soql_filter"]
+    if subteam_key:
+        subteam = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None)
+        if not subteam:
+            return jsonify({"error": f"Unknown subteam '{subteam_key}'"}), 400
+        soql_filter = subteam["soql_filter"]
+
+    info = _period_info(period_key)
+
+    if not sf.configured:
+        return jsonify({"error": "Salesforce is not configured."}), 503
+
+    try:
+        opps = sf.query(_build_mismatch_soql(soql_filter, info["start"], info["end"]))
+    except Exception as e:
+        log.exception("Mismatch query failed for %s/%s", team_key, period_key)
+        return jsonify({"error": f"Salesforce query failed: {e}"}), 503
+
+    result = sf_analysis.build_mismatch_report(opps or [], sf_analysis.FIELD_CONFIG["icav_field"])
+
+    subteam_obj = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None) if subteam_key else None
+    team_label  = f"{team['label']} · {subteam_obj['label']}" if subteam_obj else team["label"]
+    result["team_label"] = team_label
+    result["quarter"]    = info["label"]
+    return jsonify(result)
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")
