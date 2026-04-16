@@ -489,32 +489,82 @@ def implement_suggestion(suggestion, repo_map):
     # Feed ONLY the raw diff — no surrounding context — to avoid hallucination
     # about code that appears elsewhere in the conversation.
     sec_prompt = (
-        "You are a security reviewer. Read the git diff below and reply with ONLY:\n"
-        "  SAFE   — if there are no significant security issues in the changed lines\n"
-        "  UNSAFE <reason> — if the changed lines introduce a real security risk\n\n"
+        "You are a security reviewer for a SvelteKit + Flask web app (gtm-hub).\n"
+        "Read the git diff below and reply with ONLY one of:\n"
+        "  SAFE   — no significant security issues in the changed lines\n"
+        "  UNSAFE <reason> — the changed lines introduce a real security risk\n\n"
         "Rules:\n"
-        "- Judge ONLY the lines prefixed with + or - in the diff.\n"
-        "- Do NOT comment on code that is not in the diff.\n"
-        "- Hardcoded reference data (e.g. revenue figures, thresholds) is NOT a risk.\n"
-        "- Minor style issues are NOT security issues.\n\n"
+        "- Analyse ONLY the lines prefixed with + or - in the diff.\n"
+        "- Do NOT infer or speculate about content beyond what is explicitly in the diff.\n"
+        "- If the diff is truncated, review only what you can see — do not guess the rest.\n"
+        "- Trust file extensions: a .ts file is TypeScript, a .py file is Python.\n"
+        "  Flag a language mismatch ONLY if you explicitly see it in the +/- lines.\n"
+        "- Hardcoded reference data (e.g. revenue figures, thresholds, field names) is NOT a risk.\n"
+        "- Minor style issues are NOT security issues.\n"
+        "- False positives waste developer time — only flag real, concrete risks.\n\n"
         "Diff:\n"
-        + diff_text[:6000]
+        + diff_text[:16000]
     )
 
-    sec_result = subprocess.run(
-        ["claude", "-p", sec_prompt,
-         "--model", "haiku",
-         "--no-session-persistence"],
-        capture_output=True, text=True,
-    )
-    sec_output = (sec_result.stdout + sec_result.stderr).strip()
-    print(f"  Security review: {sec_output[:300]}")
+    MAX_SEC_FIXES = 3
+    for sec_attempt in range(1, MAX_SEC_FIXES + 2):  # +1 final review after last fix
+        sec_result = subprocess.run(
+            ["claude", "-p", sec_prompt,
+             "--model", "haiku",
+             "--no-session-persistence"],
+            capture_output=True, text=True,
+        )
+        sec_output = (sec_result.stdout + sec_result.stderr).strip()
+        print(f"  Security review (attempt {sec_attempt}): {sec_output[:300]}")
 
-    if sec_output.upper().startswith("UNSAFE"):
-        print("  SECURITY ISSUE detected — skipping push.")
-        run(["git", "checkout", "main"], cwd=repo_dir)
-        writeback("security_blocked", suggestion)
-        return False
+        if not sec_output.upper().startswith("UNSAFE"):
+            break  # SAFE — proceed to push
+
+        if sec_attempt > MAX_SEC_FIXES:
+            print(f"  Security issues not resolved after {MAX_SEC_FIXES} fix attempts — skipping push.")
+            run(["git", "checkout", "main"], cwd=repo_dir)
+            writeback("security_blocked", suggestion)
+            return False
+
+        # Ask Sonnet to fix the security issues in-place
+        print(f"  Asking claude to fix security issues ...")
+        fix_prompt = textwrap.dedent(f"""\
+            The following security issues were found in the current branch changes:
+
+            {sec_output}
+
+            Fix these security issues in the relevant files. Do not change any
+            functionality — only harden the code against the identified risks.
+            After fixing, stage and amend the commit:
+              git add -A
+              git commit --amend --no-edit
+        """)
+        fix_ok, _ = run_claude_with_continuation(fix_prompt)
+        if not fix_ok:
+            print("  Security fix attempt failed.")
+            run(["git", "checkout", "main"], cwd=repo_dir)
+            writeback("security_blocked", suggestion)
+            return False
+
+        # Refresh diff for next review iteration
+        diff_text = run(["git", "diff", "main...HEAD"], cwd=repo_dir, capture=True).stdout
+        sec_prompt = (
+            "You are a security reviewer for a SvelteKit + Flask web app (gtm-hub).\n"
+            "Read the git diff below and reply with ONLY one of:\n"
+            "  SAFE   — no significant security issues in the changed lines\n"
+            "  UNSAFE <reason> — the changed lines introduce a real security risk\n\n"
+            "Rules:\n"
+            "- Analyse ONLY the lines prefixed with + or - in the diff.\n"
+            "- Do NOT infer or speculate about content beyond what is explicitly in the diff.\n"
+            "- If the diff is truncated, review only what you can see — do not guess the rest.\n"
+            "- Trust file extensions: a .ts file is TypeScript, a .py file is Python.\n"
+            "  Flag a language mismatch ONLY if you explicitly see it in the +/- lines.\n"
+            "- Hardcoded reference data (e.g. revenue figures, thresholds, field names) is NOT a risk.\n"
+            "- Minor style issues are NOT security issues.\n"
+            "- False positives waste developer time — only flag real, concrete risks.\n\n"
+            "Diff:\n"
+            + diff_text[:16000]
+        )
 
     # ── Push ───────────────────────────────────────────────────────────────
     print("  Pushing branch ...")

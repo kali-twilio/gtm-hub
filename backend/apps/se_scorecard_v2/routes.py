@@ -49,6 +49,11 @@ TEAMS = {
         "label":            "Digital Sales",
         "description":      "Self Service SE team (DSR)",
         "motion":           "dsr",
+        "team_total_filter": (
+            "(FY_16_Owner_Team__c LIKE 'DSR%'"
+            " OR (Owner.UserRole.Name LIKE '%DSR%'"
+            " AND (NOT (Owner.UserRole.Name LIKE '%Twilio.org%'))))"
+        ),
         "soql_filter": (
             # Primary: FY_16_Owner_Team__c stamped as DSR (frozen at assignment — survives AE role changes).
             # Fallback: owner's current UserRole contains DSR but FY_16 was never stamped correctly
@@ -81,6 +86,7 @@ TEAMS = {
         "label":            "DORG",
         "description":      ".ORG SE team",
         "motion":           "ae",
+        "team_total_filter": "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
         "criteria": [
@@ -94,6 +100,7 @@ TEAMS = {
         "label":            "NAMER",
         "description":      "All NAMER SEs",
         "motion":           "ae",
+        "team_total_filter": "Owner.UserRole.Name LIKE '%NAMER%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - NAMER%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - NAMER%'",
         "criteria": [
@@ -115,6 +122,7 @@ TEAMS = {
         "label":            "EMEA",
         "description":      "All EMEA SEs",
         "motion":           "ae",
+        "team_total_filter": "Owner.UserRole.Name LIKE '%EMEA%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - EMEA%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - EMEA%'",
         "criteria": [
@@ -133,6 +141,7 @@ TEAMS = {
         "label":            "APJ",
         "description":      "APJ SE team",
         "motion":           "ae",
+        "team_total_filter": "Owner.UserRole.Name LIKE '%APJ%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - APJ'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - APJ'",
         "criteria": [
@@ -146,6 +155,7 @@ TEAMS = {
         "label":            "LATAM",
         "description":      "LATAM SE team",
         "motion":           "ae",
+        "team_total_filter": "Owner.UserRole.Name LIKE '%LATAM%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - LATAM%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - LATAM%'",
         "criteria": [
@@ -341,19 +351,71 @@ def _cache_path(team_key: str, period_key: str, icav_min: int = 0) -> Path:
     return OUTPUT_DIR / f"sf_se_data_{team_key}_{period_key}{suffix}.json"
 
 
+_LOCAL_DEV = os.environ.get("LOCAL_DEV") == "1"
+
+_SOQL_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _safe_soql_date(value: str) -> str:
+    if not _SOQL_DATE_RE.match(value):
+        raise ValueError(f"Invalid SOQL date parameter: {value!r}")
+    return value
+
+
+def _build_team_total_soql(team_filter: str, start: str, end: str) -> str:
+    s = _safe_soql_date(start)
+    e = _safe_soql_date(end)
+    return (
+        f"SELECT SUM({_ICAV_FIELD}) total_icav "
+        f"FROM Opportunity "
+        f"WHERE StageName = 'Closed Won' "
+        f"AND {team_filter} "
+        f"AND CloseDate >= {s} "
+        f"AND CloseDate <= {e}"
+    )
+
+
+def _get_team_total_icav(team_total_filter: str, start: str, end: str) -> int | None:
+    if not sf.configured:
+        return None
+    try:
+        rows = sf.query(_build_team_total_soql(team_total_filter, start, end))
+        if rows:
+            val = rows[0].get("total_icav") or rows[0].get("expr0")
+            return int(float(val)) if val is not None else None
+    except Exception:
+        log.warning("team total iACV query failed for filter: %s", team_total_filter, exc_info=True)
+    return None
+
+
+def _motion_total_filter(team_total_filter: str, motion: str, which: str) -> str:
+    base = f"({team_total_filter})"
+    if motion == "dsr":
+        clause = "Owner.UserRole.Name LIKE '%Activation%'" if which == "act" else "Owner.UserRole.Name LIKE '%Expansion%'"
+    else:
+        clause = "Owner.UserRole.Name LIKE '% NB%'" if which == "act" else "Owner.UserRole.Name LIKE '%Strat%'"
+    return f"{base} AND {clause}"
+
+
 def _is_fresh(team_key: str, period_key: str, icav_min: int, ttl: int) -> bool:
+    if _LOCAL_DEV:
+        return False
     p = _cache_path(team_key, period_key, icav_min)
     return p.exists() and (time.time() - p.stat().st_mtime) < ttl
 
 
-def _load_cached(team_key: str, period_key: str, icav_min: int = 0) -> list | None:
+def _load_cached(team_key: str, period_key: str, icav_min: int = 0) -> tuple[list | None, int | None, int | None, int | None]:
     p = _cache_path(team_key, period_key, icav_min)
     if not p.exists():
-        return None
-    return json.loads(p.read_text(encoding="utf-8"))
+        return None, None, None, None
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    if isinstance(raw, list):
+        return raw, None, None, None
+    return raw.get("ses"), raw.get("team_total_icav"), raw.get("act_total_icav"), raw.get("exp_total_icav")
 
 
-def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0, motion: str = "dsr"):
+def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0, motion: str = "dsr",
+                  team_total_icav: int | None = None, act_total_icav: int | None = None, exp_total_icav: int | None = None) -> list:
     total   = len(ranked)
     payload = []
     for i, se in enumerate(ranked, 1):
@@ -363,23 +425,27 @@ def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0
         entry["flags"] = sf_analysis.collect_se_flags(se, ranked, motion)
         entry["roast"] = sf_analysis._roast(se, ranked, motion)
         payload.append(entry)
-    p   = _cache_path(team_key, period_key, icav_min)
-    tmp = p.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload), encoding="utf-8")
-    tmp.replace(p)
+    if not _LOCAL_DEV:
+        result = {"ses": payload}
+        if team_total_icav is not None:
+            result["team_total_icav"] = team_total_icav
+        if act_total_icav is not None:
+            result["act_total_icav"] = act_total_icav
+        if exp_total_icav is not None:
+            result["exp_total_icav"] = exp_total_icav
+        p   = _cache_path(team_key, period_key, icav_min)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(result), encoding="utf-8")
+        tmp.replace(p)
+    return payload
 
 
 
-def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: str = "") -> tuple[list | None, str | None]:
-    """
-    Return (ranked_ses, error_msg).
-    Serves from cache if fresh; otherwise fetches from Salesforce and updates cache.
-    icav_min:    minimum iACV for main closed-won query — also drives notes quality floor.
-    subteam_key: overrides soql_filter/email_owner_filter from parent team.
-    """
+def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: str = "") -> tuple[list | None, str | None, int | None, int | None, int | None]:
+    """Return (ranked_ses, error_msg, team_total_icav, act_total_icav, exp_total_icav)."""
     team = TEAMS.get(team_key)
     if not team:
-        return None, f"Unknown team '{team_key}'"
+        return None, f"Unknown team '{team_key}'", None, None, None
 
     soql_filter        = team["soql_filter"]
     email_owner_filter = team["email_owner_filter"]
@@ -388,7 +454,7 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     if subteam_key:
         subteam = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None)
         if not subteam:
-            return None, f"Unknown subteam '{subteam_key}' for team '{team_key}'"
+            return None, f"Unknown subteam '{subteam_key}' for team '{team_key}'", None, None, None
         soql_filter        = subteam["soql_filter"]
         email_owner_filter = subteam["email_owner_filter"]
         display_label      = f"{team['label']} · {subteam['label']}"
@@ -396,32 +462,41 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     cache_key = f"{team_key}_{subteam_key}" if subteam_key else team_key
     info      = _period_info(period_key)
 
-    # For prior-year periods, use the looser filter if the team defines one
-    # (role/title filters reflect current state; only the DSR stamp is stable across years)
     period_year = int(period_key.split("_")[0])
     if not subteam_key and period_year < date.today().year and "historical_soql_filter" in team:
         soql_filter = team["historical_soql_filter"]
 
     if _is_fresh(cache_key, period_key, icav_min, info["ttl"]):
-        return _load_cached(cache_key, period_key, icav_min), None
+        ses, tti, ati, eti = _load_cached(cache_key, period_key, icav_min)
+        return ses, None, tti, ati, eti
 
     if not sf.configured:
-        stale = _load_cached(cache_key, period_key, icav_min)
+        stale, tti, ati, eti = _load_cached(cache_key, period_key, icav_min)
         if stale:
             log.warning("Salesforce not configured — serving stale cache for %s/%s", cache_key, period_key)
-            return stale, None
-        return None, "Salesforce is not configured."
+            return stale, None, tti, ati, eti
+        return None, "Salesforce is not configured.", None, None, None
 
-    # Run all 5 queries in parallel — they are fully independent
     core_exc: Exception | None = None
     opps = win_rate_opps = pipe_opps = email_tasks = meeting_events = None
+    team_total_icav: int | None = None
+    act_total_icav:  int | None = None
+    exp_total_icav:  int | None = None
+    team_total_filter = team.get("team_total_filter")
+    motion            = team.get("motion", "dsr")
 
-    with ThreadPoolExecutor(max_workers=5) as pool:
+    with ThreadPoolExecutor(max_workers=8) as pool:
         f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"], icav_min))
         f_win_rate = pool.submit(sf.query, _build_win_rate_soql(soql_filter, info["start"], info["end"]))
         f_pipeline = pool.submit(sf.query, _build_pipeline_soql(soql_filter, info["end"]))
         f_email    = pool.submit(sf.query, _build_email_soql(info["start"], info["end"], email_owner_filter))
         f_meetings = pool.submit(sf.query, _build_meeting_soql(info["start"], info["end"], email_owner_filter))
+        if team_total_filter and not subteam_key:
+            f_team_total = pool.submit(_get_team_total_icav, team_total_filter, info["start"], info["end"])
+            f_act_total  = pool.submit(_get_team_total_icav, _motion_total_filter(team_total_filter, motion, "act"), info["start"], info["end"])
+            f_exp_total  = pool.submit(_get_team_total_icav, _motion_total_filter(team_total_filter, motion, "exp"), info["start"], info["end"])
+        else:
+            f_team_total = f_act_total = f_exp_total = None
 
         try:
             opps          = f_opps.result()
@@ -446,20 +521,35 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
         except Exception:
             log.warning("Meeting activity query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
 
+        if f_team_total is not None:
+            try:
+                team_total_icav = f_team_total.result()
+            except Exception:
+                log.warning("Team total iACV query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+        if f_act_total is not None:
+            try:
+                act_total_icav = f_act_total.result()
+            except Exception:
+                log.warning("Act total iACV query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+        if f_exp_total is not None:
+            try:
+                exp_total_icav = f_exp_total.result()
+            except Exception:
+                log.warning("Exp total iACV query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+
     if core_exc is not None:
-        stale = _load_cached(cache_key, period_key, icav_min)
+        stale, tti, ati, eti = _load_cached(cache_key, period_key, icav_min)
         if stale:
             log.warning("Salesforce error — serving stale cache for %s/%s", cache_key, period_key)
-            return stale, None
-        return None, f"Salesforce query failed: {core_exc}"
+            return stale, None, tti, ati, eti
+        return None, f"Salesforce query failed: {core_exc}", None, None, None
 
     if not opps:
-        return [], None
+        return [], None, team_total_icav, act_total_icav, exp_total_icav
 
-    ses = sf_analysis.build_ses(opps, team.get("motion", "dsr"), notes_floor=icav_min, period_key=period_key)
-    sf_analysis.merge_win_rate(ses, win_rate_opps, team.get("motion", "dsr"))
+    ses = sf_analysis.build_ses(opps, motion, notes_floor=icav_min, period_key=period_key)
+    sf_analysis.merge_win_rate(ses, win_rate_opps, motion)
 
-    # Build opp motion map from closed-won + pipeline opps, then merge email activity
     opp_motion_map: dict[str, str] = {}
     for opp in opps:
         oid = opp.get("Id") or ""
@@ -492,14 +582,14 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
         except Exception:
             log.warning("Meeting activity merge failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
 
-    ses    = [s for s in ses if s["act_wins"] + s["exp_wins"] > 0]
+    ses = [s for s in ses if s["act_wins"] + s["exp_wins"] > 0]
     if not ses:
-        return [], None
+        return [], None, team_total_icav, act_total_icav, exp_total_icav
     ranked = sf_analysis.rank_ses(ses)
-    _save_cached(ranked, cache_key, period_key, icav_min, team.get("motion", "dsr"))
+    result = _save_cached(ranked, cache_key, period_key, icav_min, motion, team_total_icav, act_total_icav, exp_total_icav)
     log.info("Refreshed %s/%s (min $%s) SE data from Salesforce (%d opps, %d win-rate opps)",
              cache_key, period_key, icav_min, len(opps), len(win_rate_opps))
-    return _load_cached(cache_key, period_key, icav_min), None
+    return result, None, team_total_icav, act_total_icav, exp_total_icav
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +655,8 @@ def enrich_me(email: str) -> dict:
     for team_key in TEAMS:
         for p in OUTPUT_DIR.glob(f"sf_se_data_{team_key}_*.json"):
             try:
-                cached = json.loads(p.read_text(encoding="utf-8"))
+                raw    = json.loads(p.read_text(encoding="utf-8"))
+                cached = raw.get("ses", raw) if isinstance(raw, dict) else raw
             except Exception:
                 continue
             se_name = _email_to_se_name(email, cached)
@@ -613,7 +704,7 @@ def api_ses():
     if err:
         return jsonify({"error": err}), 400
     subteam_key = request.args.get("subteam", "")
-    ses, err    = _get_data(team_key, period_key, icav_min, subteam_key)
+    ses, err, *_ = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
     team_medians = sf_analysis.compute_team_medians(ses)
@@ -631,8 +722,8 @@ def api_report():
     icav_min, err = _parse_icav_min(request.args.get("icav_min"))
     if err:
         return jsonify({"error": err}), 400
-    subteam_key   = request.args.get("subteam", "")
-    ses_list, err = _get_data(team_key, period_key, icav_min, subteam_key)
+    subteam_key                                          = request.args.get("subteam", "")
+    ses_list, err, team_total_icav, act_total_icav, exp_total_icav = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
     if _email_to_se_name(session.get("user_email", ""), ses_list):
@@ -649,8 +740,6 @@ def api_report():
     deal_sorted = [s for s in sorted(ses_list, key=lambda x: x["largest_deal_value"], reverse=True)
                    if s["largest_deal_value"] > 0]
 
-    # --- Expansion trend across comparable cached periods ---
-    # "Total influenced" = TW exp_icav + non-TW exp_icav (deals SE was tagged on but didn't get full TW)
     cache_key_trend = f"{team_key}_{subteam_key}" if subteam_key else team_key
     is_fy           = "_FY" in period_key
     comparable      = [p for p in _available_periods()
@@ -672,34 +761,47 @@ def api_report():
 
     exp_trend = [_exp_snapshot(ses_list, period["label"], period_key, True)]
     for p in comparable[:3]:
-        prior = _load_cached(cache_key_trend, p["key"], 0)
+        prior, *_ = _load_cached(cache_key_trend, p["key"], 0)
         if prior:
             exp_trend.append(_exp_snapshot(prior, p["label"], p["key"], False))
 
-    exp_trend.reverse()  # chronological order — oldest first
+    exp_trend.reverse()
+
+    se_icav         = sum(s["total_icav"] for s in ses_list)
+    se_act_icav     = sum(s["act_icav"]   for s in ses_list)
+    se_exp_icav     = sum(s["exp_icav"]   for s in ses_list)
+    se_icav_pct     = round(se_icav     / team_total_icav * 100) if team_total_icav and team_total_icav > 0 else None
+    se_act_icav_pct = round(se_act_icav / act_total_icav  * 100) if act_total_icav  and act_total_icav  > 0 else None
+    se_exp_icav_pct = round(se_exp_icav / exp_total_icav  * 100) if exp_total_icav  and exp_total_icav  > 0 else None
 
     return jsonify({
-        "ranked":       ses_list,
-        "total":        total,
-        "icav_min":     icav_min,
-        "team_icav":    sum(s["total_icav"] for s in ses_list),
-        "team_wins":    sum(s["act_wins"] + s["exp_wins"] for s in ses_list),
-        "team_arr":     sum(s.get("exp_arr_total", 0) for s in ses_list),
-        "act_sorted":   act_sorted,
-        "exp_sorted":   exp_sorted,
-        "pipe_sorted":  [],
-        "deal_sorted":  deal_sorted,
-        "max_act":      act_sorted[0]["act_icav"] if act_sorted else 1,
-        "max_exp":      max((s["exp_icav"] for s in exp_sorted), default=1) or 1,
-        "max_fut":      1,
-        "max_act_icav": max(s["act_icav"] for s in ses_list) or 1,
-        "max_exp_icav": max(s["exp_icav"] for s in ses_list) or 1,
-        "trends":       sorted(sf_analysis.collect_team_trends(ses_list, team.get("motion", "dsr")), key=lambda x: x[0]),
-        "recommendations": sf_analysis.generate_recommendations(ses_list, team.get("motion", "dsr")),
-        "exp_trend":    exp_trend,
-        "quarter":      period["label"],
-        "team_label":   team_label,
-        "motion":       team.get("motion", "dsr"),
+        "ranked":           ses_list,
+        "total":            total,
+        "icav_min":         icav_min,
+        "team_icav":        se_icav,
+        "team_wins":        sum(s["act_wins"] + s["exp_wins"] for s in ses_list),
+        "team_arr":         sum(s.get("exp_arr_total", 0) for s in ses_list),
+        "team_total_icav":  team_total_icav,
+        "act_total_icav":   act_total_icav,
+        "exp_total_icav":   exp_total_icav,
+        "se_icav_pct":      se_icav_pct,
+        "se_act_icav_pct":  se_act_icav_pct,
+        "se_exp_icav_pct":  se_exp_icav_pct,
+        "act_sorted":       act_sorted,
+        "exp_sorted":       exp_sorted,
+        "pipe_sorted":      [],
+        "deal_sorted":      deal_sorted,
+        "max_act":          act_sorted[0]["act_icav"] if act_sorted else 1,
+        "max_exp":          max((s["exp_icav"] for s in exp_sorted), default=1) or 1,
+        "max_fut":          1,
+        "max_act_icav":     max(s["act_icav"] for s in ses_list) or 1,
+        "max_exp_icav":     max(s["exp_icav"] for s in ses_list) or 1,
+        "trends":           sorted(sf_analysis.collect_team_trends(ses_list, team.get("motion", "dsr")), key=lambda x: x[0]),
+        "recommendations":  sf_analysis.generate_recommendations(ses_list, team.get("motion", "dsr")),
+        "exp_trend":        exp_trend,
+        "quarter":          period["label"],
+        "team_label":       team_label,
+        "motion":           team.get("motion", "dsr"),
     })
 
 
@@ -1091,8 +1193,8 @@ def api_rankings():
     icav_min, err = _parse_icav_min(request.args.get("icav_min"))
     if err:
         return jsonify({"error": err}), 400
-    subteam_key   = request.args.get("subteam", "")
-    ses_list, err = _get_data(team_key, period_key, icav_min, subteam_key)
+    subteam_key       = request.args.get("subteam", "")
+    ses_list, err, *_ = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
     if _email_to_se_name(session.get("user_email", ""), ses_list):

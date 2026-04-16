@@ -253,7 +253,9 @@ def enforce_auth():
         # Report and SE list: allow only for the SE's own team
         if p in ("/api/se-scorecard-v2/data/report", "/api/se-scorecard-v2/data/ses"):
             requested = request.args.get("team", "")
-            if allowed_team and requested and requested != allowed_team:
+            if not requested:
+                return jsonify({"error": "team parameter required"}), 400
+            if allowed_team and requested != allowed_team:
                 return jsonify({"error": "Access denied"}), 403
 
 @app.after_request

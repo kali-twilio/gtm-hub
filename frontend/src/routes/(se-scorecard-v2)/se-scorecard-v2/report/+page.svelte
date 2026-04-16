@@ -239,13 +239,13 @@
   const actOnly       = $derived(teamActIcav > 0 && teamExpIcav === 0);
   const singleMotion  = $derived(stratOnly || actOnly);
   const summaryCards  = $derived(data ? [
-    {label:'Team Total iACV',        val:fmt(teamTotalIcav),                   color:null,                                                                                                                                                 show:true},
-    {label:motionLabels.act+' iACV', val:fmt(teamActIcav),                     color:null,                                                                                                                                                 show:teamActIcav>0 && teamExpIcav>0},
-    {label:motionLabels.exp+' iACV', val:fmt(teamExpIcav),                     color:null,                                                                                                                                                 show:teamExpIcav>0 && teamActIcav>0},
-    {label:'Account ARR',            val:fmt(expTotals.arr_total),             color:null,                                                                                                                                                 show:stratOnly && expTotals.arr_total>0},
-    {label:'Qtr MRR Δ',              val:fmtMrrDelta(expTotals.mrr_delta_total), color:expTotals.mrr_delta_total>0?($theme==='twilio'?'#178742':'#10B981'):expTotals.mrr_delta_total<0?($theme==='twilio'?'#DC2626':'#EF4444'):'var(--text-muted)', show:stratOnly && expTotals.arr_total>0},
-    {label:'SEs Analysed',           val:String(data.total),                   color:null,                                                                                                                                                 show:true},
-  ].filter((s: any) => s.show) : []);
+    {label:'Total SE iACV',          val:fmt(teamTotalIcav),                   color:null, sub:(data.se_icav_pct != null && data.team_total_icav != null ? data.se_icav_pct+'% · '+fmt(data.team_total_icav)+' total' : null),            show:true},
+    {label:motionLabels.act+' iACV', val:fmt(teamActIcav),                     color:null, sub:(data.se_act_icav_pct != null && data.act_total_icav != null ? data.se_act_icav_pct+'% · '+fmt(data.act_total_icav)+' total' : null),     show:teamActIcav>0 && teamExpIcav>0},
+    {label:motionLabels.exp+' iACV', val:fmt(teamExpIcav),                     color:null, sub:(data.se_exp_icav_pct != null && data.exp_total_icav != null ? data.se_exp_icav_pct+'% · '+fmt(data.exp_total_icav)+' total' : null),     show:teamExpIcav>0 && teamActIcav>0},
+    {label:'Account ARR',            val:fmt(expTotals.arr_total),             color:null, sub:null,                                                                                                                                        show:stratOnly && expTotals.arr_total>0},
+    {label:'Qtr MRR Δ',              val:fmtMrrDelta(expTotals.mrr_delta_total), color:expTotals.mrr_delta_total>0?($theme==='twilio'?'#178742':'#10B981'):expTotals.mrr_delta_total<0?($theme==='twilio'?'#DC2626':'#EF4444'):'var(--text-muted)', sub:null, show:stratOnly && expTotals.arr_total>0},
+    {label:'SEs Analysed',           val:String(data.total),                   color:null, sub:null,                                                                                                                                        show:true},
+  ].filter((s: any) => s.show && s.val != null) : []);
 
 const actStatCols = $derived(data ? [
     {l:'Total Wins',  v:String(actTotals.wins)},
@@ -437,6 +437,7 @@ const actStatCols = $derived(data ? [
     <div class="p5-stat-chip">
       <div style="font-size:9px;color:var(--red);font-weight:800;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};margin-bottom:6px">{s.label}</div>
       <div style="font-size:28px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{s.color ?? 'var(--text)'};{$theme==='p5'?'text-shadow:2px 2px 0 rgba(var(--red-rgb),0.4)':''};line-height:1">{s.val}</div>
+      {#if s.sub}<div style="font-size:11px;color:var(--text-muted);font-weight:600;margin-top:5px">{s.sub}</div>{/if}
     </div>
     {/each}
   </div>
