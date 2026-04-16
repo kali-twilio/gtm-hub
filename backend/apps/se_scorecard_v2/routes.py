@@ -766,14 +766,17 @@ def _masked(email: str) -> str:
     return email.split("@")[0] if email else "anonymous"
 
 
-def _lookup_caller_name(phone: str) -> str | None:
-    """Use Twilio Lookup to get a caller name for a phone number. Returns None on failure."""
+def _lookup_phone(phone: str) -> dict:
+    """Use Twilio Lookup v2 to get caller name and line type for a phone number.
+    Returns dict with keys: caller_name (str|None), is_mobile (bool).
+    """
+    result = {"caller_name": None, "is_mobile": True}  # default allow if lookup unavailable
     if not (_TWILIO_ACCOUNT_SID and _TWILIO_AUTH_TOKEN):
-        return None
+        return result
     try:
         resp = http_requests.get(
             f"https://lookups.twilio.com/v2/PhoneNumbers/{phone}",
-            params={"Fields": "caller_name"},
+            params={"Fields": "caller_name,line_type_intelligence"},
             auth=(_TWILIO_ACCOUNT_SID, _TWILIO_AUTH_TOKEN),
             timeout=5,
         )
@@ -781,10 +784,15 @@ def _lookup_caller_name(phone: str) -> str | None:
             data = resp.json()
             name = (data.get("caller_name") or {}).get("caller_name")
             if name and name.strip():
-                return name.strip().title()
+                result["caller_name"] = name.strip().title()
+            line_type = (data.get("line_type_intelligence") or {}).get("type", "")
+            # Reject landlines and VoIP — only allow mobile/prepaid
+            if line_type and line_type not in ("mobile", "prepaid", ""):
+                result["is_mobile"] = False
+                log.info("Lookup: %s is line_type=%s — rejecting", phone, line_type)
     except Exception as e:
         log.warning("Twilio Lookup failed for %s: %s", phone, e)
-    return None
+    return result
 
 
 def _display_author(doc: dict) -> str:
@@ -890,45 +898,36 @@ def api_suggestions_delete(suggestion_id: str):
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/sms", methods=["POST"])
 def api_sms_webhook():
-    """Twilio SMS webhook — saves inbound texts as suggestions.
+    """Twilio SMS webhook — command interface for suggestions.
 
-    Security layers (per https://www.twilio.com/docs/usage/webhooks/webhooks-security):
-    1. HMAC-SHA1 signature validation using the full reconstructed URL and POST params.
-       The URL is reconstructed using X-Forwarded-Proto so it works correctly behind
-       CloudFront/nginx (which terminates TLS and forwards HTTP internally).
-       Skipped only in local dev when TWILIO_AUTH_TOKEN is not set.
-    2. Per-phone-number rate limiting to prevent SMS pumping attacks.
+    Commands (case-insensitive):
+      LIST                  — receive all suggestions with authors
+      DELETE <number>       — delete one of your own suggestions by list index
+      DELETE ALL            — delete all of your suggestions
+      <anything else>       — saved as a new suggestion
+
+    Security:
+      1. HMAC-SHA1 signature validation (Twilio webhook security docs)
+      2. Mobile-only via Lookup line_type_intelligence (blocks landlines/VoIP)
+      3. Per-phone rate limiting (5 msgs/hour, SMS pump protection)
     """
     # ── 1. Signature validation ───────────────────────────────────────────────
-    if _TWILIO_AUTH_TOKEN:
+    _local_dev = os.environ.get("LOCAL_DEV") == "1"
+    if _TWILIO_AUTH_TOKEN and not _local_dev:
         from twilio.request_validator import RequestValidator
         validator = RequestValidator(_TWILIO_AUTH_TOKEN)
-
-        # Reconstruct the exact URL Twilio signed. Behind CloudFront → nginx →
-        # Flask, request.url has the internal EC2 hostname and http scheme.
-        # Use X-Forwarded-Proto + X-Forwarded-Host to rebuild the public URL
-        # that Twilio actually called and signed.
-        proto = request.headers.get("X-Forwarded-Proto", "https")
-        host  = request.headers.get("X-Forwarded-Host") or request.headers.get("Host", "")
-        url   = f"{proto}://{host}{request.full_path.rstrip('?')}"
-
-        sig = request.headers.get("X-Twilio-Signature", "")
-
-        # Pass the parsed form dict — Twilio signs application/x-www-form-urlencoded
-        # params sorted alphabetically appended to the URL.
-        # Use the canonical public URL that Twilio signed — the internal Flask
-        # request.url reflects the EC2 hostname which doesn't match. CloudFront
-        # does not forward X-Forwarded-Host, so we read FRONTEND_URL from env
-        # (which is set to the CloudFront domain in production).
+        # Use FRONTEND_URL (CloudFront domain) — the canonical URL Twilio signed.
+        # request.url is the internal EC2 hostname which never matches.
         _frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
         url = f"{_frontend}/api/se-scorecard-v2/sms"
+        sig = request.headers.get("X-Twilio-Signature", "")
         log.info("Twilio sig check — url=%s sig=%s", url, sig[:16] if sig else "missing")
         if not validator.validate(url, request.form, sig):
             log.warning("Twilio signature validation failed — url=%s", url)
             return "Forbidden", 403
 
     from_number = request.form.get("From", "").strip()
-    body = request.form.get("Body", "").strip()
+    body        = request.form.get("Body", "").strip()
 
     if not from_number or not body:
         return _twiml_reply("No message body received.")
@@ -938,23 +937,85 @@ def api_sms_webhook():
         log.warning("SMS rate limit exceeded for %s", from_number)
         return _twiml_reply("You've sent too many messages. Please wait an hour before trying again.")
 
-    if len(body) > 1000:
-        return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
+    # ── 3. Lookup: verify mobile number + get caller name ────────────────────
+    lookup = _lookup_phone(from_number) if not _local_dev else {"caller_name": None, "is_mobile": True}
+    if not lookup["is_mobile"]:
+        return _twiml_reply("Sorry, this service is only available to mobile numbers.")
 
     db = _get_firestore()
     if db is None:
-        log.error("Firestore unavailable for SMS suggestion from %s", from_number)
-        return _twiml_reply("Sorry, we couldn't save your suggestion right now. Please try again later.")
+        log.error("Firestore unavailable for SMS from %s", from_number)
+        return _twiml_reply("Sorry, storage is unavailable right now. Please try again later.")
+
+    cmd = body.strip().upper()
+
+    # ── LIST ──────────────────────────────────────────────────────────────────
+    if cmd == "LIST":
+        try:
+            docs = db.collection(_FIRESTORE_COLLECTION).order_by("created_at", direction="DESCENDING").stream()
+            items = [(doc.id, doc.to_dict()) for doc in docs]
+            if not items:
+                return _twiml_reply("No suggestions yet.")
+            lines = []
+            for i, (_, s) in enumerate(items, 1):
+                author = _display_author(s)
+                text   = s.get("text", "")[:60]
+                lines.append(f"{i}. [{author}] {text}{'…' if len(s.get('text',''))>60 else ''}")
+            return _twiml_reply("\n".join(lines))
+        except Exception as e:
+            log.error("Firestore list (SMS) failed: %s", e)
+            return _twiml_reply("Failed to load suggestions.")
+
+    # ── DELETE ────────────────────────────────────────────────────────────────
+    if cmd.startswith("DELETE"):
+        arg = body.strip()[6:].strip()  # preserve original case for "ALL"
+        try:
+            docs = list(db.collection(_FIRESTORE_COLLECTION)
+                          .order_by("created_at", direction="DESCENDING").stream())
+            mine = [(doc.id, doc.to_dict()) for doc in docs
+                    if doc.to_dict().get("phone") == from_number]
+
+            if not mine:
+                return _twiml_reply("You have no suggestions to delete.")
+
+            if arg.upper() == "ALL":
+                for doc_id, _ in mine:
+                    db.collection(_FIRESTORE_COLLECTION).document(doc_id).delete()
+                log.info("SMS DELETE ALL: removed %d suggestions for %s", len(mine), from_number)
+                return _twiml_reply(f"Deleted all {len(mine)} of your suggestion{'s' if len(mine)!=1 else ''}.")
+
+            # DELETE <number> — number refers to position in the full LIST
+            try:
+                idx = int(arg) - 1
+            except ValueError:
+                return _twiml_reply("Usage: DELETE <number> or DELETE ALL\nSend LIST to see numbered suggestions.")
+
+            all_items = [(doc.id, doc.to_dict()) for doc in docs]
+            if idx < 0 or idx >= len(all_items):
+                return _twiml_reply(f"No suggestion #{idx+1}. Send LIST to see available suggestions.")
+
+            target_id, target_doc = all_items[idx]
+            if target_doc.get("phone") != from_number:
+                return _twiml_reply(f"Suggestion #{idx+1} isn't yours — you can only delete your own.")
+
+            db.collection(_FIRESTORE_COLLECTION).document(target_id).delete()
+            log.info("SMS DELETE #%d by %s", idx+1, from_number)
+            return _twiml_reply(f"Deleted suggestion #{idx+1}.")
+
+        except Exception as e:
+            log.error("Firestore delete (SMS) failed: %s", e)
+            return _twiml_reply("Failed to delete suggestion.")
+
+    # ── SUBMIT (default) ─────────────────────────────────────────────────────
+    if len(body) > 1000:
+        return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
 
     try:
         count = len(db.collection(_FIRESTORE_COLLECTION).limit(_SUGGESTIONS_MAX + 1).get())
         if count >= _SUGGESTIONS_MAX:
-            return _twiml_reply("Sorry, we've reached our suggestion limit for now. Thank you for your interest!")
+            return _twiml_reply("Sorry, we've reached our suggestion limit. Thank you for your interest!")
 
-        # Try Twilio Lookup for caller name
-        caller_name = _lookup_caller_name(from_number)
-
-        doc_id = str(uuid.uuid4())
+        doc_id     = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         doc = {
             "phone":      from_number,
@@ -962,11 +1023,11 @@ def api_sms_webhook():
             "source":     "sms",
             "created_at": created_at,
         }
-        if caller_name:
-            doc["caller_name"] = caller_name
+        if lookup["caller_name"]:
+            doc["caller_name"] = lookup["caller_name"]
         db.collection(_FIRESTORE_COLLECTION).document(doc_id).set(doc)
-        log.info("SMS suggestion saved from %s (%s)", from_number, caller_name or "unknown")
-        return _twiml_reply("Thanks for your suggestion! We'll review it soon.")
+        log.info("SMS suggestion saved from %s (%s)", from_number, lookup["caller_name"] or "unknown")
+        return _twiml_reply("Got it — thanks for your suggestion!\n\nReply LIST to see all suggestions, or DELETE <#> to remove one of yours.")
     except Exception as e:
         log.error("Firestore SMS save failed: %s", e)
         return _twiml_reply("Sorry, something went wrong. Please try again.")
