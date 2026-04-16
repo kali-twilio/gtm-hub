@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # process_suggestions.sh
-# Reads suggestions from S3, deduplicates/filters them with Claude,
+# Reads suggestions from Firestore, deduplicates/filters them with Claude,
 # then clones gtm-hub and runs "claude -p" to implement each one
 # on its own branch.
 #
@@ -8,7 +8,8 @@
 # Must be run from the repo root (same dir as deploy.env).
 #
 # Prerequisites:
-#   - AWS CLI configured (uses PROFILE from deploy.env)
+#   - deploy.env with FIRESTORE_PROJECT + FIRESTORE_CREDENTIALS_B64
+#   - google-cloud-firestore pip package installed (pip3 install google-cloud-firestore)
 #   - git + gh CLI authenticated
 #   - claude CLI in PATH (claude -p)
 #   - python3 in PATH
@@ -30,7 +31,7 @@ fi
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 
-SUGGESTIONS_S3_KEY="suggestions/se-scorecard-v2.json"
+FIRESTORE_COLLECTION="se-scorecard-v2-suggestions"
 REPO_URL="https://github.com/kali-twilio/gtm-hub"
 WORK_DIR="$(mktemp -d)"
 SUGGESTIONS_RAW="$WORK_DIR/suggestions_raw.json"
@@ -49,15 +50,36 @@ echo "process_suggestions.sh  $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 echo "========================================================"
 
 ###############################################################################
-# 1. Download suggestions JSON from S3
+# 1. Download suggestions from Firestore
 ###############################################################################
 
 echo ""
-echo "--- Step 1: Downloading suggestions from S3 ---"
+echo "--- Step 1: Downloading suggestions from Firestore ---"
 
-aws s3 cp "s3://$BUCKET/$SUGGESTIONS_S3_KEY" "$SUGGESTIONS_RAW" \
-  --profile "$PROFILE" \
-  --region  "$REGION"
+python3 - "$FIRESTORE_PROJECT" "$FIRESTORE_CREDENTIALS_B64" "$FIRESTORE_COLLECTION" "$SUGGESTIONS_RAW" <<'PYEOF'
+import base64, json, sys
+from google.cloud import firestore
+from google.oauth2 import service_account
+
+project    = sys.argv[1]
+creds_b64  = sys.argv[2]
+collection = sys.argv[3]
+out_file   = sys.argv[4]
+
+info  = json.loads(base64.b64decode(creds_b64).decode())
+creds = service_account.Credentials.from_service_account_info(
+    info, scopes=["https://www.googleapis.com/auth/datastore"])
+db   = firestore.Client(project=project, credentials=creds)
+docs = db.collection(collection).order_by("created_at").stream()
+items = []
+for doc in docs:
+    d = doc.to_dict()
+    d["id"] = doc.id
+    items.append(d)
+with open(out_file, "w") as f:
+    json.dump(items, f, indent=2)
+print(len(items))
+PYEOF
 
 TOTAL=$(python3 -c "import json; d=json.load(open('$SUGGESTIONS_RAW')); print(len(d))")
 echo "Downloaded $TOTAL suggestions."
@@ -163,18 +185,24 @@ echo "Cloned to $REPO_DIR (authenticated as $GH_USER)"
 echo ""
 echo "--- Step 4: Implementing suggestions ---"
 
-python3 - "$SUGGESTIONS_FILTERED" "$REPO_DIR" "$ENV_FILE" "$BUCKET" "$PROFILE" "$REGION" "$SUGGESTIONS_S3_KEY" <<'PYEOF'
-import json, os, subprocess, sys, re, textwrap, datetime
+python3 - "$SUGGESTIONS_FILTERED" "$REPO_DIR" "$FIRESTORE_PROJECT" "$FIRESTORE_CREDENTIALS_B64" "$FIRESTORE_COLLECTION" <<'PYEOF'
+import base64, json, os, subprocess, sys, re, textwrap, datetime
+from google.cloud import firestore
+from google.oauth2 import service_account
 
 suggestions_file = sys.argv[1]
 repo_dir         = sys.argv[2]
-env_file         = sys.argv[3]
-s3_bucket        = sys.argv[4]
-aws_profile      = sys.argv[5]
-aws_region       = sys.argv[6]
-s3_key           = sys.argv[7]
+fs_project       = sys.argv[3]
+fs_creds_b64     = sys.argv[4]
+fs_collection    = sys.argv[5]
 
-# Single source of truth — loaded once, mutated in place, written back to S3 after each suggestion
+# Initialise Firestore client
+_fs_info  = json.loads(base64.b64decode(fs_creds_b64).decode())
+_fs_creds = service_account.Credentials.from_service_account_info(
+    _fs_info, scopes=["https://www.googleapis.com/auth/datastore"])
+db = firestore.Client(project=fs_project, credentials=_fs_creds)
+
+# Single source of truth — loaded once, individual docs updated in Firestore after each suggestion
 suggestions = json.load(open(suggestions_file))
 
 def run(cmd, cwd=None, check=True, capture=False):
@@ -185,23 +213,19 @@ def run(cmd, cwd=None, check=True, capture=False):
     return subprocess.run(cmd, **kwargs)
 
 def writeback(status, suggestion, branch=None):
-    """Stamp status on the suggestion object and push the full JSON back to S3."""
+    """Stamp status on the Firestore document for this suggestion."""
     suggestion["status"]       = status
     suggestion["completed_at"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if branch:
         suggestion["branch"] = branch
-    tmp = "/tmp/se-scorecard-v2-writeback.json"
-    with open(tmp, "w") as f:
-        json.dump(suggestions, f, indent=2)
-    result = subprocess.run(
-        ["aws", "s3", "cp", tmp, f"s3://{s3_bucket}/{s3_key}",
-         "--profile", aws_profile, "--region", aws_region],
-        capture_output=True, text=True,
-    )
-    if result.returncode == 0:
-        print(f"  S3 writeback: [{suggestion['id']}] → {status}")
-    else:
-        print(f"  WARN: S3 writeback failed: {result.stderr.strip()}")
+    update = {"status": status, "completed_at": suggestion["completed_at"]}
+    if branch:
+        update["branch"] = branch
+    try:
+        db.collection(fs_collection).document(suggestion["id"]).update(update)
+        print(f"  Firestore writeback: [{suggestion['id']}] → {status}")
+    except Exception as e:
+        print(f"  WARN: Firestore writeback failed: {e}")
 
 def sanitize_branch(email, created_at):
     username = email.split('@')[0]
