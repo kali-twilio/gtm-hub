@@ -66,5 +66,6 @@ function createPersistedStore(key: string, fallback: string) {
   };
 }
 
-export const sfPeriod  = createPersistedStore('sf_period',  '2026_Q1');
-export const sfSubteam = createPersistedStore('sf_subteam', 'none');
+export const sfPeriod   = createPersistedStore('sf_period',   '2026_Q1');
+export const sfSubteam  = createPersistedStore('sf_subteam',  'none');
+export const msgChannel = createPersistedStore('msg_channel', 'sms');
