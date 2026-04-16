@@ -65,6 +65,12 @@ export async function getSFRankings(team: string, period: string, icavMin = 0, s
   return r.json();
 }
 
+export async function getSFForecast(team: string, subteam = '') {
+  const r = await fetch(`/api/se-scorecard-v2/data/forecast?team=${team}${subteamParam(subteam)}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
 // ---------------------------------------------------------------------------
 // Suggestion box
 // ---------------------------------------------------------------------------

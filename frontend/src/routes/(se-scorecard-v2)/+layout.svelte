@@ -39,6 +39,14 @@
       title="Click for a surprise"
     >SE Scorecard</button>
 
+    <!-- Forecast nav link -->
+    <a
+      href="/se-scorecard-v2/forecast"
+      style="display:flex;align-items:center;gap:5px;text-decoration:none;padding:3px 8px;border-radius:5px;font-size:12px;font-weight:700;letter-spacing:0.03em;color:{p5?'rgba(255,255,255,0.55)':'rgba(13,18,43,0.55)'};transition:color 0.15s,background 0.15s"
+      onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color='var(--red)'; el.style.background=p5?'rgba(232,0,61,0.1)':'rgba(242,47,70,0.07)'; }}
+      onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color=p5?'rgba(255,255,255,0.55)':'rgba(13,18,43,0.55)'; el.style.background='none'; }}
+    >📈 Forecast</a>
+
     <!-- Feedback group — separated with extra gap -->
     <div style="display:flex;align-items:center;gap:4px;margin-left:16px;padding:4px 6px;border-radius:8px;background:{p5?'rgba(255,255,255,0.03)':'rgba(13,18,43,0.03)'};border:1px solid {p5?'rgba(255,255,255,0.07)':'rgba(13,18,43,0.07)'}">
       <SuggestionBox />

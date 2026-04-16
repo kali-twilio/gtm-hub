@@ -1084,6 +1084,142 @@ def _twiml_empty():
     return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype="text/xml")
 
 
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/forecast")
+def api_forecast():
+    """Return open-pipeline opportunities grouped by close quarter for forecasting."""
+    team_key = request.args.get("team", _DEFAULT_TEAM)
+    team = TEAMS.get(team_key)
+    if not team:
+        return jsonify({"error": f"Unknown team '{team_key}'"}), 400
+
+    subteam_key = request.args.get("subteam", "")
+    soql_filter = team["soql_filter"]
+    display_label = team["label"]
+    if subteam_key:
+        subteam = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None)
+        if not subteam:
+            return jsonify({"error": f"Unknown subteam '{subteam_key}'"}), 400
+        soql_filter = subteam["soql_filter"]
+        display_label = f"{team['label']} · {subteam['label']}"
+
+    if not sf.configured:
+        return jsonify({"error": "Salesforce is not configured."}), 503
+
+    # Fetch open pipeline opps
+    pipeline_soql = (
+        f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, StageName, "
+        f"Technical_Lead__r.Name, Technical_Lead__r.Email, "
+        f"Owner.Name, Owner.UserRole.Name, "
+        f"Account.Name, Presales_Stage__c "
+        f"FROM Opportunity "
+        f"WHERE StageName NOT IN ('Closed Won', 'Closed Lost') "
+        f"AND {soql_filter} "
+        f"AND Technical_Lead__c != null "
+        f"AND CloseDate >= {date.today().isoformat()}"
+    )
+
+    # Fetch closed won for current + prior 3 quarters for trend context
+    today = date.today()
+    cur_q = (today.month - 1) // 3 + 1
+    trend_start = f"{today.year}-{_QUARTER_STARTS[max(1, cur_q - 2)]}"
+    closed_soql = (
+        f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, StageName, "
+        f"Technical_Lead__r.Name, Owner.UserRole.Name, "
+        f"Account.Name, Presales_Stage__c "
+        f"FROM Opportunity "
+        f"WHERE StageName = 'Closed Won' "
+        f"AND {soql_filter} "
+        f"AND Technical_Lead__c != null "
+        f"AND CloseDate >= {trend_start}"
+    )
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            f_pipe   = pool.submit(sf.query, pipeline_soql)
+            f_closed = pool.submit(sf.query, closed_soql)
+            pipe_opps   = f_pipe.result()
+            closed_opps = f_closed.result()
+    except Exception as e:
+        log.exception("Forecast query failed for team %s", team_key)
+        return jsonify({"error": f"Salesforce query failed: {e}"}), 503
+
+    def _quarter_key(d: str) -> str:
+        try:
+            dt = date.fromisoformat(d)
+            q = (dt.month - 1) // 3 + 1
+            return f"{dt.year}_Q{q}"
+        except Exception:
+            return "unknown"
+
+    def _quarter_label(k: str) -> str:
+        if "_Q" in k:
+            y, q = k.split("_Q")
+            return f"Q{q} {y}"
+        return k
+
+    def _is_tw(opp: dict) -> bool:
+        return (opp.get("Presales_Stage__c") or "").upper() == "TECHNICAL WIN"
+
+    # Group pipeline by quarter
+    pipe_by_q: dict[str, list] = {}
+    for opp in (pipe_opps or []):
+        qk = _quarter_key(opp.get("CloseDate", ""))
+        pipe_by_q.setdefault(qk, []).append(opp)
+
+    # Group closed won by quarter
+    closed_by_q: dict[str, list] = {}
+    for opp in (closed_opps or []):
+        qk = _quarter_key(opp.get("CloseDate", ""))
+        closed_by_q.setdefault(qk, []).append(opp)
+
+    def _summarise_opps(opps: list) -> dict:
+        total_icav = sum(opp.get(_ICAV_FIELD) or 0 for opp in opps)
+        tw_opps    = [o for o in opps if _is_tw(o)]
+        tw_icav    = sum(o.get(_ICAV_FIELD) or 0 for o in tw_opps)
+        by_se: dict[str, dict] = {}
+        for opp in opps:
+            se = (opp.get("Technical_Lead__r") or {}).get("Name") or "Unknown"
+            icav = opp.get(_ICAV_FIELD) or 0
+            if se not in by_se:
+                by_se[se] = {"se": se, "count": 0, "icav": 0, "tw_count": 0, "tw_icav": 0, "opps": []}
+            by_se[se]["count"] += 1
+            by_se[se]["icav"]  += icav
+            if _is_tw(opp):
+                by_se[se]["tw_count"] += 1
+                by_se[se]["tw_icav"]  += icav
+            by_se[se]["opps"].append({
+                "id":      opp.get("Id"),
+                "name":    opp.get("Name"),
+                "account": (opp.get("Account") or {}).get("Name"),
+                "stage":   opp.get("StageName"),
+                "close":   opp.get("CloseDate"),
+                "icav":    icav,
+                "is_tw":   _is_tw(opp),
+            })
+        ses = sorted(by_se.values(), key=lambda x: x["icav"], reverse=True)
+        return {"total_icav": total_icav, "tw_icav": tw_icav, "count": len(opps), "tw_count": len(tw_opps), "ses": ses}
+
+    all_qkeys = sorted(set(list(pipe_by_q.keys()) + list(closed_by_q.keys())))
+    quarters = []
+    for qk in all_qkeys:
+        if qk == "unknown":
+            continue
+        pipe_summary   = _summarise_opps(pipe_by_q.get(qk, []))
+        closed_summary = _summarise_opps(closed_by_q.get(qk, []))
+        quarters.append({
+            "key":    qk,
+            "label":  _quarter_label(qk),
+            "pipe":   pipe_summary,
+            "closed": closed_summary,
+        })
+
+    return jsonify({
+        "team_label": display_label,
+        "quarters":   quarters,
+        "motion":     team.get("motion", "dsr"),
+    })
+
+
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")
 def api_rankings():
     team_key    = request.args.get("team", _DEFAULT_TEAM)
