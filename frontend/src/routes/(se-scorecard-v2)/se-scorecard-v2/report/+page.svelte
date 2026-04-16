@@ -16,6 +16,16 @@
   let showActivity = $state(false);
   let titleFilter   = $state('');
   let productFilter = $state('');
+  let dealModal = $state<{title: string; deals: any[]} | null>(null);
+
+  function seDeals(ses: any[], motions?: string[]): any[] {
+    const mots = motions ? new Set(motions) : null;
+    return (ses as any[]).flatMap((s: any) =>
+      ((s.tw_opps_detail ?? []) as any[])
+        .filter((o: any) => !mots || mots.has(o.motion))
+        .map((o: any) => ({ ...o, se_name: s.name }))
+    ).sort((a: any, b: any) => (b.icav ?? 0) - (a.icav ?? 0));
+  }
 
   // Returns a copy of an SE with iACV/wins recalculated from only fully-documented
   // TW opps (both Sales_Engineer_Notes__c and SE_Notes_History__c filled).
@@ -239,12 +249,12 @@
   const actOnly       = $derived(teamActIcav > 0 && teamExpIcav === 0);
   const singleMotion  = $derived(stratOnly || actOnly);
   const summaryCards  = $derived(data ? [
-    {label:'Total SE iACV',          val:fmt(teamTotalIcav),                   color:null, sub:(data.se_icav_pct != null && data.team_total_icav != null ? data.se_icav_pct+'% · '+fmt(data.team_total_icav)+' total' : null),            show:true},
-    {label:motionLabels.act+' iACV', val:fmt(teamActIcav),                     color:null, sub:(data.se_act_icav_pct != null && data.act_total_icav != null ? data.se_act_icav_pct+'% · '+fmt(data.act_total_icav)+' total' : null),     show:teamActIcav>0 && teamExpIcav>0},
-    {label:motionLabels.exp+' iACV', val:fmt(teamExpIcav),                     color:null, sub:(data.se_exp_icav_pct != null && data.exp_total_icav != null ? data.se_exp_icav_pct+'% · '+fmt(data.exp_total_icav)+' total' : null),     show:teamExpIcav>0 && teamActIcav>0},
-    {label:'Account ARR',            val:fmt(expTotals.arr_total),             color:null, sub:null,                                                                                                                                        show:stratOnly && expTotals.arr_total>0},
-    {label:'Qtr MRR Δ',              val:fmtMrrDelta(expTotals.mrr_delta_total), color:expTotals.mrr_delta_total>0?($theme==='twilio'?'#178742':'#10B981'):expTotals.mrr_delta_total<0?($theme==='twilio'?'#DC2626':'#EF4444'):'var(--text-muted)', sub:null, show:stratOnly && expTotals.arr_total>0},
-    {label:'SEs Analysed',           val:String(data.total),                   color:null, sub:null,                                                                                                                                        show:true},
+    {label:'Total SE iACV',          val:fmt(teamTotalIcav),                   color:null, sub:(data.se_icav_pct != null && data.team_total_icav != null ? data.se_icav_pct+'% · '+fmt(data.team_total_icav)+' total' : null),            show:true,   motions:null},
+    {label:motionLabels.act+' iACV', val:fmt(teamActIcav),                     color:null, sub:(data.se_act_icav_pct != null && data.act_total_icav != null ? data.se_act_icav_pct+'% · '+fmt(data.act_total_icav)+' total' : null),     show:teamActIcav>0 && teamExpIcav>0, motions:['act','nb']},
+    {label:motionLabels.exp+' iACV', val:fmt(teamExpIcav),                     color:null, sub:(data.se_exp_icav_pct != null && data.exp_total_icav != null ? data.se_exp_icav_pct+'% · '+fmt(data.exp_total_icav)+' total' : null),     show:teamExpIcav>0 && teamActIcav>0, motions:['exp','strat']},
+    {label:'Account ARR',            val:fmt(expTotals.arr_total),             color:null, sub:null,                                                                                                                                        show:stratOnly && expTotals.arr_total>0, motions:null},
+    {label:'Qtr MRR Δ',              val:fmtMrrDelta(expTotals.mrr_delta_total), color:expTotals.mrr_delta_total>0?($theme==='twilio'?'#178742':'#10B981'):expTotals.mrr_delta_total<0?($theme==='twilio'?'#DC2626':'#EF4444'):'var(--text-muted)', sub:null, show:stratOnly && expTotals.arr_total>0, motions:null},
+    {label:'SEs Analysed',           val:String(data.total),                   color:null, sub:null,                                                                                                                                        show:true,   motions:null},
   ].filter((s: any) => s.show && s.val != null) : []);
 
 const actStatCols = $derived(data ? [
@@ -434,8 +444,9 @@ const actStatCols = $derived(data ? [
 
   <div style="display:grid;grid-template-columns:repeat({summaryCards.length},1fr);gap:8px;margin-bottom:24px">
     {#each summaryCards as s}
-    <div class="p5-stat-chip">
-      <div style="font-size:9px;color:var(--red);font-weight:800;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};margin-bottom:6px">{s.label}</div>
+    {@const clickable = s.motions != null || s.label === 'Total SE iACV'}
+    <div class="p5-stat-chip" onclick={() => { if (clickable) dealModal = { title: s.label + ' — Deals', deals: seDeals(filteredRanked, s.motions ?? undefined) }; }} style="{clickable ? 'cursor:pointer' : ''}">
+      <div style="font-size:9px;color:var(--red);font-weight:800;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};margin-bottom:6px">{s.label}{#if clickable} <span style="opacity:0.5;font-size:8px">▼</span>{/if}</div>
       <div style="font-size:28px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{s.color ?? 'var(--text)'};{$theme==='p5'?'text-shadow:2px 2px 0 rgba(var(--red-rgb),0.4)':''};line-height:1">{s.val}</div>
       {#if s.sub}<div style="font-size:11px;color:var(--text-muted);font-weight:600;margin-top:5px">{s.sub}</div>{/if}
     </div>
@@ -585,21 +596,21 @@ const actStatCols = $derived(data ? [
             <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
 
             {#if hasActCol}
-            <td style="padding:10px 16px">
+            <td onclick={() => dealModal = { title: se.name + ' — ' + motionLabels.act + ' Deals', deals: seDeals([se], ['act','nb']) }} style="padding:10px 16px;cursor:pointer" title="Click to see deals">
               <div style="font-weight:700;color:var(--act-color)">{fmt(vActIcav)}</div>
               <div style="font-size:11px;color:var(--text-muted);margin-top:1px">{vActWins} {vActWins === 1 ? 'win' : 'wins'}</div>
             </td>
             {/if}
 
             {#if hasExpCol}
-            <td style="padding:10px 16px">
+            <td onclick={() => dealModal = { title: se.name + ' — ' + motionLabels.exp + ' Deals', deals: seDeals([se], ['exp','strat']) }} style="padding:10px 16px;cursor:pointer" title="Click to see deals">
               <div style="font-weight:700;color:var(--exp-color)">{fmt(vExpIcav)}</div>
               <div style="font-size:11px;color:var(--text-muted);margin-top:1px">{vExpWins} {vExpWins === 1 ? 'win' : 'wins'}</div>
             </td>
             {/if}
 
             <!-- Total iACV -->
-            <td style="padding:10px 16px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text)">
+            <td onclick={() => dealModal = { title: se.name + ' — All Deals', deals: seDeals([se]) }} style="padding:10px 16px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text);cursor:pointer" title="Click to see deals">
               {fmt(seIcav(se))}
             </td>
 
@@ -714,7 +725,7 @@ const actStatCols = $derived(data ? [
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
               <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{vActWins}</td>
-              <td style="padding:10px 16px;color:var(--act-color);font-weight:700">{fmt(vActIcav)}</td>
+              <td onclick={() => dealModal = { title: se.name + ' — ' + motionLabels.act + ' Deals', deals: seDeals([se], ['act','nb']) }} style="padding:10px 16px;color:var(--act-color);font-weight:700;cursor:pointer" title="Click to see deals">{fmt(vActIcav)}</td>
               <td style="padding:10px 16px;color:var(--text-muted)">{fmt(se.act_median)}</td>
               {#if hasWinRateCol}
               <td style="padding:10px 16px">
@@ -801,7 +812,7 @@ const actStatCols = $derived(data ? [
               <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
               <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
               <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{se.exp_wins}</td>
-              <td style="padding:10px 16px;color:var(--exp-color);font-weight:700">{fmt(se.exp_icav)}</td>
+              <td onclick={() => dealModal = { title: se.name + ' — ' + motionLabels.exp + ' Deals', deals: seDeals([se], ['exp','strat']) }} style="padding:10px 16px;color:var(--exp-color);font-weight:700;cursor:pointer" title="Click to see deals">{fmt(se.exp_icav)}</td>
               {#if expTotals.arr_total > 0}
               {@const seArr = se.exp_arr_total ?? 0}
               {@const seDelta = se.exp_mrr_delta_total ?? 0}
@@ -1223,4 +1234,51 @@ const actStatCols = $derived(data ? [
   </div>
 
 </div>
+
+{#if dealModal}
+<div onclick={() => dealModal = null} style="position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;display:flex;align-items:center;justify-content:center;padding:24px">
+  <div onclick={e => e.stopPropagation()} style="background:var(--bg);border:1px solid rgba(var(--red-rgb),0.2);border-radius:8px;max-width:800px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 16px 48px rgba(0,0,0,0.5)">
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 20px;border-bottom:1px solid rgba(var(--red-rgb),0.1)">
+      <div style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--red)">{dealModal.title}</div>
+      <button onclick={() => dealModal = null} style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px;line-height:1;padding:0 4px">✕</button>
+    </div>
+    <div style="overflow-y:auto;flex:1">
+      {#if dealModal.deals.length === 0}
+        <div style="padding:32px;text-align:center;color:var(--text-muted);font-size:13px">No deals found</div>
+      {:else}
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead style="background:rgba(var(--red-rgb),0.06);position:sticky;top:0">
+          <tr>
+            {#each ['SE','Opportunity','Product','AE','iACV','Motion','Date','Notes'] as h}
+            <th style="padding:10px 12px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--red);white-space:nowrap">{h}</th>
+            {/each}
+          </tr>
+        </thead>
+        <tbody>
+          {#each dealModal.deals as d}
+          {@const motColor = (d.motion === 'act' || d.motion === 'nb') ? 'var(--act-color)' : 'var(--exp-color)'}
+          {@const motLabel = d.motion === 'act' ? 'Activate' : d.motion === 'nb' ? 'New Biz' : d.motion === 'exp' ? 'Expansion' : 'Strategic'}
+          <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
+            <td style="padding:8px 12px;color:var(--text-muted);font-weight:600;white-space:nowrap">{d.se_name}</td>
+            <td style="padding:8px 12px;color:var(--text);font-weight:600;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={d.name}>{d.name}</td>
+            <td style="padding:8px 12px;color:var(--text-muted)">{d.product || '—'}</td>
+            <td style="padding:8px 12px;color:var(--text-muted);white-space:nowrap">{d.owner || '—'}</td>
+            <td style="padding:8px 12px;font-weight:700;color:{motColor};white-space:nowrap">{fmt(d.icav ?? 0)}</td>
+            <td style="padding:8px 12px"><span style="font-size:10px;font-weight:700;color:{motColor};background:{motColor}18;padding:2px 6px;border-radius:3px">{motLabel}</span></td>
+            <td style="padding:8px 12px;color:var(--text-muted);white-space:nowrap">{d.close_date || '—'}</td>
+            <td style="padding:8px 12px;color:{d.has_notes && d.has_history ? 'var(--exp-color)' : d.has_notes || d.has_history ? 'var(--text-muted)' : 'var(--red)'}">
+              {d.has_notes && d.has_history ? '✓ both' : d.has_notes ? 'notes' : d.has_history ? 'history' : '✗ none'}
+            </td>
+          </tr>
+          {/each}
+        </tbody>
+      </table>
+      {/if}
+    </div>
+    <div style="padding:10px 20px;border-top:1px solid rgba(var(--red-rgb),0.08);font-size:11px;color:var(--text-muted)">
+      {dealModal.deals.length} deal{dealModal.deals.length !== 1 ? 's' : ''} · Total iACV: {fmt(dealModal.deals.reduce((s: number, d: any) => s + (d.icav ?? 0), 0))}
+    </div>
+  </div>
+</div>
+{/if}
 {/if}
