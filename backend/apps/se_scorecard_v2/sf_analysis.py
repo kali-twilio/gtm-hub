@@ -1165,7 +1165,7 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
       - Expansion ARR/MRR signals (account health SEs influence via engagement)
 
     Win rate is intentionally excluded — Closed Lost logging is driven by AE/DSR
-    behavior (logging unqualified disqualifications), not SE performance.
+    behavior (logging unqualified disqualifications), not SE impact.
     """
     recs = []
     n = len(ses)
