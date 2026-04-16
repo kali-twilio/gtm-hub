@@ -427,10 +427,9 @@ const actStatCols = $derived(data ? [
 <div style="max-width:1200px;margin:0 auto;padding:60px 24px 40px">
 
   <div style="margin-bottom:28px">
-    <div class="p5-badge" style="margin-bottom:10px">SE Scorecard · {data.quarter}</div>
-    <h1 style="font-size:36px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:3px 3px 0 var(--red)':''}">SE Scorecard</h1>
-    <p style="font-size:16px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:var(--red);margin-top:6px">{data.team_label}</p>
-    <p style="font-size:13px;color:var(--text-muted);font-weight:600;margin-top:2px">{data.total} SEs · Live data from Salesforce</p>
+    <h1 style="font-size:36px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};text-transform:uppercase;color:var(--text);{$theme==='p5'?'text-shadow:3px 3px 0 var(--red)':''}">Full Report</h1>
+    <p style="font-size:16px;font-weight:800;text-transform:uppercase;letter-spacing:0.08em;color:var(--red);margin-top:4px">{data.team_label} · {data.quarter}</p>
+    <p style="font-size:13px;color:var(--text-muted);font-weight:600;margin-top:4px">{data.total} SEs · Live data from Salesforce</p>
   </div>
 
   <div style="display:grid;grid-template-columns:repeat({summaryCards.length},1fr);gap:8px;margin-bottom:24px">
