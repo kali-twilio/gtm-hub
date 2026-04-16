@@ -59,23 +59,53 @@ SECRETS_EXPIRES=1800  # pre-signed URL TTL for secrets env file (30 minutes)
 # Only proceed if there are no Critical or High findings.
 # ─────────────────────────────────────────────────────────────────────────────
 
-# ── 0. Build SvelteKit frontend ───────────────────────────────────────────────
-echo "Building frontend..."
+# ── 0. Build frontend + check for old instance in parallel ───────────────────
+echo "Building frontend and checking for running instances..."
+
+# Kick off instance lookup in background
+OLD_IDS=""
+_instance_check() {
+  aws ec2 describe-instances \
+    --profile "$PROFILE" --region "$REGION" \
+    --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running,pending" \
+    --query "Reservations[].Instances[].InstanceId" \
+    --output text
+}
+_INSTANCE_IDS_FILE=$(mktemp)
+_instance_check > "$_INSTANCE_IDS_FILE" &
+_INSTANCE_CHECK_PID=$!
+
+# Kick off AMI lookup in background while build runs
+AMI_CACHE_FILE=".ami-cache"
+_ami_lookup() {
+  aws ec2 describe-images \
+    --profile "$PROFILE" --region "$REGION" \
+    --owners amazon \
+    --filters "Name=name,Values=al2023-ami-2023*-x86_64" "Name=state,Values=available" \
+    --query "sort_by(Images,&CreationDate)[-1].ImageId" --output text
+}
+# Refresh AMI cache if older than 7 days or missing
+if [ ! -f "$AMI_CACHE_FILE" ] || [ "$(find "$AMI_CACHE_FILE" -mtime +7 2>/dev/null)" ]; then
+  _ami_lookup > "$AMI_CACHE_FILE" &
+  _AMI_LOOKUP_PID=$!
+else
+  _AMI_LOOKUP_PID=""
+fi
+
+# Build frontend (runs while instance check + AMI lookup run in background)
 cd frontend
 npm ci --silent
 npm run build
 cd ..
 echo "Frontend built."
 
+# Wait for background instance check
+wait "$_INSTANCE_CHECK_PID"
+OLD_IDS=$(cat "$_INSTANCE_IDS_FILE")
+rm -f "$_INSTANCE_IDS_FILE"
+
 # ── 1. Terminate any running instances with this tag ─────────────────────────
 echo ""
-echo "Checking for running instances..."
-OLD_IDS=$(aws ec2 describe-instances \
-  --profile "$PROFILE" --region "$REGION" \
-  --filters "Name=tag:Name,Values=$TAG_NAME" "Name=instance-state-name,Values=running,pending" \
-  --query "Reservations[].Instances[].InstanceId" \
-  --output text)
-
 if [ -n "$OLD_IDS" ]; then
   echo "Terminating: $OLD_IDS"
   aws ec2 terminate-instances \
@@ -90,18 +120,20 @@ else
   echo "No running instances found."
 fi
 
-# ── 2. Upload app files + secrets env to S3 ──────────────────────────────────
+# ── 2. Upload app files + secrets env to S3 (parallel, piped — no temp files) ─
 echo ""
 echo "Uploading files to S3..."
-tar -czf /tmp/backend.tar.gz  -C backend .
-tar -czf /tmp/frontend.tar.gz -C frontend/build .
-aws s3 cp /tmp/backend.tar.gz  s3://$BUCKET/backend.tar.gz  --profile "$PROFILE" --region "$REGION"
-aws s3 cp /tmp/frontend.tar.gz s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION"
-aws s3api put-object-tagging --bucket "$BUCKET" --key backend.tar.gz  --tagging "TagSet=[{Key=owner,Value=$OWNER}]" --profile "$PROFILE" --region "$REGION"
-aws s3api put-object-tagging --bucket "$BUCKET" --key frontend.tar.gz --tagging "TagSet=[{Key=owner,Value=$OWNER}]" --profile "$PROFILE" --region "$REGION"
-rm /tmp/backend.tar.gz /tmp/frontend.tar.gz
 
-# Write secrets to a temp file, upload to S3, then delete locally.
+# Upload backend and frontend in parallel, tagging inline
+tar -czf - -C backend . | aws s3 cp - s3://$BUCKET/backend.tar.gz \
+  --profile "$PROFILE" --region "$REGION" &
+_BACKEND_UPLOAD_PID=$!
+
+tar -czf - -C frontend/build . | aws s3 cp - s3://$BUCKET/frontend.tar.gz \
+  --profile "$PROFILE" --region "$REGION" &
+_FRONTEND_UPLOAD_PID=$!
+
+# Build and upload secrets while app bundles upload
 SECRETS_FILE=$(mktemp /tmp/secrets.XXXXXX.env)
 chmod 600 "$SECRETS_FILE"
 cat > "$SECRETS_FILE" << SECRETS
@@ -130,17 +162,42 @@ for app_env in backend/apps/*/.env; do
 done
 aws s3 cp "$SECRETS_FILE" s3://$BUCKET/secrets.env \
   --profile "$PROFILE" --region "$REGION" \
-  --sse aws:kms
-aws s3api put-object-tagging --bucket "$BUCKET" --key secrets.env --tagging "TagSet=[{Key=owner,Value=$OWNER}]" --profile "$PROFILE" --region "$REGION"
+  --sse aws:kms &
+_SECRETS_UPLOAD_PID=$!
+
+# Wait for all uploads (check each individually so a failure isn't silently swallowed)
+wait "$_BACKEND_UPLOAD_PID"  || { echo "ERROR: backend upload failed";  exit 1; }
+wait "$_FRONTEND_UPLOAD_PID" || { echo "ERROR: frontend upload failed"; exit 1; }
+wait "$_SECRETS_UPLOAD_PID"  || { rm -f "$SECRETS_FILE"; echo "ERROR: secrets upload failed"; exit 1; }
 rm -f "$SECRETS_FILE"
 
+# Tag all three objects in parallel (resource attribution)
+aws s3api put-object-tagging --bucket "$BUCKET" --key backend.tar.gz  --tagging "TagSet=[{Key=owner,Value=$OWNER}]" --profile "$PROFILE" --region "$REGION" &
+aws s3api put-object-tagging --bucket "$BUCKET" --key frontend.tar.gz --tagging "TagSet=[{Key=owner,Value=$OWNER}]" --profile "$PROFILE" --region "$REGION" &
+aws s3api put-object-tagging --bucket "$BUCKET" --key secrets.env     --tagging "TagSet=[{Key=owner,Value=$OWNER}]" --profile "$PROFILE" --region "$REGION" &
+wait
 echo "Upload complete."
 
-# ── 3. Generate pre-signed download URLs ────────────────────────────────────
-BACKEND_URL_S3=$(aws s3 presign  s3://$BUCKET/backend.tar.gz   --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-FRONTEND_URL_S3=$(aws s3 presign s3://$BUCKET/frontend.tar.gz  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES)
-SECRETS_URL_S3=$(aws s3 presign  s3://$BUCKET/secrets.env      --profile "$PROFILE" --region "$REGION" --expires-in $SECRETS_EXPIRES)
+# ── 3. Generate pre-signed download URLs (parallel) ──────────────────────────
+_BACKEND_PRESIGN_FILE=$(mktemp)
+_FRONTEND_PRESIGN_FILE=$(mktemp)
+_SECRETS_PRESIGN_FILE=$(mktemp)
+chmod 600 "$_BACKEND_PRESIGN_FILE" "$_FRONTEND_PRESIGN_FILE" "$_SECRETS_PRESIGN_FILE"
 
+aws s3 presign s3://$BUCKET/backend.tar.gz  --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES         > "$_BACKEND_PRESIGN_FILE"  &
+_BACKEND_PRESIGN_PID=$!
+aws s3 presign s3://$BUCKET/frontend.tar.gz --profile "$PROFILE" --region "$REGION" --expires-in $EXPIRES         > "$_FRONTEND_PRESIGN_FILE" &
+_FRONTEND_PRESIGN_PID=$!
+aws s3 presign s3://$BUCKET/secrets.env     --profile "$PROFILE" --region "$REGION" --expires-in $SECRETS_EXPIRES > "$_SECRETS_PRESIGN_FILE"  &
+_SECRETS_PRESIGN_PID=$!
+wait "$_BACKEND_PRESIGN_PID" || { echo "ERROR: backend presign failed"; exit 1; }
+wait "$_FRONTEND_PRESIGN_PID" || { echo "ERROR: frontend presign failed"; exit 1; }
+wait "$_SECRETS_PRESIGN_PID" || { echo "ERROR: secrets presign failed"; exit 1; }
+
+BACKEND_URL_S3=$(cat "$_BACKEND_PRESIGN_FILE")
+FRONTEND_URL_S3=$(cat "$_FRONTEND_PRESIGN_FILE")
+SECRETS_URL_S3=$(cat "$_SECRETS_PRESIGN_FILE")
+rm -f "$_BACKEND_PRESIGN_FILE" "$_FRONTEND_PRESIGN_FILE" "$_SECRETS_PRESIGN_FILE"
 
 # ── 4. Build boot script (NO secret values — only a short-lived URL) ─────────
 USERDATA_FILE=$(mktemp /tmp/userdata.XXXXXX.sh)
@@ -253,14 +310,15 @@ echo '* * * * * root journalctl -u app --no-pager -n 300 > /var/www/scorecard/de
 echo "SETUP COMPLETE"
 USERDATA
 
-# ── 5. Launch new instance ───────────────────────────────────────────────────
+# ── 5. Resolve AMI and launch new instance ───────────────────────────────────
 echo ""
 echo "Launching new instance..."
-AMI_ID=$(aws ec2 describe-images \
-  --profile "$PROFILE" --region "$REGION" \
-  --owners amazon \
-  --filters "Name=name,Values=al2023-ami-2023*-x86_64" "Name=state,Values=available" \
-  --query "sort_by(Images,&CreationDate)[-1].ImageId" --output text)
+
+# Wait for AMI lookup if it was running in background
+if [ -n "$_AMI_LOOKUP_PID" ]; then
+  wait "$_AMI_LOOKUP_PID"
+fi
+AMI_ID=$(cat "$AMI_CACHE_FILE")
 
 INSTANCE_ID=$(aws ec2 run-instances \
   --profile "$PROFILE" --region "$REGION" \
@@ -287,12 +345,30 @@ aws ec2 associate-address \
 
 rm -f "$USERDATA_FILE"
 
-# ── 7. Delete secrets file from S3 once instance is booted ───────────────────
-# Instance is running — give it 3 min to finish downloading secrets, then delete
-echo "Waiting 3 minutes for instance to fetch secrets, then cleaning up S3..."
-sleep 180
+# ── 7. Delete secrets file from S3 once instance signals setup complete ───────
+# Note: EC2 console output is buffered and can take up to 15 minutes to appear
+# via the API even after the instance has finished booting. Poll for up to 15 min.
+echo "Waiting for instance to finish setup (polling console output for SETUP COMPLETE)..."
+_ELAPSED=0
+while true; do
+  OUTPUT=$(aws ec2 get-console-output \
+    --profile "$PROFILE" --region "$REGION" \
+    --instance-id "$INSTANCE_ID" \
+    --query "Output" --output text 2>/dev/null || true)
+  if echo "$OUTPUT" | grep -q "SETUP COMPLETE"; then
+    echo "Instance setup complete (${_ELAPSED}s)."
+    break
+  fi
+  if [ "$_ELAPSED" -ge 900 ]; then
+    echo "Warning: timed out waiting for SETUP COMPLETE after ${_ELAPSED}s — deleting secrets anyway."
+    break
+  fi
+  sleep 15
+  _ELAPSED=$((_ELAPSED + 15))
+  echo "  Still waiting... (${_ELAPSED}s)"
+done
 aws s3 rm s3://$BUCKET/secrets.env --profile "$PROFILE" --region "$REGION" && echo "Secrets file deleted from S3." || echo "Warning: could not delete secrets.env from S3 — delete manually."
 
 echo ""
-echo "✓ Done. App will be ready in ~4 minutes at:"
+echo "✓ Done. App should be live now or within ~1 minute at:"
 echo "  https://$DOMAIN"
