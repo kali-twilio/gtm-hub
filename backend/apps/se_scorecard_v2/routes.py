@@ -940,7 +940,8 @@ def api_sms_webhook():
     # ── 3. Lookup: verify mobile number + get caller name ────────────────────
     lookup = _lookup_phone(from_number) if not _local_dev else {"caller_name": None, "is_mobile": True}
     if not lookup["is_mobile"]:
-        return _twiml_reply("Sorry, this service is only available to mobile numbers.")
+        log.info("SMS from non-mobile %s — ignoring silently", from_number)
+        return _twiml_empty()
 
     db = _get_firestore()
     if db is None:
@@ -1034,10 +1035,17 @@ def api_sms_webhook():
 
 
 def _twiml_reply(message: str):
-    """Return a minimal TwiML response."""
+    """Return a TwiML response with XML-escaped message body."""
+    import xml.sax.saxutils as saxutils
     from flask import Response
-    twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{message}</Message></Response>'
+    safe = saxutils.escape(message)
+    twiml = f'<?xml version="1.0" encoding="UTF-8"?><Response><Message>{safe}</Message></Response>'
     return Response(twiml, mimetype="text/xml")
+
+def _twiml_empty():
+    """Return an empty TwiML response — no reply sent."""
+    from flask import Response
+    return Response('<?xml version="1.0" encoding="UTF-8"?><Response></Response>', mimetype="text/xml")
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")
