@@ -74,11 +74,15 @@ TEAMS = {
         "criteria": [
             {
                 "label":  "DSR Opportunity",
-                "detail": "FY_16_Owner_Team__c starts with 'DSR' (stamped at assignment) OR owner's current role contains 'DSR' (fallback for opps where FY_16 was never stamped). Excludes Twilio.org roles.",
+                "detail": "Opp WHERE FY_16_Owner_Team__c LIKE 'DSR%' (stamped at assignment, frozen) OR Owner.UserRole.Name LIKE '%DSR%' AND NOT LIKE '%Twilio.org%' (fallback when FY_16 was never stamped).",
             },
             {
                 "label":  "SE Tagged",
-                "detail": "Technical Lead role = 'SE - Self Service' and title contains 'Engineer'",
+                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name = 'SE - Self Service' AND Technical_Lead__r.Title LIKE '%Engineer%'. Both conditions required — role identifies the team, title excludes non-SE roles sharing the same UserRole.",
+            },
+            {
+                "label":  "Total iACV",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE (FY_16_Owner_Team__c LIKE 'DSR%' OR Owner.UserRole.Name LIKE '%DSR%' …) — no SE tag required. Represents the full DSR team's iACV against which SE-tagged deals are measured.",
             },
         ],
     },
@@ -86,13 +90,17 @@ TEAMS = {
         "label":            "NAMER",
         "description":      "All NAMER SEs",
         "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE '%NAMER%'",
+        "team_total_filter": "FY_16_Owner_Team__c LIKE '%NAMER%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - NAMER%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - NAMER%'",
         "criteria": [
             {
                 "label":  "SE Tagged",
-                "detail": "Technical Lead UserRole starts with 'SE - NAMER'",
+                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name LIKE 'SE - NAMER%' AND StageName = 'Closed Won'. Covers all NAMER sub-roles (Retail, NB, ISV, HighTech, RegVerts, MarTech).",
+            },
+            {
+                "label":  "Total iACV",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c LIKE '%NAMER%' — stamped at opp assignment and frozen. SE-tagged deals are measured as a % of this.",
             },
         ],
         "subteams": [
@@ -108,13 +116,17 @@ TEAMS = {
         "label":            "EMEA",
         "description":      "All EMEA SEs",
         "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE '%EMEA%'",
+        "team_total_filter": "FY_16_Owner_Team__c LIKE '%EMEA%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - EMEA%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - EMEA%'",
         "criteria": [
             {
                 "label":  "SE Tagged",
-                "detail": "Technical Lead UserRole starts with 'SE - EMEA'",
+                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name LIKE 'SE - EMEA%' AND StageName = 'Closed Won'. Covers North, DACH, and South sub-roles.",
+            },
+            {
+                "label":  "Total iACV",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c LIKE '%EMEA%' — stamped at opp assignment and frozen, so it reflects the original team regardless of AE role changes.",
             },
         ],
         "subteams": [
@@ -127,13 +139,17 @@ TEAMS = {
         "label":            "APJ",
         "description":      "APJ SE team",
         "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE '%APJ%'",
+        "team_total_filter": "FY_16_Owner_Team__c LIKE '%APJ%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - APJ'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - APJ'",
         "criteria": [
             {
                 "label":  "SE Tagged",
-                "detail": "Technical Lead UserRole = 'SE - APJ'",
+                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name = 'SE - APJ' AND StageName = 'Closed Won'.",
+            },
+            {
+                "label":  "Total iACV",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c LIKE '%APJ%' — stamped at opp assignment and frozen, so it reflects the original team regardless of AE role changes.",
             },
         ],
     },
@@ -141,13 +157,17 @@ TEAMS = {
         "label":            "LATAM",
         "description":      "LATAM SE team",
         "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE '%LATAM%'",
+        "team_total_filter": "FY_16_Owner_Team__c LIKE '%LATAM%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - LATAM%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - LATAM%'",
         "criteria": [
             {
                 "label":  "SE Tagged",
-                "detail": "Technical Lead UserRole starts with 'SE - LATAM'",
+                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name LIKE 'SE - LATAM%' AND StageName = 'Closed Won'. Covers Brazil (SE - LATAM - BR) and Rest of LATAM (SE - LATAM - ROL).",
+            },
+            {
+                "label":  "Total iACV",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c LIKE '%LATAM%' — stamped at opp assignment and frozen, so it reflects the original team regardless of AE role changes.",
             },
         ],
         "subteams": [
@@ -159,13 +179,17 @@ TEAMS = {
         "label":            "DORG",
         "description":      ".ORG SE team",
         "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'",
+        "team_total_filter": "FY_16_Owner_Team__c = 'ORG'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
         "criteria": [
             {
                 "label":  "SE Tagged",
-                "detail": "Technical Lead UserRole = 'SE - DORG'",
+                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name = 'SE - DORG' AND StageName = 'Closed Won'.",
+            },
+            {
+                "label":  "Total iACV",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c = 'ORG' (exact match) — stamped at opp assignment and frozen. Exact match avoids contamination from Twilio.org suffixes in other regions.",
             },
         ],
     },
@@ -404,9 +428,9 @@ def _get_team_total_icav(team_total_filter: str, start: str, end: str) -> int | 
 def _motion_total_filter(team_total_filter: str, motion: str, which: str) -> str:
     base = f"({team_total_filter})"
     if motion == "dsr":
-        clause = "Owner.UserRole.Name LIKE '%Activation%'" if which == "act" else "Owner.UserRole.Name LIKE '%Expansion%'"
+        clause = "(FY_16_Owner_Team__c LIKE '%Activation%' OR FY_16_Owner_Team__c LIKE '%Activate%')" if which == "act" else "FY_16_Owner_Team__c LIKE '%Expansion%'"
     else:
-        clause = "Owner.UserRole.Name LIKE '% NB%'" if which == "act" else "Owner.UserRole.Name LIKE '%Strat%'"
+        clause = "FY_16_Owner_Team__c LIKE '% NB%'" if which == "act" else "FY_16_Owner_Team__c LIKE '%Strat%'"
     return f"{base} AND {clause}"
 
 
