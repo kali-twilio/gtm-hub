@@ -1,8 +1,0 @@
-{
-  "id": "winloss",
-  "name": "Win / Loss Analysis",
-  "description": "Competitive win/loss trends broken down by segment and region.",
-  "icon": "🎯",
-  "path": "/winloss",
-  "status": "coming_soon"
-}

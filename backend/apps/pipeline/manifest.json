@@ -1,8 +1,0 @@
-{
-  "id": "pipeline",
-  "name": "Pipeline Tracker",
-  "description": "Opportunity pipeline visibility and forecasting across the team.",
-  "icon": "📈",
-  "path": "/pipeline",
-  "status": "coming_soon"
-}

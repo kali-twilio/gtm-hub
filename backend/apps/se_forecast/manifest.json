@@ -1,0 +1,9 @@
+{
+  "id": "se-forecast",
+  "name": "SE Forecast",
+  "description": "SE pipeline and forecast tracking.",
+  "icon": "📈",
+  "path": "/se-forecast",
+  "status": "live",
+  "order": 2
+}

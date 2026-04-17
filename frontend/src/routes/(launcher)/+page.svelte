@@ -218,12 +218,25 @@
   <!-- App grid -->
   <div class="app-grid">
     {#each apps as app}
-      {#if app.status === 'live'}
+      {#if app.status === 'live' && app.id !== 'se-forecast'}
         <a href={app.path} class="app-card active" style="color:inherit">
           <div class="card-icon">{app.icon}</div>
           <div class="card-name">{app.name}</div>
           <div class="card-desc">{app.description}</div>
           <div class="card-open">Open <span>→</span></div>
+        </a>
+      {:else if app.id === 'se-forecast'}
+        <a href={app.path} class="app-card active" style="color:inherit;position:relative;overflow:hidden;border-color:#f5a623;border-top-color:#f5a623">
+          <div style="position:absolute;inset:0;background:repeating-linear-gradient(-45deg,rgba(245,166,35,0.07),rgba(245,166,35,0.07) 10px,transparent 10px,transparent 20px);pointer-events:none;z-index:0"></div>
+          <div style="position:relative;z-index:1">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
+              <span style="font-size:36px;line-height:1">{app.icon}</span>
+              <span style="font-size:10px;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#f5a623;background:rgba(245,166,35,0.12);border:1px solid rgba(245,166,35,0.3);border-radius:4px;padding:2px 7px">🚧 WIP</span>
+            </div>
+            <div class="card-name">{app.name}</div>
+            <div class="card-desc">{app.description}</div>
+            <div class="card-open" style="color:#f5a623">Open <span>→</span></div>
+          </div>
         </a>
       {:else}
         <div class="app-card disabled">

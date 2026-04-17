@@ -4,5 +4,6 @@
   "description": "Live Salesforce data for all SE teams — DSR, NAMER, EMEA, APJ, LATAM, and DORG.",
   "icon": "⚡",
   "path": "/se-scorecard-v2",
-  "status": "live"
+  "status": "live",
+  "order": 1
 }
