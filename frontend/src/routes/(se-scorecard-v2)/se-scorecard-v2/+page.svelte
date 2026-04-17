@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { user, sfTeam, sfPeriod, sfSubteam, authReady } from '$lib/stores';
-  import { getSFPeriods, fmt } from '$lib/api';
+  import { getSFPeriods, fmt, chatWithSEScorecard } from '$lib/api';
   import { goto } from '$app/navigation';
 
   interface Criterion { label: string; detail: string; }
@@ -16,6 +16,37 @@
   let error = $state('');
 
   let criteriaExpanded = $state(false);
+
+  // Chat state
+  interface ChatMessage { role: 'user' | 'assistant'; text: string; }
+  let chatMessages: ChatMessage[] = $state([]);
+  let chatInput = $state('');
+  let chatLoading = $state(false);
+  let chatError = $state('');
+  let chatOpen = $state(false);
+  let chatEndEl: HTMLDivElement | null = $state(null);
+
+  async function sendChat() {
+    const msg = chatInput.trim();
+    if (!msg || chatLoading) return;
+    chatInput = '';
+    chatError = '';
+    chatMessages = [...chatMessages, { role: 'user', text: msg }];
+    chatLoading = true;
+    setTimeout(() => chatEndEl?.scrollIntoView({ behavior: 'smooth' }), 50);
+    const res = await chatWithSEScorecard(msg, $sfTeam, $sfPeriod, 0, $sfSubteam);
+    chatLoading = false;
+    if (res.error) {
+      chatError = res.error;
+    } else {
+      chatMessages = [...chatMessages, { role: 'assistant', text: res.answer ?? '' }];
+    }
+    setTimeout(() => chatEndEl?.scrollIntoView({ behavior: 'smooth' }), 50);
+  }
+
+  function onChatKey(e: KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  }
 
   async function loadSummary(teamKey: string, periodKey: string, subteamKey = $sfSubteam) {
     loading = true;
@@ -238,6 +269,79 @@
   </div>
   {/if}
 
+  <!-- AI Chatbot -->
+  {#if summary}
+  <div class="w-full hub-container" style="margin-bottom:32px">
+    <button
+      onclick={() => chatOpen = !chatOpen}
+      style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:rgba(var(--red-rgb),0.06);border:1px solid rgba(var(--red-rgb),0.2);border-radius:{chatOpen ? '8px 8px 0 0' : '8px'};cursor:pointer;color:var(--text);font-size:13px;font-weight:700;letter-spacing:0.04em"
+    >
+      <span>🤖 Ask AI about this data</span>
+      <span style="font-size:10px;color:var(--text-muted);font-weight:500;transition:transform 0.2s;transform:{chatOpen ? 'rotate(180deg)' : 'rotate(0)'}">▼</span>
+    </button>
+
+    {#if chatOpen}
+    <div style="border:1px solid rgba(var(--red-rgb),0.2);border-top:none;border-radius:0 0 8px 8px;overflow:hidden;display:flex;flex-direction:column">
+
+      <!-- Message thread -->
+      <div class="chat-thread" style="max-height:360px;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:10px">
+        {#if chatMessages.length === 0}
+        <div style="font-size:12px;color:var(--text-muted);font-style:italic;text-align:center;padding:16px 0">
+          Ask anything about the SE data — deals, notes, accounts, rankings, or a specific SE.
+        </div>
+        {/if}
+        {#each chatMessages as m}
+        <div style="display:flex;flex-direction:column;align-items:{m.role === 'user' ? 'flex-end' : 'flex-start'}">
+          <div style="max-width:85%;padding:9px 13px;border-radius:{m.role === 'user' ? '12px 12px 2px 12px' : '12px 12px 12px 2px'};background:{m.role === 'user' ? 'var(--red)' : 'rgba(var(--red-rgb),0.08)'};border:{m.role === 'assistant' ? '1px solid rgba(var(--red-rgb),0.15)' : 'none'};font-size:13px;color:{m.role === 'user' ? '#fff' : 'var(--text)'};line-height:1.5;white-space:pre-wrap;word-break:break-word">{m.text}</div>
+        </div>
+        {/each}
+        {#if chatLoading}
+        <div style="display:flex;align-items:flex-start">
+          <div style="padding:9px 14px;border-radius:12px 12px 12px 2px;background:rgba(var(--red-rgb),0.08);border:1px solid rgba(var(--red-rgb),0.15);font-size:12px;color:var(--text-muted)">Thinking…</div>
+        </div>
+        {/if}
+        {#if chatError}
+        <div style="font-size:12px;color:var(--red);font-weight:600;text-align:center">⚠ {chatError}</div>
+        {/if}
+        <div bind:this={chatEndEl}></div>
+      </div>
+
+      <!-- Suggested prompts -->
+      {#if chatMessages.length === 0}
+      <div style="padding:0 14px 10px;display:flex;flex-wrap:wrap;gap:6px">
+        {#each [
+          `Who is the top SE this quarter?`,
+          `Which SE has the most activate wins?`,
+          `Summarize notes quality for the team`,
+          `Who has the largest deal and what is it?`,
+        ] as hint}
+        <button
+          onclick={() => { chatInput = hint; sendChat(); }}
+          style="padding:5px 10px;font-size:11px;font-weight:600;border:1px solid rgba(var(--red-rgb),0.2);border-radius:20px;background:transparent;color:var(--text-muted);cursor:pointer"
+        >{hint}</button>
+        {/each}
+      </div>
+      {/if}
+
+      <!-- Input row -->
+      <div style="display:flex;gap:8px;padding:10px 14px;border-top:1px solid rgba(var(--red-rgb),0.12)">
+        <textarea
+          bind:value={chatInput}
+          onkeydown={onChatKey}
+          placeholder="Ask about the data… (Enter to send)"
+          rows="2"
+          style="flex:1;resize:none;background:transparent;border:1px solid rgba(var(--red-rgb),0.2);border-radius:6px;padding:8px 10px;font-size:13px;color:var(--text);font-family:inherit;line-height:1.4"
+        ></textarea>
+        <button
+          onclick={sendChat}
+          disabled={chatLoading || !chatInput.trim()}
+          style="align-self:flex-end;padding:8px 14px;background:var(--red);color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;opacity:{chatLoading || !chatInput.trim() ? '0.5' : '1'}"
+        >Send</button>
+      </div>
+    </div>
+    {/if}
+  </div>
+  {/if}
 
 </div>
 

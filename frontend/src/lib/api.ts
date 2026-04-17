@@ -99,6 +99,25 @@ export async function deleteSuggestion(id: string): Promise<boolean> {
   return r.ok;
 }
 
+// ---------------------------------------------------------------------------
+// AI Chatbot
+// ---------------------------------------------------------------------------
+
+export async function chatWithSEScorecard(
+  message: string,
+  team: string,
+  period: string,
+  icavMin = 0,
+  subteam = '',
+): Promise<{ answer?: string; error?: string }> {
+  const r = await fetch('/api/se-scorecard-v2/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, team, period, icav_min: icavMin, subteam }),
+  });
+  return r.json();
+}
+
 export function fmt(n: number): string {
   if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
