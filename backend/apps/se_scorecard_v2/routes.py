@@ -1193,7 +1193,8 @@ def _twiml_empty():
 # AI Chatbot — answers questions about the loaded Salesforce data
 # ---------------------------------------------------------------------------
 
-_ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+_BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
+_BEDROCK_REGION   = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
 
 
 def _build_chat_context(ses: list, team_key: str, period_key: str) -> str:
@@ -1229,8 +1230,10 @@ def _build_chat_context(ses: list, team_key: str, period_key: str) -> str:
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/chat", methods=["POST"])
 def api_chat():
     """AI chatbot — answers questions about the Salesforce SE scorecard data."""
-    if not _ANTHROPIC_API_KEY:
-        return jsonify({"error": "AI chatbot is not configured (missing ANTHROPIC_API_KEY)."}), 503
+    try:
+        import boto3
+    except ImportError:
+        return jsonify({"error": "AI chatbot is not configured (boto3 not installed)."}), 503
 
     body       = request.get_json(silent=True) or {}
     message    = (body.get("message") or "").strip()
@@ -1245,8 +1248,10 @@ def api_chat():
     if err:
         return jsonify({"error": err}), 400
     subteam_key = body.get("subteam", "")
+    if subteam_key == "none":
+        subteam_key = ""
 
-    ses, err = _get_data(team_key, period_key, icav_min, subteam_key)
+    ses, err, *_ = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": f"Could not load data: {err}"}), 503
     if not ses:
@@ -1264,17 +1269,18 @@ def api_chat():
     )
 
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=_ANTHROPIC_API_KEY)
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            system=system_prompt,
-            messages=[
+        bedrock = boto3.client("bedrock-runtime", region_name=_BEDROCK_REGION)
+        payload = json.dumps({
+            "anthropic_version": "bedrock-2023-05-31",
+            "max_tokens": 1024,
+            "system": system_prompt,
+            "messages": [
                 {"role": "user", "content": f"Here is the current SE scorecard data:\n\n{context}\n\nQuestion: {message}"},
             ],
-        )
-        answer = resp.content[0].text if resp.content else "No response generated."
+        })
+        resp   = bedrock.invoke_model(modelId=_BEDROCK_MODEL_ID, body=payload)
+        body   = json.loads(resp["body"].read())
+        answer = body["content"][0]["text"] if body.get("content") else "No response generated."
         return jsonify({"answer": answer})
     except Exception as e:
         log.error("Chat API error: %s", e)

@@ -98,9 +98,13 @@
 }
 .chip-wrap.fixed {
   position: fixed;
-  top: 12px;
+  top: 0;
+  height: 56px;
+  display: flex;
+  align-items: center;
   right: 16px;
   z-index: 500;
+  padding-bottom: 0;
 }
 
 /* ── Light chip (default) ── */

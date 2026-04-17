@@ -36,7 +36,8 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 16px 28px;
+    height: 56px;
+    padding: 0 24px;
     border-bottom: 1px solid rgba(255,255,255,0.06);
     background: #090c12;
   }
@@ -202,7 +203,7 @@
   <!-- Top bar -->
   <div class="top-bar">
     <div style="display:flex;align-items:center;gap:14px">
-      <img src="/Twilio-logo-red.svg.png" alt="Twilio" style="height:18px;width:auto;opacity:0.9">
+      <img src="/Twilio-logo-red.svg.png" alt="Twilio" style="height:22px;width:auto;opacity:0.9">
       <div style="width:1px;height:18px;background:rgba(255,255,255,0.1)"></div>
       <span style="font-size:13px;font-weight:600;color:#94a3b8;letter-spacing:-0.01em">GTM Hub</span>
     </div>

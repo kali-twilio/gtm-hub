@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { theme, msgChannel } from '$lib/stores';
+  import { theme, msgChannel, sfTeam, sfPeriod, sfSubteam } from '$lib/stores';
   import SuggestionBox from '$lib/SuggestionBox.svelte';
+  import { chatWithSEScorecard } from '$lib/api';
 
   let { children } = $props();
 
@@ -17,6 +18,31 @@
     if (channel === 'whatsapp') return `https://wa.me/${PHONE.replace('+', '')}`;
     return `sms:${PHONE}`;
   }
+
+  // AI Chat panel
+  let chatOpen  = $state(false);
+  let chatInput = $state('');
+  let chatLoading = $state(false);
+  interface ChatMsg { role: 'user' | 'assistant'; text: string; }
+  let chatMessages: ChatMsg[] = $state([]);
+  let chatEndEl: HTMLElement | null = $state(null);
+
+  async function sendChat() {
+    const msg = chatInput.trim();
+    if (!msg || chatLoading) return;
+    chatMessages = [...chatMessages, { role: 'user', text: msg }];
+    chatInput = '';
+    chatLoading = true;
+    setTimeout(() => chatEndEl?.scrollIntoView({ behavior: 'smooth' }), 50);
+    const res = await chatWithSEScorecard(msg, $sfTeam, $sfPeriod, 0, $sfSubteam);
+    chatLoading = false;
+    chatMessages = [...chatMessages, { role: 'assistant', text: res.answer ?? res.error ?? 'No response.' }];
+    setTimeout(() => chatEndEl?.scrollIntoView({ behavior: 'smooth' }), 50);
+  }
+
+  function onChatKey(e: KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+  }
 </script>
 
 <!-- P5 decorative chrome (corner brackets + edge bars) -->
@@ -28,7 +54,7 @@
 
 <!-- Header — always present, theme-aware -->
 <div
-  style="position:fixed;top:0;left:0;right:0;height:56px;z-index:100;display:flex;align-items:center;padding:0 24px;
+  style="position:fixed;top:0;left:0;right:0;height:56px;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:0 24px;
     {p5
       ? 'background:#0d0d0d;border-bottom:1px solid rgba(232,0,61,0.35);box-shadow:0 0 20px rgba(232,0,61,0.08);'
       : 'background:white;border-bottom:1px solid rgba(13,18,43,0.1);box-shadow:0 1px 8px rgba(13,18,43,0.06);'}"
@@ -45,6 +71,17 @@
       onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color = p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'; el.style.background = 'none'; }}
       title="Click for a surprise"
     >SE Scorecard</button>
+
+    <!-- Ask AI button -->
+    <button
+      onclick={() => chatOpen = !chatOpen}
+      style="display:flex;align-items:center;gap:6px;background:{chatOpen?(p5?'rgba(232,0,61,0.15)':'rgba(242,47,70,0.1)'):'none'};border:1px solid {chatOpen?'var(--red)':(p5?'rgba(255,255,255,0.12)':'rgba(13,18,43,0.12)')};border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;font-weight:700;letter-spacing:0.02em;color:{chatOpen?'var(--red)':(p5?'rgba(255,255,255,0.6)':'rgba(13,18,43,0.5)')};transition:all 0.15s;white-space:nowrap"
+      onmouseenter={e => { if (!chatOpen) { const el = e.currentTarget as HTMLElement; el.style.color='var(--red)'; el.style.borderColor='var(--red)'; el.style.background=p5?'rgba(232,0,61,0.08)':'rgba(242,47,70,0.06)'; }}}
+      onmouseleave={e => { if (!chatOpen) { const el = e.currentTarget as HTMLElement; el.style.color=p5?'rgba(255,255,255,0.6)':'rgba(13,18,43,0.5)'; el.style.borderColor=p5?'rgba(255,255,255,0.12)':'rgba(13,18,43,0.12)'; el.style.background='none'; }}}
+    >
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      Ask AI
+    </button>
 
     <!-- Feedback group — separated with extra gap -->
     <div style="display:flex;align-items:center;gap:4px;margin-left:16px;padding:4px 6px;border-radius:8px;background:{p5?'rgba(255,255,255,0.03)':'rgba(13,18,43,0.03)'};border:1px solid {p5?'rgba(255,255,255,0.07)':'rgba(13,18,43,0.07)'}">
@@ -77,8 +114,81 @@
       </a>
     </div>
   </div>
+
 </div>
 
-<div style="padding-top:56px">
+<!-- AI Chat slide-in panel -->
+{#if chatOpen}
+<div style="position:fixed;top:56px;left:0;bottom:0;width:min(420px,100vw);z-index:10000;display:flex;flex-direction:column;
+  {p5?'background:#111;border-right:1px solid rgba(232,0,61,0.25);':'background:white;border-right:1px solid rgba(13,18,43,0.1);box-shadow:4px 0 24px rgba(13,18,43,0.08);'}">
+
+  <!-- Panel header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid {p5?'rgba(232,0,61,0.2)':'rgba(13,18,43,0.08)'}">
+    <div style="font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:0.12em;color:var(--red)">Ask AI</div>
+    <button onclick={() => chatOpen = false} style="background:none;border:none;cursor:pointer;font-size:18px;color:{p5?'rgba(255,255,255,0.4)':'rgba(13,18,43,0.35)'};line-height:1;padding:2px 4px" aria-label="Close">✕</button>
+  </div>
+
+  <!-- Messages -->
+  <div style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px">
+    {#if chatMessages.length === 0}
+      <div style="color:{p5?'rgba(255,255,255,0.3)':'rgba(13,18,43,0.35)'};font-size:13px;text-align:center;margin-top:24px">
+        Ask anything about the current team's Salesforce data.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
+        {#each ["Who has the highest iACV?","Which SEs are missing notes?","What's the top deal this quarter?","How is the team trending?"] as prompt}
+        <button onclick={() => { chatInput = prompt; sendChat(); }}
+          style="text-align:left;background:{p5?'rgba(255,255,255,0.04)':'rgba(13,18,43,0.03)'};border:1px solid {p5?'rgba(255,255,255,0.08)':'rgba(13,18,43,0.08)'};border-radius:6px;padding:8px 12px;cursor:pointer;font-size:12px;color:{p5?'rgba(255,255,255,0.5)':'rgba(13,18,43,0.5)'};transition:all 0.15s"
+          onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor='var(--red)'; el.style.color='var(--red)'; }}
+          onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor=p5?'rgba(255,255,255,0.08)':'rgba(13,18,43,0.08)'; el.style.color=p5?'rgba(255,255,255,0.5)':'rgba(13,18,43,0.5)'; }}
+        >{prompt}</button>
+        {/each}
+      </div>
+    {/if}
+    {#each chatMessages as msg}
+    <div style="display:flex;flex-direction:column;align-items:{msg.role==='user'?'flex-end':'flex-start'}">
+      <div style="max-width:85%;padding:10px 13px;border-radius:10px;font-size:13px;line-height:1.5;white-space:pre-wrap;
+        {msg.role==='user'
+          ? 'background:var(--red);color:white;border-bottom-right-radius:3px;'
+          : p5?'background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.85);border-bottom-left-radius:3px;':'background:rgba(13,18,43,0.05);color:rgba(13,18,43,0.85);border-bottom-left-radius:3px;'}"
+      >{msg.text}</div>
+    </div>
+    {/each}
+    {#if chatLoading}
+    <div style="display:flex;align-items:flex-start">
+      <div style="padding:10px 14px;border-radius:10px;border-bottom-left-radius:3px;background:{p5?'rgba(255,255,255,0.07)':'rgba(13,18,43,0.05)'}">
+        <span style="display:inline-flex;gap:4px">{#each [0,1,2] as i}<span style="width:6px;height:6px;border-radius:50%;background:var(--red);animation:bounce 1.2s ease-in-out {i*0.2}s infinite"></span>{/each}</span>
+      </div>
+    </div>
+    {/if}
+    <div bind:this={chatEndEl}></div>
+  </div>
+
+  <!-- Input -->
+  <div style="padding:12px 16px;border-top:1px solid {p5?'rgba(232,0,61,0.2)':'rgba(13,18,43,0.08)'}">
+    <div style="display:flex;gap:8px;align-items:flex-end">
+      <textarea
+        bind:value={chatInput}
+        onkeydown={onChatKey}
+        placeholder="Ask about this team's data…"
+        rows="2"
+        style="flex:1;resize:none;border:1px solid {p5?'rgba(255,255,255,0.12)':'rgba(13,18,43,0.15)'};border-radius:8px;padding:8px 12px;font-size:13px;background:{p5?'rgba(255,255,255,0.05)':'white'};color:{p5?'rgba(255,255,255,0.85)':'rgba(13,18,43,0.85)'};outline:none;font-family:inherit;line-height:1.4"
+      ></textarea>
+      <button onclick={sendChat} disabled={chatLoading || !chatInput.trim()}
+        style="background:var(--red);border:none;border-radius:8px;padding:8px 14px;cursor:pointer;color:white;font-size:13px;font-weight:700;opacity:{chatLoading||!chatInput.trim()?'0.4':'1'};transition:opacity 0.15s;white-space:nowrap"
+      >Send</button>
+    </div>
+    <div style="font-size:10px;color:{p5?'rgba(255,255,255,0.2)':'rgba(13,18,43,0.25)'};margin-top:6px">Enter to send · Shift+Enter for newline</div>
+  </div>
+</div>
+{/if}
+
+<div style="padding-top:56px;transition:margin-left 0.2s;margin-left:{chatOpen?'min(420px,100vw)':'0'}">
   {@render children()}
 </div>
+
+<style>
+@keyframes bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-6px); opacity: 1; }
+}
+</style>
