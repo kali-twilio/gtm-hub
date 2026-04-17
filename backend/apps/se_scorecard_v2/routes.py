@@ -187,8 +187,9 @@ TEAMS = {
             "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'"
             " OR Technical_Lead__r.UserRole.Name = 'SE - DORG'"
         ),
-        # NB/Strat split lives in UserRole for DORG (FY_16 values are 'ORG'/'SDR'/etc.)
-        "act_icav_clause": "Owner.UserRole.Name LIKE '% NB%'",
+        # NB denominator = all DORG universe opps where AE role does NOT contain 'Strat'.
+        # This matches build_ses fallback: unrecognised roles (SDR, DSR, Not Found) → NB.
+        "act_icav_clause": "(NOT Owner.UserRole.Name LIKE '%Strat%')",
         "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
