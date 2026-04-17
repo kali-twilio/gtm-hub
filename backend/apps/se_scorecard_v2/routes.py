@@ -840,9 +840,9 @@ def api_report():
     se_icav         = sum(s["total_icav"] for s in ses_list)
     se_act_icav     = sum(s["act_icav"]   for s in ses_list)
     se_exp_icav     = sum(s["exp_icav"]   for s in ses_list)
-    se_icav_pct     = min(100, round(se_icav     / team_total_icav * 100)) if team_total_icav and team_total_icav > 0 else None
-    se_act_icav_pct = min(100, round(se_act_icav / act_total_icav  * 100)) if act_total_icav  and act_total_icav  > 0 else None
-    se_exp_icav_pct = min(100, round(se_exp_icav / exp_total_icav  * 100)) if exp_total_icav  and exp_total_icav  > 0 else None
+    se_icav_pct     = round(se_icav     / team_total_icav * 100) if team_total_icav and team_total_icav > 0 else None
+    se_act_icav_pct = round(se_act_icav / act_total_icav  * 100) if act_total_icav  and act_total_icav  > 0 else None
+    se_exp_icav_pct = round(se_exp_icav / exp_total_icav  * 100) if exp_total_icav  and exp_total_icav  > 0 else None
 
     return jsonify({
         "ranked":           ses_list,
