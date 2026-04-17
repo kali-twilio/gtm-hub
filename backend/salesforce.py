@@ -80,7 +80,7 @@ class SalesforceClient:
             resp.raise_for_status()
             return resp.json()
 
-    def query(self, soql: str, batch_size: int = _MAX_BATCH_SIZE) -> list:
+    def query(self, soql: str, batch_size: int = _MAX_BATCH_SIZE, timeout: int = 30) -> list:
         """
         Run a SOQL query and return all records (handles pagination).
 
@@ -103,7 +103,7 @@ class SalesforceClient:
                 f"{self.instance_url}{path}",
                 headers=hdrs,
                 params={"q": soql},
-                timeout=30,
+                timeout=timeout,
             )
             if resp.status_code == 401 and attempt == 0:
                 self._refresh()
@@ -119,7 +119,7 @@ class SalesforceClient:
             resp    = requests.get(
                 f"{self.instance_url}{data['nextRecordsUrl']}",
                 headers=hdrs,
-                timeout=30,
+                timeout=timeout,
             )
             resp.raise_for_status()
             data    = resp.json()

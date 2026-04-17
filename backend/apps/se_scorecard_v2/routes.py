@@ -380,7 +380,7 @@ def _get_team_total_icav(team_total_filter: str, start: str, end: str) -> int | 
     if not sf.configured:
         return None
     try:
-        rows = sf.query(_build_team_total_soql(team_total_filter, start, end))
+        rows = sf.query(_build_team_total_soql(team_total_filter, start, end), timeout=60)
         if rows:
             val = rows[0].get("total_icav") or rows[0].get("expr0")
             return int(float(val)) if val is not None else None
