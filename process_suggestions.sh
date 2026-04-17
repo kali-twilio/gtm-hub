@@ -244,8 +244,13 @@ def writeback(status, suggestion, branch=None, pr_url=None):
         print(f"  WARN: Firestore writeback failed: {e}")
 
 def sanitize_branch(owner, created_at):
-    # For email, use the local part; for phone or anything else, use as-is
-    username = owner.split('@')[0] if '@' in owner else owner
+    # For email, use the local part; strip whatsapp: prefix; phone/other used as-is
+    if '@' in owner:
+        username = owner.split('@')[0]
+    elif owner.startswith('whatsapp:'):
+        username = owner[len('whatsapp:'):]
+    else:
+        username = owner
     safe = re.sub(r'[^a-zA-Z0-9._-]', '-', username).strip('-')
     # Use unix timestamp so branches sort chronologically for the same person
     try:
@@ -351,7 +356,7 @@ def identify_files(suggestion_text, repo_map):
 
 def implement_suggestion(suggestion, repo_map):
     text   = suggestion["text"]
-    owner  = suggestion.get("email") or suggestion.get("phone", "anonymous")
+    owner  = suggestion.get("email") or suggestion.get("phone") or suggestion.get("whatsapp", "anonymous")
     sid    = suggestion["id"]
     branch = f"suggestion-{sanitize_branch(owner, suggestion.get('created_at', ''))}"
 
@@ -583,7 +588,7 @@ def implement_suggestion(suggestion, repo_map):
     pr_result = subprocess.run(
         ["gh", "pr", "create",
          "--title", f"Suggestion: {text[:72]}",
-         "--body", f"**Submitted by:** {owner}\n\n**Suggestion:**\n{text}\n\n---\n*Auto-implemented by process_suggestions.sh*",
+         "--body", f"**Submitted by:** {owner}\n**Channel:** {'email' if '@' in owner else 'whatsapp' if owner.startswith('whatsapp:') else 'sms'}\n\n**Suggestion:**\n{text}\n\n---\n*Auto-implemented by process_suggestions.sh*",
          "--head", branch,
          "--base", "main"],
         cwd=repo_dir, capture_output=True, text=True,
