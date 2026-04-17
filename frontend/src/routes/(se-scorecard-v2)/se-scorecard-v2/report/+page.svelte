@@ -244,7 +244,7 @@
     {label:motionLabels.exp+' iACV', val:fmt(teamExpIcav),                     color:null, sub:(data.se_exp_icav_pct != null && data.exp_total_icav != null ? data.se_exp_icav_pct+'% · '+fmt(data.exp_total_icav)+' total' : null),     show:teamExpIcav>0 && teamActIcav>0},
     {label:'Account ARR',            val:fmt(expTotals.arr_total),             color:null, sub:null,                                                                                                                                        show:stratOnly && expTotals.arr_total>0},
     {label:'Qtr MRR Δ',              val:fmtMrrDelta(expTotals.mrr_delta_total), color:expTotals.mrr_delta_total>0?($theme==='twilio'?'#178742':'#10B981'):expTotals.mrr_delta_total<0?($theme==='twilio'?'#DC2626':'#EF4444'):'var(--text-muted)', sub:null, show:stratOnly && expTotals.arr_total>0},
-    {label:'SEs Analysed',           val:String(data.total),                   color:null, sub:null,                                                                                                                                        show:true},
+    {label:'SEs Analysed',           val:String(data.total),                   color:null, sub:(data.ae_dsr_count != null && data.ae_to_se_ratio != null) ? `${data.ae_dsr_count} AEs/DSRs · ${data.ae_to_se_ratio}:1 ratio` : null,  show:true},
   ].filter((s: any) => s.show && s.val != null) : []);
 
 const actStatCols = $derived(data ? [
