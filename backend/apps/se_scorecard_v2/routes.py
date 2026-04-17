@@ -187,6 +187,9 @@ TEAMS = {
             "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'"
             " OR Technical_Lead__r.UserRole.Name = 'SE - DORG'"
         ),
+        # NB/Strat split lives in UserRole for DORG (FY_16 values are 'ORG'/'SDR'/etc.)
+        "act_icav_clause": "Owner.UserRole.Name LIKE '% NB%'",
+        "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
         "criteria": [
@@ -432,9 +435,12 @@ def _get_team_total_icav(team_total_filter: str, start: str, end: str) -> int | 
     return None
 
 
-def _motion_total_filter(team_total_filter: str, motion: str, which: str) -> str:
+def _motion_total_filter(team_total_filter: str, motion: str, which: str,
+                         act_clause: str | None = None, exp_clause: str | None = None) -> str:
     base = f"({team_total_filter})"
-    if motion == "dsr":
+    if act_clause and exp_clause:
+        clause = act_clause if which == "act" else exp_clause
+    elif motion == "dsr":
         clause = "(FY_16_Owner_Team__c LIKE '%Activation%' OR FY_16_Owner_Team__c LIKE '%Activate%')" if which == "act" else "FY_16_Owner_Team__c LIKE '%Expansion%'"
     else:
         clause = "FY_16_Owner_Team__c LIKE '% NB%'" if which == "act" else "FY_16_Owner_Team__c LIKE '%Strat%'"
@@ -532,6 +538,8 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     # team_icav_filter overrides team_total_filter for the iACV denominator only.
     # team_total_filter is still used for the AE engagement (all_owners) query.
     team_icav_filter  = team.get("team_icav_filter") or team_total_filter
+    act_icav_clause   = team.get("act_icav_clause")
+    exp_icav_clause   = team.get("exp_icav_clause")
     motion            = team.get("motion", "dsr")
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -542,8 +550,8 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
         f_meetings = pool.submit(sf.query, _build_meeting_soql(info["start"], info["end"], email_owner_filter))
         if team_total_filter and not subteam_key:
             f_team_total  = pool.submit(_get_team_total_icav, team_icav_filter, info["start"], info["end"])
-            f_act_total   = pool.submit(_get_team_total_icav, _motion_total_filter(team_icav_filter, motion, "act"), info["start"], info["end"])
-            f_exp_total   = pool.submit(_get_team_total_icav, _motion_total_filter(team_icav_filter, motion, "exp"), info["start"], info["end"])
+            f_act_total   = pool.submit(_get_team_total_icav, _motion_total_filter(team_icav_filter, motion, "act", act_icav_clause, exp_icav_clause), info["start"], info["end"])
+            f_exp_total   = pool.submit(_get_team_total_icav, _motion_total_filter(team_icav_filter, motion, "exp", act_icav_clause, exp_icav_clause), info["start"], info["end"])
             f_all_owners  = pool.submit(sf.query, _build_all_owners_soql(team_total_filter, info["start"], info["end"]))
         else:
             f_team_total = f_act_total = f_exp_total = f_all_owners = None
