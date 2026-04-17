@@ -16,8 +16,6 @@
 
 set -euo pipefail
 
-export CLAUDE_CODE_MAX_OUTPUT_TOKENS=32000
-
 ###############################################################################
 # 0. Config
 ###############################################################################
@@ -35,10 +33,20 @@ source "$ENV_FILE"
 
 FIRESTORE_COLLECTION="se-scorecard-v2-suggestions"
 REPO_URL="https://github.com/kali-twilio/gtm-hub"
+LOCK_FILE="$SCRIPT_DIR/process_suggestions.lock"
 WORK_DIR="$(mktemp -d)"
 SUGGESTIONS_RAW="$WORK_DIR/suggestions_raw.json"
 SUGGESTIONS_FILTERED="$WORK_DIR/suggestions_filtered.json"
 LOG_FILE="$SCRIPT_DIR/process_suggestions.log"
+
+trap 'rm -rf "$WORK_DIR"' EXIT
+
+# Acquire lock — exit if another instance is already running
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+  echo "ERROR: another instance is already running (lock: $LOCK_FILE)" >&2
+  exit 1
+fi
 
 echo "Work dir: $WORK_DIR"
 echo "Log: $LOG_FILE"
