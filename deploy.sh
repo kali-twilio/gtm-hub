@@ -306,8 +306,11 @@ systemctl daemon-reload
 systemctl enable app nginx
 systemctl start app nginx
 
-# ── Debug log: keep gunicorn journal in nginx webroot for remote inspection ──
-echo '* * * * * root journalctl -u app --no-pager -n 300 > /var/www/scorecard/debug.txt 2>&1 && chmod 644 /var/www/scorecard/debug.txt' >> /etc/crontab
+# ── Debug log: write gunicorn journal to a dedicated cron file ──
+cat > /etc/cron.d/app-debug << 'CRONEOF'
+* * * * * root /usr/bin/journalctl -u app --no-pager -n 500 > /var/www/scorecard/debug.txt 2>&1 && /bin/chmod 644 /var/www/scorecard/debug.txt
+CRONEOF
+chmod 644 /etc/cron.d/app-debug
 
 echo "SETUP COMPLETE"
 USERDATA

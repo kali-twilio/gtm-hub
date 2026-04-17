@@ -39,10 +39,15 @@ class SalesforceClient:
         return bool(self.instance_url and self.client_id and
                     self.client_secret and self.refresh_token)
 
-    def _refresh(self):
-        """Exchange the refresh token for a new access token (called at most once per expiry)."""
+    def _refresh(self, stale_token: str | None = None):
+        """Exchange the refresh token for a new access token.
+
+        Pass stale_token (the token that got a 401) so that concurrent threads
+        skip the refresh if another thread already replaced it.
+        """
         with self._refresh_lock:
-            # Re-check inside the lock — another thread may have refreshed first
+            if stale_token is not None and self._access_token != stale_token:
+                return  # another thread already refreshed
             resp = requests.post(
                 f"{self.instance_url}/services/oauth2/token",
                 data={
@@ -68,6 +73,7 @@ class SalesforceClient:
         if not self.configured:
             raise RuntimeError("Salesforce is not configured — check environment variables.")
         for attempt in range(2):
+            stale = self._access_token
             resp = requests.get(
                 f"{self.instance_url}{path}",
                 headers=self._headers(),
@@ -75,7 +81,7 @@ class SalesforceClient:
                 **kwargs,
             )
             if resp.status_code == 401 and attempt == 0:
-                self._refresh()
+                self._refresh(stale)
                 continue
             resp.raise_for_status()
             return resp.json()
@@ -99,6 +105,7 @@ class SalesforceClient:
             raise RuntimeError("Salesforce is not configured — check environment variables.")
 
         for attempt in range(2):
+            stale = self._access_token
             resp = requests.get(
                 f"{self.instance_url}{path}",
                 headers=hdrs,
@@ -106,7 +113,7 @@ class SalesforceClient:
                 timeout=timeout,
             )
             if resp.status_code == 401 and attempt == 0:
-                self._refresh()
+                self._refresh(stale)
                 hdrs = {**self._headers(), "Sforce-Query-Options": opts}
                 continue
             resp.raise_for_status()
