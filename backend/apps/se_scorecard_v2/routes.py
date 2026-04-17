@@ -411,7 +411,9 @@ def _load_cached(team_key: str, period_key: str, icav_min: int = 0) -> tuple[lis
         return None, None, None, None
     raw = json.loads(p.read_text(encoding="utf-8"))
     if isinstance(raw, list):
-        return raw, None, None, None
+        # Old cache format — delete and treat as a miss so it gets rebuilt with current schema
+        p.unlink(missing_ok=True)
+        return None, None, None, None
     return raw.get("ses"), raw.get("team_total_icav"), raw.get("act_total_icav"), raw.get("exp_total_icav")
 
 
@@ -1387,9 +1389,16 @@ def api_chat():
         answer = resp.json()["choices"][0]["message"].get("content", "No response generated.")
         return jsonify({"answer": answer})
 
+    except requests.exceptions.HTTPError as e:
+        status = e.response.status_code if e.response is not None else 0
+        log.error("Chat API HTTP error %s: %s", status, e)
+        if status == 429:
+            return jsonify({"error": "Rate limited by AI provider. Please wait a moment and try again."}), 503
+        log.error("Response body: %s", e.response.text[:500] if e.response is not None else "")
+        return jsonify({"error": f"AI request failed (HTTP {status}). Please try again."}), 503
     except Exception as e:
-        log.error("Chat API error: %s", e)
-        return jsonify({"error": "AI request failed. Please try again."}), 503
+        log.error("Chat API error: %s", e, exc_info=True)
+        return jsonify({"error": f"AI request failed: {type(e).__name__}. Please try again."}), 503
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")
