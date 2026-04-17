@@ -442,7 +442,11 @@ def _motion_total_filter(team_total_filter: str, motion: str, which: str,
     if act_clause and exp_clause:
         clause = act_clause if which == "act" else exp_clause
     elif motion == "dsr":
-        clause = "(FY_16_Owner_Team__c LIKE '%Activation%' OR FY_16_Owner_Team__c LIKE '%Activate%')" if which == "act" else "FY_16_Owner_Team__c LIKE '%Expansion%'"
+        # Mirror _is_expansion/_is_activate: expansion = Expansion in role OR FY_16;
+        # activate = everything else (NOT expansion in either field).
+        clause = ("(NOT Owner.UserRole.Name LIKE '%Expansion%') AND (NOT FY_16_Owner_Team__c LIKE '%Expansion%')"
+                  if which == "act" else
+                  "(Owner.UserRole.Name LIKE '%Expansion%' OR FY_16_Owner_Team__c LIKE '%Expansion%')")
     else:
         clause = "FY_16_Owner_Team__c LIKE '% NB%'" if which == "act" else "FY_16_Owner_Team__c LIKE '%Strat%'"
     return f"{base} AND {clause}"
