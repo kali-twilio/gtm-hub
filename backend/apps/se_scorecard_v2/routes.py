@@ -737,7 +737,10 @@ def api_report():
     team_label  = f"{team['label']} · {subteam['label']}" if subteam else team["label"]
 
     period      = _period_info(period_key)
-    total       = len(ses_list)
+    total         = len(ses_list)
+    unique_owners = {o["owner"] for s in ses_list for o in s.get("tw_opps_detail", []) if o.get("owner")}
+    ae_dsr_count  = len(unique_owners)
+    ae_to_se_ratio = round(ae_dsr_count / total, 1) if total > 0 else 0
     act_sorted  = sorted(ses_list, key=lambda x: x["act_icav"], reverse=True)
     exp_sorted  = sorted(ses_list, key=lambda x: x["exp_icav"], reverse=True)
     deal_sorted = [s for s in sorted(ses_list, key=lambda x: x["largest_deal_value"], reverse=True)
@@ -807,6 +810,8 @@ def api_report():
         "team_label":       team_label,
         "motion":           team.get("motion", "dsr"),
         "sf_instance_url":  sf.instance_url,
+        "ae_dsr_count":     ae_dsr_count,
+        "ae_to_se_ratio":   ae_to_se_ratio,
     })
 
 
