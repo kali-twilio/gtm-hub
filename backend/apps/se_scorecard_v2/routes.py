@@ -179,7 +179,7 @@ TEAMS = {
         "label":            "DORG",
         "description":      ".ORG SE team",
         "motion":           "ae",
-        "team_total_filter": "FY_16_Owner_Team__c = 'ORG'",
+        "team_total_filter": "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
         "criteria": [
@@ -189,7 +189,7 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c = 'ORG' (exact match) — stamped at opp assignment and frozen. Exact match avoids contamination from Twilio.org suffixes in other regions.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE 'DORG%' OR LIKE '%.org%'. FY_16_Owner_Team__c is not used here — DORG SEs tag opps across multiple AE team buckets (ORG, DSR, Not Found, etc.) so the AE role filter is the reliable denominator for this team.",
             },
         ],
     },
