@@ -1193,8 +1193,8 @@ def _twiml_empty():
 # AI Chatbot — answers questions about the loaded Salesforce data
 # ---------------------------------------------------------------------------
 
-_BEDROCK_MODEL_ID = os.environ.get("BEDROCK_MODEL_ID", "us.anthropic.claude-haiku-4-5-20251001-v1:0")
-_BEDROCK_REGION   = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+_OPENAI_API_KEY   = os.environ.get("OPENAI_API_KEY", "")
+_OPENAI_MODEL     = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
 
 def _build_chat_context(ses: list, team_key: str, period_key: str) -> str:
@@ -1230,10 +1230,8 @@ def _build_chat_context(ses: list, team_key: str, period_key: str) -> str:
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/chat", methods=["POST"])
 def api_chat():
     """AI chatbot — answers questions about the Salesforce SE scorecard data."""
-    try:
-        import boto3
-    except ImportError:
-        return jsonify({"error": "AI chatbot is not configured (boto3 not installed)."}), 503
+    if not _OPENAI_API_KEY:
+        return jsonify({"error": "AI chatbot is not configured (missing OPENAI_API_KEY)."}), 503
 
     body       = request.get_json(silent=True) or {}
     message    = (body.get("message") or "").strip()
@@ -1269,18 +1267,21 @@ def api_chat():
     )
 
     try:
-        bedrock = boto3.client("bedrock-runtime", region_name=_BEDROCK_REGION)
-        payload = json.dumps({
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 1024,
-            "system": system_prompt,
-            "messages": [
-                {"role": "user", "content": f"Here is the current SE scorecard data:\n\n{context}\n\nQuestion: {message}"},
-            ],
-        })
-        resp   = bedrock.invoke_model(modelId=_BEDROCK_MODEL_ID, body=payload)
-        body   = json.loads(resp["body"].read())
-        answer = body["content"][0]["text"] if body.get("content") else "No response generated."
+        resp = requests.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {_OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={
+                "model": _OPENAI_MODEL,
+                "max_tokens": 1024,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Here is the current SE scorecard data:\n\n{context}\n\nQuestion: {message}"},
+                ],
+            },
+            timeout=60,
+        )
+        resp.raise_for_status()
+        answer = resp.json()["choices"][0]["message"]["content"]
         return jsonify({"answer": answer})
     except Exception as e:
         log.error("Chat API error: %s", e)
