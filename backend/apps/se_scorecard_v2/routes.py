@@ -82,20 +82,6 @@ TEAMS = {
             },
         ],
     },
-    "dorg": {
-        "label":            "DORG",
-        "description":      ".ORG SE team",
-        "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'",
-        "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
-        "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
-        "criteria": [
-            {
-                "label":  "SE Tagged",
-                "detail": "Technical Lead UserRole = 'SE - DORG'",
-            },
-        ],
-    },
     "namer": {
         "label":            "NAMER",
         "description":      "All NAMER SEs",
@@ -167,6 +153,20 @@ TEAMS = {
         "subteams": [
             {"key": "latam_brazil", "label": "Brazil", "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - LATAM - BR'",  "email_owner_filter": "Owner.UserRole.Name = 'SE - LATAM - BR'"},
             {"key": "latam_rol",    "label": "ROL",    "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - LATAM - ROL'", "email_owner_filter": "Owner.UserRole.Name = 'SE - LATAM - ROL'"},
+        ],
+    },
+    "dorg": {
+        "label":            "DORG",
+        "description":      ".ORG SE team",
+        "motion":           "ae",
+        "team_total_filter": "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'",
+        "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
+        "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
+        "criteria": [
+            {
+                "label":  "SE Tagged",
+                "detail": "Technical Lead UserRole = 'SE - DORG'",
+            },
         ],
     },
 }
