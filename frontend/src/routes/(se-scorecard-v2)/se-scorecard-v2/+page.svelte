@@ -240,6 +240,26 @@
   </div>
   {/if}
 
+  <!-- Methodology note -->
+  {#if !restricted}
+  <div class="w-full hub-container" style="margin-bottom:24px">
+    <details style="border:1px solid rgba(var(--red-rgb),0.12);border-radius:6px;overflow:hidden">
+      <summary style="padding:10px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px">
+        <span style="color:var(--red)">ℹ</span> How these numbers are calculated
+      </summary>
+      <div style="padding:12px 14px 14px;border-top:1px solid rgba(var(--red-rgb),0.08);display:flex;flex-direction:column;gap:10px">
+        <div>
+          <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.16em;color:var(--red);margin-bottom:4px">NB / Strat iACV — total and split</div>
+          <div style="font-size:12px;color:var(--text-muted);line-height:1.5">Uses the <strong style="color:var(--text)">FY_16 stamp</strong> (frozen at the time the opp was assigned) to classify deals as New Business or Strategic. The team total is scoped to FY_16 NB+Strat opps only, so <strong style="color:var(--text)">NB + Strat always adds up to the shown total</strong>. This matches our internal forecast methodology. <span>What we lose vs. using current AE role: AEs who transferred into a region after deal close are excluded — so the shown total is slightly lower than total regional iACV in Salesforce.</span></div>
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.16em;color:var(--red);margin-bottom:4px">DSR Activate / Expansion</div>
+          <div style="font-size:12px;color:var(--text-muted);line-height:1.5">Expansion = opp where the AE's current role <em>or</em> FY_16 stamp contains "Expansion". Activate = everything else. Both fields are checked to handle cases where FY_16 was not stamped correctly at close.</div>
+        </div>
+      </div>
+    </details>
+  </div>
+  {/if}
 
 </div>
 

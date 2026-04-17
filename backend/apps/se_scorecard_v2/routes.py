@@ -91,8 +91,18 @@ TEAMS = {
         "description":      "All NAMER SEs",
         "motion":           "ae",
         "team_total_filter": "Owner.UserRole.Name LIKE '%NAMER%' AND (NOT Owner.UserRole.Name LIKE '%DSR%') AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')",
+        # Total iACV denominator = NB + Strat universe by UserRole, so NB + Strat = Total exactly.
+        # UserRole required for NAMER: FY_16 undercounts Strat by ~$1M due to AE transfers.
+        "team_icav_filter": (
+            "Owner.UserRole.Name LIKE '%NAMER%'"
+            " AND (NOT Owner.UserRole.Name LIKE '%DSR%')"
+            " AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')"
+            " AND (Owner.UserRole.Name LIKE '% NB%' OR Owner.UserRole.Name LIKE '%Strat%')"
+        ),
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - NAMER%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - NAMER%'",
+        "act_icav_clause": "Owner.UserRole.Name LIKE '% NB%'",
+        "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
         "criteria": [
             {
                 "label":  "SE Tagged",
@@ -100,7 +110,11 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE '%NAMER%' (excluding DSR and Twilio.org roles). Uses current AE role — FY_16 undercounts NAMER because AE transfers leave opps stamped with prior-team FY_16 values.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on Closed Won opps WHERE Owner.UserRole.Name LIKE '%NAMER%' AND role is NB or Strat. Total = NB + Strat exactly. Uses current AE role — more accurate than FY_16 for NAMER due to AE transfers.",
+            },
+            {
+                "label":  "NB / Strat Split",
+                "detail": "NB denominator: Owner.UserRole.Name LIKE '% NB%'. Strat denominator: Owner.UserRole.Name LIKE '%Strat%'. Uses current AE role (not FY_16) because NAMER AE transfers leave a ~$1M gap in Strat when using FY_16 stamp.",
             },
         ],
         "subteams": [
@@ -117,8 +131,15 @@ TEAMS = {
         "description":      "All EMEA SEs",
         "motion":           "ae",
         "team_total_filter": "Owner.UserRole.Name LIKE '%EMEA%'",
+        # Total iACV denominator = NB + Strat universe only, so NB + Strat = Total exactly.
+        "team_icav_filter": (
+            "Owner.UserRole.Name LIKE '%EMEA%'"
+            " AND (FY_16_Owner_Team__c LIKE '% NB%' OR FY_16_Owner_Team__c LIKE '%Strat%')"
+        ),
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - EMEA%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - EMEA%'",
+        "act_icav_clause": "FY_16_Owner_Team__c LIKE '% NB%'",
+        "exp_icav_clause": "FY_16_Owner_Team__c LIKE '%Strat%'",
         "criteria": [
             {
                 "label":  "SE Tagged",
@@ -126,7 +147,11 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE '%EMEA%'. Uses current AE role — FY_16 undercounts EMEA significantly ($2.6M gap) due to AE transfers leaving opps stamped with prior-team FY_16 values.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on Closed Won opps WHERE Owner.UserRole.Name LIKE '%EMEA%' AND FY_16_Owner_Team__c is NB or Strat. Total = NB + Strat exactly.",
+            },
+            {
+                "label":  "NB / Strat Split",
+                "detail": "NB denominator: FY_16_Owner_Team__c LIKE '% NB%'. Strat denominator: FY_16_Owner_Team__c LIKE '%Strat%'. FY_16 is frozen at opp assignment — AEs who transferred into EMEA after deal close appear in the total only if their FY_16 was stamped as EMEA NB/Strat.",
             },
         ],
         "subteams": [
@@ -140,8 +165,15 @@ TEAMS = {
         "description":      "APJ SE team",
         "motion":           "ae",
         "team_total_filter": "Owner.UserRole.Name LIKE '%APJ%'",
+        # UserRole required for APJ: FY_16 undercounts Strat due to AE transfers (~$300K gap).
+        "team_icav_filter": (
+            "Owner.UserRole.Name LIKE '%APJ%'"
+            " AND (Owner.UserRole.Name LIKE '% NB%' OR Owner.UserRole.Name LIKE '%Strat%')"
+        ),
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - APJ'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - APJ'",
+        "act_icav_clause": "Owner.UserRole.Name LIKE '% NB%'",
+        "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
         "criteria": [
             {
                 "label":  "SE Tagged",
@@ -149,7 +181,11 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE '%APJ%'. Uses current AE role — FY_16 undercounts APJ (~$1M gap) due to AE transfers.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on Closed Won opps WHERE Owner.UserRole.Name LIKE '%APJ%' AND role is NB or Strat. Total = NB + Strat exactly. Uses current AE role — more accurate than FY_16 for APJ due to AE transfers.",
+            },
+            {
+                "label":  "NB / Strat Split",
+                "detail": "NB denominator: Owner.UserRole.Name LIKE '% NB%'. Strat denominator: Owner.UserRole.Name LIKE '%Strat%'. Uses current AE role (not FY_16) because APJ AE transfers undercount Strat when using FY_16 stamp.",
             },
         ],
     },
@@ -158,8 +194,15 @@ TEAMS = {
         "description":      "LATAM SE team",
         "motion":           "ae",
         "team_total_filter": "Owner.UserRole.Name LIKE '%LATAM%'",
+        # UserRole used for LATAM (consistent with NAMER/APJ): avoids AE-transfer undercounting.
+        "team_icav_filter": (
+            "Owner.UserRole.Name LIKE '%LATAM%'"
+            " AND (Owner.UserRole.Name LIKE '% NB%' OR Owner.UserRole.Name LIKE '%Strat%')"
+        ),
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - LATAM%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - LATAM%'",
+        "act_icav_clause": "Owner.UserRole.Name LIKE '% NB%'",
+        "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
         "criteria": [
             {
                 "label":  "SE Tagged",
@@ -167,7 +210,11 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE '%LATAM%'. Uses current AE role — FY_16 and UserRole are identical for LATAM Strat/NB split but UserRole gives a larger total base.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on Closed Won opps WHERE Owner.UserRole.Name LIKE '%LATAM%' AND role is NB or Strat. Total = NB + Strat exactly. Uses current AE role.",
+            },
+            {
+                "label":  "NB / Strat Split",
+                "detail": "NB denominator: Owner.UserRole.Name LIKE '% NB%'. Strat denominator: Owner.UserRole.Name LIKE '%Strat%'. Uses current AE role — consistent with NAMER and APJ.",
             },
         ],
         "subteams": [
@@ -550,6 +597,9 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     exp_icav_filter   = team.get("exp_icav_filter")
     motion            = team.get("motion", "dsr")
 
+    act_filter_used = act_icav_filter if act_icav_filter else _motion_total_filter(team_icav_filter, motion, "act", act_icav_clause, exp_icav_clause)
+    exp_filter_used = exp_icav_filter if exp_icav_filter else _motion_total_filter(team_icav_filter, motion, "exp", act_icav_clause, exp_icav_clause)
+
     with ThreadPoolExecutor(max_workers=8) as pool:
         f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"], icav_min))
         f_win_rate = pool.submit(sf.query, _build_win_rate_soql(soql_filter, info["start"], info["end"]))
@@ -558,8 +608,8 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
         f_meetings = pool.submit(sf.query, _build_meeting_soql(info["start"], info["end"], email_owner_filter))
         if team_total_filter and not subteam_key:
             f_team_total  = pool.submit(_get_team_total_icav, team_icav_filter, info["start"], info["end"])
-            f_act_total   = pool.submit(_get_team_total_icav, act_icav_filter if act_icav_filter else _motion_total_filter(team_icav_filter, motion, "act", act_icav_clause, exp_icav_clause), info["start"], info["end"])
-            f_exp_total   = pool.submit(_get_team_total_icav, exp_icav_filter if exp_icav_filter else _motion_total_filter(team_icav_filter, motion, "exp", act_icav_clause, exp_icav_clause), info["start"], info["end"])
+            f_act_total   = pool.submit(_get_team_total_icav, act_filter_used, info["start"], info["end"])
+            f_exp_total   = pool.submit(_get_team_total_icav, exp_filter_used, info["start"], info["end"])
             f_all_owners  = pool.submit(sf.query, _build_all_owners_soql(team_total_filter, info["start"], info["end"]))
         else:
             f_team_total = f_act_total = f_exp_total = f_all_owners = None
@@ -602,11 +652,18 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
                 exp_total_icav = f_exp_total.result()
             except Exception:
                 log.warning("Exp total iACV query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+
         if f_all_owners is not None:
             try:
                 all_owner_opps = f_all_owners.result()
             except Exception:
                 log.warning("All-owners query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
+
+    # For ae-motion teams where NB+Strat = total by design, derive team_total from the two
+    # sub-queries rather than the combined OR query — SF aggregate queries with cross-object
+    # OR conditions can return incorrect results (inflated totals observed for EMEA/NAMER).
+    if act_icav_clause and exp_icav_clause and act_total_icav is not None and exp_total_icav is not None:
+        team_total_icav = act_total_icav + exp_total_icav
 
     if core_exc is not None:
         stale, tti, ati, eti = _load_cached(cache_key, period_key, icav_min)
