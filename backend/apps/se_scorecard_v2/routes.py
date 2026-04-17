@@ -187,12 +187,10 @@ TEAMS = {
             "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'"
             " OR Technical_Lead__r.UserRole.Name = 'SE - DORG'"
         ),
-        # NB/Strat sub-totals use the SE-tagged universe as the base (not the full AE pool)
-        # because SF aggregate queries with cross-object OR conditions (AE role OR SE tag)
-        # miscalculate when the SE condition is combined with a motion clause. Using only
-        # the SE-tagged base ensures denominators match what build_ses actually counted.
-        "act_icav_filter": "Technical_Lead__r.UserRole.Name = 'SE - DORG' AND (NOT Owner.UserRole.Name LIKE '%Strat%')",
-        "exp_icav_filter": "Technical_Lead__r.UserRole.Name = 'SE - DORG' AND Owner.UserRole.Name LIKE '%Strat%'",
+        # NB/Strat denominators use the full AE pool so they add up to the team total.
+        # NB = everything not Strat (matches build_ses fallback for unrecognised roles).
+        "act_icav_clause": "(NOT Owner.UserRole.Name LIKE '%Strat%')",
+        "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
         "criteria": [
@@ -842,9 +840,9 @@ def api_report():
     se_icav         = sum(s["total_icav"] for s in ses_list)
     se_act_icav     = sum(s["act_icav"]   for s in ses_list)
     se_exp_icav     = sum(s["exp_icav"]   for s in ses_list)
-    se_icav_pct     = round(se_icav     / team_total_icav * 100) if team_total_icav and team_total_icav > 0 else None
-    se_act_icav_pct = round(se_act_icav / act_total_icav  * 100) if act_total_icav  and act_total_icav  > 0 else None
-    se_exp_icav_pct = round(se_exp_icav / exp_total_icav  * 100) if exp_total_icav  and exp_total_icav  > 0 else None
+    se_icav_pct     = min(100, round(se_icav     / team_total_icav * 100)) if team_total_icav and team_total_icav > 0 else None
+    se_act_icav_pct = min(100, round(se_act_icav / act_total_icav  * 100)) if act_total_icav  and act_total_icav  > 0 else None
+    se_exp_icav_pct = min(100, round(se_exp_icav / exp_total_icav  * 100)) if exp_total_icav  and exp_total_icav  > 0 else None
 
     return jsonify({
         "ranked":           ses_list,
