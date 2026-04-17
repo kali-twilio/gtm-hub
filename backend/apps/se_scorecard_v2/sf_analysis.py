@@ -106,8 +106,9 @@ DEAL_CONCENTRATION_THRESHOLD = 0.5
 
 
 def fmt(amount):
-    if amount >= 1_000_000: return f"${amount / 1_000_000:.1f}M"
-    if amount >= 1_000:     return f"${amount / 1_000:.0f}K"
+    import math
+    if amount >= 1_000_000: return f"${math.ceil(amount / 100_000) / 10:.1f}M"
+    if amount >= 1_000:     return f"${math.ceil(amount / 1_000)}K"
     return f"${amount}"
 
 

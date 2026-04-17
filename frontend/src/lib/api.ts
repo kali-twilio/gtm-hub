@@ -119,9 +119,9 @@ export async function chatWithSEScorecard(
 }
 
 export function fmt(n: number): string {
-  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`;
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
+  if (n >= 1_000_000_000) return `$${Math.ceil(n / 100_000_000) / 10}B`;
+  if (n >= 1_000_000) return `$${Math.ceil(n / 100_000) / 10}M`;
+  if (n >= 1_000) return `$${Math.ceil(n / 1_000)}K`;
   return `$${n}`;
 }
 
