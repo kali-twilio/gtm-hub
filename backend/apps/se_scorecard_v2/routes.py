@@ -713,7 +713,7 @@ def api_ses():
     if se_name:
         ses = [s for s in ses if s["name"] == se_name]
     team_motion = TEAMS[team_key].get("motion", "dsr") if team_key in TEAMS else "dsr"
-    return jsonify([{**s, "team_motion": team_motion, "team_medians": team_medians} for s in ses])
+    return jsonify({"ses": [{**s, "team_motion": team_motion, "team_medians": team_medians} for s in ses], "sf_instance_url": sf.instance_url})
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/report")
@@ -804,6 +804,7 @@ def api_report():
         "quarter":          period["label"],
         "team_label":       team_label,
         "motion":           team.get("motion", "dsr"),
+        "sf_instance_url":  sf.instance_url,
     })
 
 

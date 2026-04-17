@@ -11,6 +11,7 @@
   let periods: Period[] = $state([]);
   let selected = $state('');
   let se: any = $state(null);
+  let sfInstanceUrl = $state('');
   let loading = $state(false);
   let showLoading = $state(false);
 
@@ -22,7 +23,8 @@
     loading = false;
     showLoading = false;
     if (!data) return;
-    ses = [...data].sort((a, b) => a.name.localeCompare(b.name));
+    sfInstanceUrl = data.sf_instance_url ?? '';
+    ses = [...data.ses].sort((a, b) => a.name.localeCompare(b.name));
     // Maintain selection across period switches; auto-select SE ICs on first load
     const target = selected || ($user?.sf_is_se ? ($user.sf_se_name ?? '') : '');
     const found = target ? ses.find(s => s.name === target) : null;
@@ -289,8 +291,12 @@
             {@const notesOk = opp.has_notes && opp.has_history}
             {@const notesPartial = opp.has_notes || opp.has_history}
             {@const notesColor = notesOk ? ($theme==='twilio'?'#178742':'#10B981') : notesPartial ? ($theme==='twilio'?'#B45309':'#FFB800') : ($theme==='twilio'?'#DC2626':'#EF4444')}
+            {@const sfOppUrl = opp.id && sfInstanceUrl ? `${sfInstanceUrl}/${opp.id}` : null}
             <tr style="border-bottom:{i < actOpps.length-1 ? '1px solid rgba(var(--red-rgb),0.05)' : 'none'}">
-              <td style="padding:5px 8px 5px 0;color:var(--text);font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={oppAccount(opp.name)}>{oppAccount(opp.name)}</td>
+              <td style="padding:5px 8px 5px 0;color:var(--text);font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={oppAccount(opp.name)}>
+                {#if sfOppUrl}<a href={sfOppUrl} target="_blank" rel="noopener noreferrer" style="color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{oppAccount(opp.name)}</a>
+                {:else}{oppAccount(opp.name)}{/if}
+              </td>
               <td style="padding:5px 8px;color:var(--text-muted);white-space:nowrap">{opp.product || '—'}</td>
               <td style="padding:5px 8px;color:var(--text-muted);white-space:nowrap">{opp.owner}</td>
               <td style="padding:5px 8px;color:var(--text-muted);text-align:right;white-space:nowrap">{opp.close_date}</td>
@@ -350,9 +356,13 @@
           {@const trendDown = isFirst && (group.acctData?.mrr_delta ?? 0) < 0}
           {@const trendColor = trendUp ? ($theme==='twilio'?'#178742':'#10B981') : trendDown ? ($theme==='twilio'?'#DC2626':'#EF4444') : 'var(--text-muted)'}
           {@const mrrPct = group.acctData?.mrr_pct ?? 0}
+          {@const sfExpOppUrl = opp.id && sfInstanceUrl ? `${sfInstanceUrl}/${opp.id}` : null}
           <tr style="border-bottom:{isLastRow && isLastGroup ? 'none' : isLastRow ? '1px solid rgba(var(--red-rgb),0.1)' : '1px solid rgba(var(--exp-rgb),0.06)'};{isMulti ? `background:rgba(var(--exp-rgb),0.02)` : ''}">
             <td style="padding:8px 8px 8px 0;color:var(--text);font-weight:{isFirst?'600':'400'};max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title={group.acct}>
-              {#if isFirst}{group.acct}{:else}<span style="padding-left:12px;color:var(--text-faint)">↳</span>{/if}
+              {#if isFirst}
+                {#if sfExpOppUrl}<a href={sfExpOppUrl} target="_blank" rel="noopener noreferrer" style="color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{group.acct}</a>
+                {:else}{group.acct}{/if}
+              {:else}<span style="padding-left:12px;color:var(--text-faint)">↳</span>{/if}
             </td>
             <td style="padding:8px;color:var(--text-muted);white-space:nowrap;vertical-align:top">{opp.product || '—'}</td>
             <td style="padding:8px;color:var(--text-muted);white-space:nowrap;vertical-align:top">{opp.owner}</td>

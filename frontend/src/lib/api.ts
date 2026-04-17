@@ -47,7 +47,7 @@ function subteamParam(subteam: string) {
   return subteam && subteam !== 'none' ? `&subteam=${subteam}` : '';
 }
 
-export async function getSFSEs(team: string, period: string, icavMin = 0, subteam = '') {
+export async function getSFSEs(team: string, period: string, icavMin = 0, subteam = ''): Promise<{ ses: any[]; sf_instance_url: string } | null> {
   const r = await fetch(`/api/se-scorecard-v2/data/ses?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
   if (!r.ok) return null;
   return r.json();
