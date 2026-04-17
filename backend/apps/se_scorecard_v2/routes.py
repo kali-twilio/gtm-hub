@@ -90,7 +90,7 @@ TEAMS = {
         "label":            "NAMER",
         "description":      "All NAMER SEs",
         "motion":           "ae",
-        "team_total_filter": "FY_16_Owner_Team__c LIKE '%NAMER%'",
+        "team_total_filter": "Owner.UserRole.Name LIKE '%NAMER%' AND (NOT Owner.UserRole.Name LIKE '%DSR%') AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')",
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - NAMER%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - NAMER%'",
         "criteria": [
@@ -100,7 +100,7 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c LIKE '%NAMER%' — stamped at opp assignment and frozen. SE-tagged deals are measured as a % of this.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE '%NAMER%' (excluding DSR and Twilio.org roles). Uses current AE role — FY_16 undercounts NAMER because AE transfers leave opps stamped with prior-team FY_16 values.",
             },
         ],
         "subteams": [
@@ -116,7 +116,7 @@ TEAMS = {
         "label":            "EMEA",
         "description":      "All EMEA SEs",
         "motion":           "ae",
-        "team_total_filter": "FY_16_Owner_Team__c LIKE '%EMEA%'",
+        "team_total_filter": "Owner.UserRole.Name LIKE '%EMEA%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - EMEA%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - EMEA%'",
         "criteria": [
@@ -126,7 +126,7 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c LIKE '%EMEA%' — stamped at opp assignment and frozen, so it reflects the original team regardless of AE role changes.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE '%EMEA%'. Uses current AE role — FY_16 undercounts EMEA significantly ($2.6M gap) due to AE transfers leaving opps stamped with prior-team FY_16 values.",
             },
         ],
         "subteams": [
@@ -139,7 +139,7 @@ TEAMS = {
         "label":            "APJ",
         "description":      "APJ SE team",
         "motion":           "ae",
-        "team_total_filter": "FY_16_Owner_Team__c LIKE '%APJ%'",
+        "team_total_filter": "Owner.UserRole.Name LIKE '%APJ%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - APJ'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - APJ'",
         "criteria": [
@@ -149,7 +149,7 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c LIKE '%APJ%' — stamped at opp assignment and frozen, so it reflects the original team regardless of AE role changes.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE '%APJ%'. Uses current AE role — FY_16 undercounts APJ (~$1M gap) due to AE transfers.",
             },
         ],
     },
@@ -157,7 +157,7 @@ TEAMS = {
         "label":            "LATAM",
         "description":      "LATAM SE team",
         "motion":           "ae",
-        "team_total_filter": "FY_16_Owner_Team__c LIKE '%LATAM%'",
+        "team_total_filter": "Owner.UserRole.Name LIKE '%LATAM%'",
         "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - LATAM%'",
         "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - LATAM%'",
         "criteria": [
@@ -167,7 +167,7 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE FY_16_Owner_Team__c LIKE '%LATAM%' — stamped at opp assignment and frozen, so it reflects the original team regardless of AE role changes.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE '%LATAM%'. Uses current AE role — FY_16 and UserRole are identical for LATAM Strat/NB split but UserRole gives a larger total base.",
             },
         ],
         "subteams": [
@@ -448,7 +448,7 @@ def _motion_total_filter(team_total_filter: str, motion: str, which: str,
                   if which == "act" else
                   "(Owner.UserRole.Name LIKE '%Expansion%' OR FY_16_Owner_Team__c LIKE '%Expansion%')")
     else:
-        clause = "FY_16_Owner_Team__c LIKE '% NB%'" if which == "act" else "FY_16_Owner_Team__c LIKE '%Strat%'"
+        clause = "Owner.UserRole.Name LIKE '% NB%'" if which == "act" else "Owner.UserRole.Name LIKE '%Strat%'"
     return f"{base} AND {clause}"
 
 
