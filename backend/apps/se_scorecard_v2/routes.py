@@ -413,6 +413,51 @@ def _build_email_soql(start: str, end: str, se_owner_filter: str) -> str:
     )
 
 
+def _build_ghost_email_soql(start: str, end: str, se_owner_filter: str) -> str:
+    """Task emails by SEs linked to Opportunities — includes Account for ghost work detection."""
+    return (
+        f"SELECT Id, WhatId, Owner.Name, ActivityDate, "
+        f"TYPEOF What "
+        f"  WHEN Opportunity THEN Name, CloseDate, StageName, Owner.UserRole.Name, "
+        f"    {_ICAV_FIELD}, Account.Name "
+        f"END "
+        f"FROM Task "
+        f"WHERE TaskSubtype = 'Email' "
+        f"AND What.Type = 'Opportunity' "
+        f"AND ActivityDate >= {start} "
+        f"AND ActivityDate <= {end} "
+        f"AND {se_owner_filter}"
+    )
+
+
+def _build_ghost_meeting_soql(start: str, end: str, se_owner_filter: str) -> str:
+    """Events by SEs linked to Opportunities — includes Account for ghost work detection."""
+    return (
+        f"SELECT Id, WhatId, Owner.Name, ActivityDate, RecurrenceActivityId, "
+        f"TYPEOF What "
+        f"  WHEN Opportunity THEN Name, CloseDate, StageName, Owner.UserRole.Name, "
+        f"    {_ICAV_FIELD}, Account.Name "
+        f"END "
+        f"FROM Event "
+        f"WHERE What.Type = 'Opportunity' "
+        f"AND IsRecurrence = false "
+        f"AND ActivityDate >= {start} "
+        f"AND ActivityDate <= {end} "
+        f"AND {se_owner_filter}"
+    )
+
+
+def _build_open_opps_soql(team_filter: str, end: str) -> str:
+    """Open opps closing after period start (current + next quarter) for ghost work baseline."""
+    return (
+        f"SELECT Id, Account.Name "
+        f"FROM Opportunity "
+        f"WHERE StageName NOT IN ('Closed Won', 'Closed Lost') "
+        f"AND {team_filter} "
+        f"AND CloseDate >= {end}"
+    )
+
+
 def _build_meeting_soql(start: str, end: str, se_owner_filter: str) -> str:
     """Calendar events (meetings) logged by SEs during the period, linked to Opps.
     Same classification logic as emails — opp owner role drives activate/expansion.
@@ -938,6 +983,77 @@ def api_report():
         "sf_instance_url":  sf.instance_url,
         "ae_dsr_count":     ae_dsr_count,
         "ae_to_se_ratio":   ae_to_se_ratio,
+    })
+
+
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/ghost-work")
+def api_ghost_work():
+    team_key    = request.args.get("team", _DEFAULT_TEAM)
+    period_key  = request.args.get("period", _default_period())
+    subteam_key = request.args.get("subteam", "")
+
+    team = TEAMS.get(team_key)
+    if not team:
+        return jsonify({"error": f"Unknown team '{team_key}'"}), 400
+
+    if _email_to_se_name(session.get("user_email", ""), _load_cached(team_key, period_key) or []):
+        return jsonify({"error": "Access denied"}), 403
+
+    soql_filter        = team["soql_filter"]
+    email_owner_filter = team["email_owner_filter"]
+    if subteam_key:
+        subteam = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None)
+        if not subteam:
+            return jsonify({"error": f"Unknown subteam '{subteam_key}'"}), 400
+        soql_filter        = subteam["soql_filter"]
+        email_owner_filter = subteam["email_owner_filter"]
+
+    info = _period_info(period_key)
+
+    if not sf.configured:
+        return jsonify({"error": "Salesforce is not configured."}), 503
+
+    # Fetch activity + open pipeline in parallel
+    ghost_emails = ghost_meetings = open_opps = None
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        f_emails   = pool.submit(sf.query, _build_ghost_email_soql(info["start"], info["end"], email_owner_filter))
+        f_meetings = pool.submit(sf.query, _build_ghost_meeting_soql(info["start"], info["end"], email_owner_filter))
+        f_open     = pool.submit(sf.query, _build_open_opps_soql(soql_filter, info["start"]))
+        try:
+            ghost_emails   = f_emails.result()
+        except Exception:
+            log.warning("Ghost-work email query failed", exc_info=True)
+            ghost_emails = []
+        try:
+            ghost_meetings = f_meetings.result()
+        except Exception:
+            log.warning("Ghost-work meeting query failed", exc_info=True)
+            ghost_meetings = []
+        try:
+            open_opps = f_open.result()
+        except Exception:
+            log.warning("Ghost-work open-opp query failed", exc_info=True)
+            open_opps = []
+
+    open_acct_names: set = set()
+    for opp in (open_opps or []):
+        acct = opp.get("Account") or {}
+        name = (acct.get("Name") or "").strip().lower()
+        if name:
+            open_acct_names.add(name)
+
+    result = sf_analysis.compute_ghost_work(ghost_emails or [], ghost_meetings or [], open_acct_names)
+
+    team_label = team["label"]
+    if subteam_key:
+        sub = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None)
+        if sub:
+            team_label = f"{team_label} · {sub['label']}"
+
+    return jsonify({
+        **result,
+        "quarter":    info["label"],
+        "team_label": team_label,
     })
 
 

@@ -237,6 +237,16 @@
       </div>
       <span style="color:var(--red);font-size:18px">▶</span>
     </a>
+    {#if !restricted}
+    <a href="/se-scorecard-v2/ghost-work" class="p5-menu-btn nav-card">
+      <span style="font-size:24px">👻</span>
+      <div style="flex:1">
+        <div style="font-size:15px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:var(--text)">Ghost Work</div>
+        <div style="font-size:11px;color:var(--text-muted);font-weight:500;margin-top:2px">Activity with no open opportunity</div>
+      </div>
+      <span style="color:var(--red);font-size:18px">▶</span>
+    </a>
+    {/if}
   </div>
   {/if}
 

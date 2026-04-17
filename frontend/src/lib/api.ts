@@ -65,6 +65,12 @@ export async function getSFRankings(team: string, period: string, icavMin = 0, s
   return r.json();
 }
 
+export async function getSFGhostWork(team: string, period: string, subteam = '') {
+  const r = await fetch(`/api/se-scorecard-v2/data/ghost-work?team=${team}&period=${period}${subteamParam(subteam)}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
 // ---------------------------------------------------------------------------
 // Suggestion box
 // ---------------------------------------------------------------------------
