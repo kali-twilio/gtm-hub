@@ -144,7 +144,7 @@ _PUBLIC_ROUTES = {"/auth", "/oauth2callback", "/logout", "/simulate", "/api/me",
 
 # ── Rate limiting (in-memory, per IP) ────────────────────────────────────────
 _rl_store: dict[str, list[float]] = defaultdict(list)
-_RL_LIMIT  = 60   # max requests
+_RL_LIMIT  = 120  # max requests
 _RL_WINDOW = 60   # per N seconds
 
 def _rate_limited(ip: str) -> bool:

@@ -1,5 +1,21 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
+
   let { children } = $props();
+  let prevTheme = '';
+
+  onMount(() => {
+    prevTheme = document.body.getAttribute('data-theme') ?? '';
+    document.body.setAttribute('data-theme', 'twilio');
+  });
+
+  onDestroy(() => {
+    if (prevTheme) {
+      document.body.setAttribute('data-theme', prevTheme);
+    } else {
+      document.body.removeAttribute('data-theme');
+    }
+  });
 </script>
 
 <!-- Header -->
@@ -13,6 +29,6 @@
   </div>
 </div>
 
-<div style="padding-top:56px">
+<div style="padding-top:56px;min-height:100vh;background:#F4F4F6">
   {@render children()}
 </div>
