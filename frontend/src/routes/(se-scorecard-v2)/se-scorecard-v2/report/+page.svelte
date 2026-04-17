@@ -330,8 +330,9 @@ const actStatCols = $derived(data ? [
     { id: 'activate',  label: motionLabels.act,  show: actSes.length > 0 && !singleMotion },
     { id: 'expansion', label: motionLabels.exp,  show: expSes.length > 0 && !singleMotion },
     { id: 'deals',     label: 'Largest Deals',   show: dealSorted.length > 0 },
-    { id: 'notes',     label: 'Notes Quality',   show: !notesFilter },
-    { id: 'trends',    label: 'Trends & Flags' },
+    { id: 'notes',      label: 'Notes Quality',   show: !notesFilter },
+    { id: 'ae_engage',  label: 'AE Engagement',   show: !!(data.ae_engagement?.length) },
+    { id: 'trends',     label: 'Trends & Flags' },
     { id: 'recs',      label: 'Recommendations', show: !!(data.recommendations?.length) },
     { id: 'profiles',  label: 'SE Profiles' },
   ].filter((s: any) => s.show !== false) : []);
@@ -1108,6 +1109,46 @@ const actStatCols = $derived(data ? [
             <td style="padding:10px 16px;text-align:center;width:32px">—</td>
             <td style="padding:10px 16px"><a href="/se-scorecard-v2/me?se={encodeURIComponent(se.name)}" title={se.title || undefined} style="font-weight:700;color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{se.name}</a></td>
             <td colspan="5" style="padding:10px 16px;font-size:11px;color:var(--text-faint)">No closed won opps ≥ {notesFloorLabel} this period</td>
+          </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {/if}
+
+  <!-- AE/DSR Engagement -->
+  {#if data.ae_engagement?.length}
+  <div id="ae_engage" class="p5-panel" style="margin-bottom:20px">
+    <div class="p5-panel-header">
+      <h2 class="p5-panel-header-title">AE / DSR Engagement</h2>
+    </div>
+    <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">Ranked by number of TW Closed Won deals involving an SE · Shows which AEs/DSRs partner with SEs most actively</div>
+    <div style="overflow-x:auto">
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead style="background:rgba(var(--red-rgb),0.06)">
+          <tr>
+            {#each ['#', 'AE / DSR', 'Deals', 'Total iACV', 'Avg Deal', 'SEs Involved', 'Top SEs'] as h}
+            <th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>
+            {/each}
+          </tr>
+        </thead>
+        <tbody>
+          {#each data.ae_engagement as ae, i}
+          {@const maxDeals = data.ae_engagement[0].deals}
+          <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
+            <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
+            <td style="padding:10px 16px;font-weight:700;color:var(--text)">{ae.name}</td>
+            <td style="padding:10px 16px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--red)">{ae.deals}</span>
+                <div style="flex:1;min-width:50px;background:rgba(var(--red-rgb),0.1);border-radius:2px;height:4px"><div style="height:4px;border-radius:2px;background:var(--red);width:{Math.round(ae.deals/maxDeals*100)}%"></div></div>
+              </div>
+            </td>
+            <td style="padding:10px 16px;font-weight:700;color:var(--text)">{fmt(ae.total_icav)}</td>
+            <td style="padding:10px 16px;color:var(--text-muted)">{fmt(ae.avg_icav)}</td>
+            <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{ae.se_count}</td>
+            <td style="padding:10px 16px;font-size:12px;color:var(--text-muted)">{ae.se_names.join(', ')}{ae.se_count > 3 ? ` +${ae.se_count - 3}` : ''}</td>
           </tr>
           {/each}
         </tbody>

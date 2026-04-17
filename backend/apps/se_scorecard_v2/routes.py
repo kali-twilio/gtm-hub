@@ -800,6 +800,7 @@ def api_report():
         "max_exp_icav":     max(s["exp_icav"] for s in ses_list) or 1,
         "trends":           sorted(sf_analysis.collect_team_trends(ses_list, team.get("motion", "dsr")), key=lambda x: x[0]),
         "recommendations":  sf_analysis.generate_recommendations(ses_list, team.get("motion", "dsr")),
+        "ae_engagement":    sf_analysis.compute_ae_engagement(ses_list),
         "exp_trend":        exp_trend,
         "quarter":          period["label"],
         "team_label":       team_label,
