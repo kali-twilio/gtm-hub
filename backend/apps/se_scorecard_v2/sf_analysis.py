@@ -1440,6 +1440,41 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
 
 
 # ---------------------------------------------------------------------------
+# AE/DSR engagement leaderboard
+# ---------------------------------------------------------------------------
+
+def compute_ae_engagement(ses: list) -> list:
+    """Aggregate AE/DSR engagement from TW opps across all SEs.
+    Returns list sorted by deal count descending, capped at 25."""
+    ae_data: dict[str, dict] = {}
+    for se in ses:
+        se_name = se["name"]
+        for opp in se.get("tw_opps_detail", []):
+            owner = (opp.get("owner") or "").strip()
+            if not owner:
+                continue
+            if owner not in ae_data:
+                ae_data[owner] = {"name": owner, "deals": 0, "total_icav": 0, "ses": {}}
+            ae_data[owner]["deals"] += 1
+            ae_data[owner]["total_icav"] += opp.get("icav", 0) or 0
+            ae_data[owner]["ses"][se_name] = ae_data[owner]["ses"].get(se_name, 0) + 1
+
+    result = []
+    for d in ae_data.values():
+        ses_sorted = sorted(d["ses"].items(), key=lambda x: x[1], reverse=True)
+        result.append({
+            "name":       d["name"],
+            "deals":      d["deals"],
+            "total_icav": d["total_icav"],
+            "avg_icav":   round(d["total_icav"] / d["deals"]) if d["deals"] else 0,
+            "se_count":   len(d["ses"]),
+            "se_names":   [name for name, _ in ses_sorted[:3]],
+        })
+
+    return sorted(result, key=lambda x: x["deals"], reverse=True)[:25]
+
+
+# ---------------------------------------------------------------------------
 # Save se_data.json
 # ---------------------------------------------------------------------------
 
