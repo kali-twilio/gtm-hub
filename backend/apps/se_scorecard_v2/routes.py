@@ -1319,7 +1319,7 @@ def api_chat():
     if not ses:
         return jsonify({"answer": "No SE data is available for the selected team and period."}), 200
 
-    context = _build_chat_context(ses, team_key, period_key)
+    context = _build_chat_context(ses[:30], team_key, period_key)  # cap at 30 SEs to stay within token limits
     team_info = TEAMS.get(team_key, {})
     period_info = _period_info(period_key)
 
@@ -1393,6 +1393,9 @@ def api_chat():
         status = e.response.status_code if e.response is not None else 0
         log.error("Chat API HTTP error %s: %s", status, e)
         if status == 429:
+            body_text = e.response.text if e.response is not None else ""
+            if "insufficient_quota" in body_text:
+                return jsonify({"error": "OpenAI quota exceeded — please add credits at platform.openai.com."}), 503
             return jsonify({"error": "Rate limited by AI provider. Please wait a moment and try again."}), 503
         log.error("Response body: %s", e.response.text[:500] if e.response is not None else "")
         return jsonify({"error": f"AI request failed (HTTP {status}). Please try again."}), 503
