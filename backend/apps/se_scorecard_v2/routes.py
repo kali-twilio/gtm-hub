@@ -413,7 +413,7 @@ def _build_team_total_soql(team_filter: str, start: str, end: str) -> str:
         f"SELECT SUM({_ICAV_FIELD}) total_icav "
         f"FROM Opportunity "
         f"WHERE StageName = 'Closed Won' "
-        f"AND {team_filter} "
+        f"AND ({team_filter}) "
         f"AND CloseDate >= {s} "
         f"AND CloseDate <= {e}"
     )
