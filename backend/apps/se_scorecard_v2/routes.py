@@ -1319,7 +1319,7 @@ def api_chat():
     if not ses:
         return jsonify({"answer": "No SE data is available for the selected team and period."}), 200
 
-    context = _build_chat_context(ses[:30], team_key, period_key)  # cap at 30 SEs to stay within token limits
+    context = _build_chat_context(ses, team_key, period_key)
     team_info = TEAMS.get(team_key, {})
     period_info = _period_info(period_key)
 
