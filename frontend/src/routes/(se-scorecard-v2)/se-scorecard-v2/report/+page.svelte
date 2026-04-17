@@ -16,6 +16,8 @@
   let showActivity = $state(false);
   let titleFilter   = $state('');
   let productFilter = $state('');
+  let aeEngageSort  = $state<'deals' | 'icav'>('deals');
+  let filtersVisible = $state(true);
 
   // Returns a copy of an SE with iACV/wins recalculated from only fully-documented
   // TW opps (both Sales_Engineer_Notes__c and SE_Notes_History__c filled).
@@ -53,7 +55,7 @@
   );
   const colDefs = $derived(data ? [
     {h:'#',              show:true,          tip:`Rank by composite score: 85% iACV · 8% MRR% · 5% ARR · 2% notes. Each metric percentile-ranked 0–100 within the team.`},
-    {h:'SE',             show:true,          tip:seLevelTip},
+    {h:'SE',             show:true,          tip:''},
     {h:motionLabels.act, show:hasActCol,     tip:`Sum of iACV from Technical Win Closed Won opps classified as ${motionLabels.act}. ${motionLabels.actDesc}. Only TW opps count toward ranking.`},
     {h:motionLabels.exp, show:hasExpCol,     tip:`Sum of iACV from Technical Win Closed Won opps classified as ${motionLabels.exp}. ${motionLabels.expDesc}. Only TW opps count toward ranking.`},
     {h:'Total iACV',     show:true,          tip:`${motionLabels.act} + ${motionLabels.exp} iACV combined (TW only). In "All Closed Won" view the non-TW delta is shown inline.`},
@@ -123,18 +125,6 @@
     const sorted = [...mapped].sort((a: any, b: any) => b.total_icav - a.total_icav);
     return sorted.map((se: any, i: number) => ({ ...se, rank: i + 1 }));
   })() : []);
-  const seLevelTip = $derived(filteredRanked.length ? (() => {
-    const counts: Record<number, number> = {};
-    for (const s of filteredRanked as any[]) {
-      const lvl = titleLevel((s as any).title || '');
-      counts[lvl] = (counts[lvl] ?? 0) + 1;
-    }
-    const n = filteredRanked.length;
-    const parts = Object.entries(counts)
-      .sort(([a], [b]) => +b - +a)
-      .map(([lvl, c]) => `${+lvl > 0 ? `L${lvl}` : 'SE'}: ${c}`);
-    return `${n} SE${n !== 1 ? 's' : ''} · ${parts.join(' · ')}`;
-  })() : '');
   const actKey    = (s: any) => s.act_icav + (view === 'all' ? (s.non_tw_act_icav ?? 0) : 0);
   const actSorted = $derived(filteredRanked.filter((s: any) => actKey(s) > 0).sort((a: any, b: any) => actKey(b) - actKey(a)));
   const expSorted = $derived([...filteredRanked].filter((s: any) => s.exp_wins > 0).sort((a: any, b: any) => b.exp_icav - a.exp_icav));
@@ -244,7 +234,7 @@
     {label:motionLabels.exp+' iACV', val:fmt(teamExpIcav),                     color:null, sub:(data.se_exp_icav_pct != null && data.exp_total_icav != null ? data.se_exp_icav_pct+'% · '+fmt(data.exp_total_icav)+' total' : null),     show:teamExpIcav>0 && teamActIcav>0},
     {label:'Account ARR',            val:fmt(expTotals.arr_total),             color:null, sub:null,                                                                                                                                        show:stratOnly && expTotals.arr_total>0},
     {label:'Qtr MRR Δ',              val:fmtMrrDelta(expTotals.mrr_delta_total), color:expTotals.mrr_delta_total>0?($theme==='twilio'?'#178742':'#10B981'):expTotals.mrr_delta_total<0?($theme==='twilio'?'#DC2626':'#EF4444'):'var(--text-muted)', sub:null, show:stratOnly && expTotals.arr_total>0},
-    {label:'SEs Analysed',           val:String(data.total),                   color:null, sub:(data.ae_dsr_count != null && data.ae_to_se_ratio != null) ? `${data.ae_dsr_count} AEs/DSRs · ${data.ae_to_se_ratio}:1 ratio` : null,  show:true},
+    {label:'SEs Analysed',           val:String(data.total),                   color:null, sub:(data.ae_dsr_count != null && data.ae_to_se_ratio != null) ? `${data.ae_dsr_count} ${data.motion === 'dsr' ? 'DSRs' : 'AEs'} · ${data.ae_to_se_ratio}:1` : null,  show:true},
   ].filter((s: any) => s.show && s.val != null) : []);
 
 const actStatCols = $derived(data ? [
@@ -331,7 +321,7 @@ const actStatCols = $derived(data ? [
     { id: 'expansion', label: motionLabels.exp,  show: expSes.length > 0 && !singleMotion },
     { id: 'deals',     label: 'Largest Deals',   show: dealSorted.length > 0 },
     { id: 'notes',      label: 'Notes Quality',   show: !notesFilter },
-    { id: 'ae_engage',  label: 'AE Engagement',   show: !!(data.ae_engagement?.length) },
+    { id: 'ae_engage',  label: (data.motion === 'dsr' ? 'DSR' : 'AE') + ' Engagement', show: !!(data.ae_engagement?.length) },
     { id: 'trends',     label: 'Trends & Flags' },
     { id: 'recs',      label: 'Recommendations', show: !!(data.recommendations?.length) },
     { id: 'profiles',  label: 'SE Profiles' },
@@ -445,6 +435,11 @@ const actStatCols = $derived(data ? [
 
   <!-- Controls row — sticky -->
   <div style="position:sticky;top:68px;z-index:90;margin:0 -24px;padding:10px 24px;background:var(--bg);border-bottom:1px solid rgba(var(--red-rgb),0.1);backdrop-filter:blur(8px);margin-bottom:0">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:{filtersVisible ? '10px' : '0'}">
+    <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted)">Filters{!filtersVisible && (titleFilter || productFilter || notesFilter || showActivity || icavMin > 0) ? ' •' : ''}</span>
+    <button onclick={() => filtersVisible = !filtersVisible} class="p5-ctrl" style="padding:3px 10px;font-size:10px">{filtersVisible ? '▲ Hide' : '▼ Show'}</button>
+  </div>
+  {#if filtersVisible}
   <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">
 
     <!-- View toggle -->
@@ -523,6 +518,7 @@ const actStatCols = $derived(data ? [
     {/if}
 
   </div>
+  {/if}
   </div>
 
   <div style="margin-bottom:20px"></div>
@@ -531,7 +527,10 @@ const actStatCols = $derived(data ? [
   {#if !singleMotion}
   <div id="rankings" class="p5-panel" style="margin-bottom:20px">
     <div class="p5-panel-header">
-      <h2 class="p5-panel-header-title">Standings</h2>
+      <span class="tbl-title-wrap">
+        <h2 class="p5-panel-header-title">Standings</h2>
+        <span class="tbl-title-tip">Composite score: 85% iACV + 8% Quarter MRR % + 5% Total ARR + 2% Notes hygiene. Each metric percentile-ranked 0–100 within the team. TW Closed Won opps only — classified by owner role into {motionLabels.act}/{motionLabels.exp}.</span>
+      </span>
       <button onclick={() => rankCriteriaExpanded = !rankCriteriaExpanded} class="p5-ctrl {rankCriteriaExpanded ? 'active' : ''}">Criteria {rankCriteriaExpanded ? '▲' : '▼'}</button>
     </div>
     <div>
@@ -555,8 +554,8 @@ const actStatCols = $derived(data ? [
       <p style="font-size:10px;color:var(--text-faint);margin-top:8px">Each metric is percentile-ranked 0–100 within the team, then combined with these weights into a composite score. Percentile ranking makes the weights fair across metrics with different scales ($M iACV vs % MRR).</p>
       {/if}
     </div>
-    <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <div class="tbl-scroll">
+      <table style="width:100%;font-size:13px">
         <thead style="background:rgba(var(--red-rgb),0.06)">
           <tr>
             {#each colDefs as {h, tip}, idx}
@@ -676,15 +675,17 @@ const actStatCols = $derived(data ? [
     {#if actSes.length > 0}
     <div id="activate" class="p5-panel">
       <div class="p5-panel-header">
-        <h2 class="p5-panel-header-title">{motionLabels.act}</h2>
+        <span class="tbl-title-wrap">
+          <h2 class="p5-panel-header-title">{motionLabels.act}</h2>
+          <span class="tbl-title-tip">TW Closed Won opps where {motionLabels.actDesc}. Ranked by {motionLabels.act} iACV descending. Source: Opportunity WHERE Technical_Win__c = true AND StageName = 'Closed Won' AND {motionLabels.actDesc}.</span>
+        </span>
       </div>
-      <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">{motionLabels.actDesc}</div>
-      <div style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <div class="tbl-scroll">
+        <table style="width:100%;font-size:13px">
           <thead style="background:rgba(var(--red-rgb),0.06)"><tr>
             {#each [
               {h:'#',show:true, tip:'Ranked by Activate iACV within this period, highest to lowest.'},
-              {h:'SE',show:true, tip:seLevelTip},
+              {h:'SE',show:true, tip:''},
               {h:'Wins',show:true, tip:`Count of Technical Win Closed Won ${motionLabels.act} opps. ${motionLabels.actDesc}. Only TW opps count toward ranking.`},
               {h:'iACV',show:true, tip:`Sum of iACV from Technical Win Closed Won ${motionLabels.act} opps. Incremental Annual Contract Value — the net new ARR committed on close.`},
               {h:'Median',show:true, tip:`Median deal size (iACV) across this SE's ${motionLabels.act.toLowerCase()} wins. More robust than average — less skewed by a single large deal.`},
@@ -761,15 +762,18 @@ const actStatCols = $derived(data ? [
     {#if expSes.length > 0}
     <div id="expansion" class="p5-panel">
       <div class="p5-panel-header">
-        <h2 class="p5-panel-header-title">{motionLabels.exp}</h2>
+        <span class="tbl-title-wrap">
+          <h2 class="p5-panel-header-title">{motionLabels.exp}</h2>
+          <span class="tbl-title-tip">TW Closed Won opps where {motionLabels.expDesc}. Ranked by {motionLabels.exp} iACV descending. Source: Opportunity WHERE Technical_Win__c = true AND StageName = 'Closed Won' AND {motionLabels.expDesc}.</span>
+        </span>
       </div>
-      <div style="overflow-x:auto">
-        <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <div class="tbl-scroll">
+        <table style="width:100%;font-size:13px">
           <thead style="background:rgba(var(--red-rgb),0.06)">
             <tr>
               {#each [
                 {h:'#',          tip:'',                                                                                                                                                                                        show:true},
-                {h:'SE',         tip:seLevelTip,                                                                                                                                                                            show:true},
+                {h:'SE',         tip:'',                                                                                                                                                                            show:true},
                 {h:'Wins',       tip:`Count of Technical Win Closed Won ${motionLabels.exp} opps. ${motionLabels.expDesc}. Only TW opps count toward ranking.`,                                                                 show:true},
                 {h:'iACV',       tip:`Net new ARR committed on close — sum of Comms_Segment_Combined_iACV__c across this SE's TW ${motionLabels.exp.toLowerCase()} wins.`,                                                      show:true},
                 {h:'Acct ARR',   tip:`Current_ARR_Based_on_Last_6_Months__c on each expansion account. Each account counted once even if the SE has multiple opps on it.`,                                                      show:expTotals.arr_total>0},
@@ -864,7 +868,10 @@ const actStatCols = $derived(data ? [
   {#if singleMotion}
   <div id="rankings" class="p5-panel" style="margin-bottom:20px">
     <div class="p5-panel-header">
-      <h2 class="p5-panel-header-title">Standings</h2>
+      <span class="tbl-title-wrap">
+        <h2 class="p5-panel-header-title">Standings</h2>
+        <span class="tbl-title-tip">Composite score: 85% iACV + 8% Quarter MRR % + 5% Total ARR + 2% Notes hygiene. Each metric percentile-ranked 0–100 within the team. TW Closed Won opps only — classified by owner role into {motionLabels.act}/{motionLabels.exp}.</span>
+      </span>
       <button onclick={() => rankCriteriaExpanded = !rankCriteriaExpanded} class="p5-ctrl {rankCriteriaExpanded ? 'active' : ''}">Criteria {rankCriteriaExpanded ? '▲' : '▼'}</button>
     </div>
     <div>
@@ -888,12 +895,12 @@ const actStatCols = $derived(data ? [
       <p style="font-size:10px;color:var(--text-faint);margin-top:8px">Each metric is percentile-ranked 0–100 within the team, then combined with these weights into a composite score.</p>
       {/if}
     </div>
-    <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <div class="tbl-scroll">
+      <table style="width:100%;font-size:13px">
         <thead style="background:rgba(var(--red-rgb),0.06)"><tr>
           {#each (stratOnly ? [
             {h:'#',           tip:'', show:true},
-            {h:'SE',          tip:seLevelTip, show:true},
+            {h:'SE',          tip:'', show:true},
             {h:'Wins',        tip:`Count of TW Closed Won ${motionLabels.exp} opps.`, show:true},
             {h:'iACV',        tip:`Net new ARR committed on close across this SE's TW ${motionLabels.exp.toLowerCase()} wins.`, show:true},
             {h:'Acct ARR',    tip:`Current ARR on each ${motionLabels.exp.toLowerCase()} account. Each account counted once.`, show:expTotals.arr_total>0},
@@ -906,7 +913,7 @@ const actStatCols = $derived(data ? [
             {h:'Status',      tip:`Growing — net MRR increase. Expanding — new iACV, flat MRR. Mixed — new iACV but MRR declining. Contracting — MRR dropping, no new wins. Retaining — no growth signal.`, show:true},
           ] : [
             {h:'#',           tip:'', show:true},
-            {h:'SE',          tip:seLevelTip, show:true},
+            {h:'SE',          tip:'', show:true},
             {h:'Wins',        tip:`Count of TW Closed Won ${motionLabels.act} opps.`, show:true},
             {h:'iACV',        tip:`Net new ARR committed on close across this SE's TW ${motionLabels.act.toLowerCase()} wins.`, show:true},
             {h:'Median',      tip:`Median deal size (iACV) — less skewed by a single large deal.`, show:true},
@@ -1043,10 +1050,15 @@ const actStatCols = $derived(data ? [
   <!-- Largest Deals -->
   {#if dealSorted.length > 0}
   <div id="deals" class="p5-panel" style="margin-bottom:20px">
-    <div class="p5-panel-header"><h2 class="p5-panel-header-title">Largest Deals</h2></div>
-    <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['#','SE','Value','Motion','AE','Account','Product'] as h}<th title={h==='SE'?seLevelTip:undefined} style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};{h==='SE'&&seLevelTip?'cursor:help;border-bottom:1px dashed rgba(var(--red-rgb),0.4)':''}">{h}</th>{/each}</tr></thead>
+    <div class="p5-panel-header">
+      <span class="tbl-title-wrap">
+        <h2 class="p5-panel-header-title">Largest Deals</h2>
+        <span class="tbl-title-tip">One row per SE, showing their single largest TW Closed Won opp by iACV this period. Source: Opportunity WHERE Technical_Win__c = true AND StageName = 'Closed Won' AND CloseDate within period, grouped by Technical_Lead__c, max by Comms_Segment_Combined_iACV__c.</span>
+      </span>
+    </div>
+    <div class="tbl-scroll">
+      <table style="width:100%;font-size:13px">
+        <thead style="background:rgba(var(--red-rgb),0.06)"><tr>{#each ['#','SE','Value','Motion','AE','Account','Product'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'}">{h}</th>{/each}</tr></thead>
         <tbody>
           {#each dealSorted as se, i}
           {@const sfOppUrl = se.largest_deal_id && data.sf_instance_url ? `${data.sf_instance_url}/${se.largest_deal_id}` : null}
@@ -1078,13 +1090,15 @@ const actStatCols = $derived(data ? [
   {#if !notesFilter}
   <div id="notes" class="p5-panel" style="margin-bottom:20px">
     <div class="p5-panel-header">
-      <h2 class="p5-panel-header-title">SE Notes Quality</h2>
+      <span class="tbl-title-wrap">
+        <h2 class="p5-panel-header-title">SE Notes Quality</h2>
+        <span class="tbl-title-tip">Coverage = both Sales_Engineer_Notes__c and SE_Notes_History__c filled on the same TW Closed Won opp. Entries counted from [Date: Name] timestamps in SE_Notes_History__c. Only opps at or above the iACV floor are scored.</span>
+      </span>
     </div>
-    <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">Coverage = both Solutions Team Notes fields filled · Entries counted from [Date: Name] timestamps in history</div>
-    <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <div class="tbl-scroll">
+      <table style="width:100%;font-size:13px">
         <thead style="background:rgba(var(--red-rgb),0.06)">
-          <tr>{#each ['#', 'SE', notesFloorLabel+' TW Opps','Both Fields Covered','Coverage %','Total Entries','Avg Entries / Opp'] as h}<th title={h==='SE'?seLevelTip:undefined} style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap;{h==='SE'&&seLevelTip?'cursor:help;border-bottom:1px dashed rgba(var(--red-rgb),0.4)':''}">{h}</th>{/each}</tr>
+          <tr>{#each ['#', 'SE', notesFloorLabel+' TW Opps','Both Fields Covered','Coverage %','Total Entries','Avg Entries / Opp'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>{/each}</tr>
         </thead>
         <tbody>
           {#each [...filteredRanked].filter((s: any) => (s.note_hv_total ?? 0) > 0).sort((a: any, b: any) => (b.note_hv_covered / b.note_hv_total) - (a.note_hv_covered / a.note_hv_total) || b.note_hv_avg_entries - a.note_hv_avg_entries) as se, i}
@@ -1119,33 +1133,57 @@ const actStatCols = $derived(data ? [
 
   <!-- AE/DSR Engagement -->
   {#if data.ae_engagement?.length}
+  {@const aeDsrLabel = data.motion === 'dsr' ? 'DSR' : 'AE'}
+  {@const aeEngageSorted = [...data.ae_engagement].sort((a, b) => aeEngageSort === 'icav' ? b.total_icav - a.total_icav : b.deals - a.deals)}
+  {@const maxVal = aeEngageSort === 'icav' ? aeEngageSorted[0].total_icav : aeEngageSorted[0].deals}
   <div id="ae_engage" class="p5-panel" style="margin-bottom:20px">
     <div class="p5-panel-header">
-      <h2 class="p5-panel-header-title">AE / DSR Engagement</h2>
+      <span class="tbl-title-wrap">
+        <h2 class="p5-panel-header-title">{aeDsrLabel} Engagement</h2>
+        <span class="tbl-title-tip">Aggregated from Opportunity.Owner.Name across all TW Closed Won opps for this team and period. Shows how many deals each {aeDsrLabel} partnered with an SE on, total iACV attributed, and which SEs they worked with most.</span>
+      </span>
     </div>
-    <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">Ranked by number of TW Closed Won deals involving an SE · Shows which AEs/DSRs partner with SEs most actively</div>
-    <div style="overflow-x:auto">
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
+    <div class="tbl-scroll">
+      <table style="width:100%;font-size:13px">
         <thead style="background:rgba(var(--red-rgb),0.06)">
           <tr>
-            {#each ['#', 'AE / DSR', 'Deals', 'Total iACV', 'Avg Deal', 'SEs Involved', 'Top SEs'] as h}
-            <th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>
+            {#each [
+              { label: '#',            sortKey: null },
+              { label: aeDsrLabel,     sortKey: null },
+              { label: 'Deals',        sortKey: 'deals' },
+              { label: 'Total iACV',   sortKey: 'icav' },
+              { label: 'Avg Deal',     sortKey: null },
+              { label: 'SEs Involved', sortKey: null },
+              { label: 'Top SEs',      sortKey: null },
+            ] as h}
+            <th
+              onclick={h.sortKey ? () => { aeEngageSort = h.sortKey as 'deals' | 'icav'; } : undefined}
+              style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:{h.sortKey ? (aeEngageSort === h.sortKey ? 'var(--red)' : 'var(--text-muted)') : 'var(--red)'};font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap;{h.sortKey ? 'cursor:pointer;user-select:none' : ''}"
+            >{h.label}{h.sortKey ? (aeEngageSort === h.sortKey ? ' ▼' : ' ↕') : ''}</th>
             {/each}
           </tr>
         </thead>
         <tbody>
-          {#each data.ae_engagement as ae, i}
-          {@const maxDeals = data.ae_engagement[0].deals}
+          {#each aeEngageSorted as ae, i}
           <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
             <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
             <td style="padding:10px 16px;font-weight:700;color:var(--text)">{ae.name}</td>
             <td style="padding:10px 16px">
               <div style="display:flex;align-items:center;gap:8px">
-                <span style="font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--red)">{ae.deals}</span>
-                <div style="flex:1;min-width:50px;background:rgba(var(--red-rgb),0.1);border-radius:2px;height:4px"><div style="height:4px;border-radius:2px;background:var(--red);width:{Math.round(ae.deals/maxDeals*100)}%"></div></div>
+                <span style="font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{aeEngageSort === 'deals' ? 'var(--red)' : 'var(--text)'}">{ae.deals}</span>
+                {#if aeEngageSort === 'deals'}
+                <div style="flex:1;min-width:50px;background:rgba(var(--red-rgb),0.1);border-radius:2px;height:4px"><div style="height:4px;border-radius:2px;background:var(--red);width:{Math.round(ae.deals/maxVal*100)}%"></div></div>
+                {/if}
               </div>
             </td>
-            <td style="padding:10px 16px;font-weight:700;color:var(--text)">{fmt(ae.total_icav)}</td>
+            <td style="padding:10px 16px">
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-weight:700;color:{aeEngageSort === 'icav' ? 'var(--red)' : 'var(--text)'}">{fmt(ae.total_icav)}</span>
+                {#if aeEngageSort === 'icav'}
+                <div style="flex:1;min-width:50px;background:rgba(var(--red-rgb),0.1);border-radius:2px;height:4px"><div style="height:4px;border-radius:2px;background:var(--red);width:{Math.round(ae.total_icav/maxVal*100)}%"></div></div>
+                {/if}
+              </div>
+            </td>
             <td style="padding:10px 16px;color:var(--text-muted)">{fmt(ae.avg_icav)}</td>
             <td style="padding:10px 16px;color:var(--text-muted);text-align:center">{ae.se_count}</td>
             <td style="padding:10px 16px;font-size:12px;color:var(--text-muted)">{ae.se_names.join(', ')}{ae.se_count > 3 ? ` +${ae.se_count - 3}` : ''}</td>
@@ -1270,3 +1308,63 @@ const actStatCols = $derived(data ? [
 
 </div>
 {/if}
+
+
+<style>
+.tbl-scroll {
+  overflow-y: auto;
+  overflow-x: auto;
+  max-height: 656px; /* ~15 rows at 41px + 41px header */
+}
+.tbl-scroll table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+.tbl-scroll thead tr th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background-color: var(--panel);
+  box-shadow: inset 0 0 0 1000px rgba(var(--red-rgb), 0.06), 0 2px 0 rgba(var(--red-rgb), 0.2);
+}
+.tbl-title-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: help;
+}
+.tbl-title-tip {
+  visibility: hidden;
+  opacity: 0;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 500;
+  width: 300px;
+  background: #1a1a2e;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 11px;
+  font-weight: 400 !important;
+  font-style: normal !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: #b0b0c0 !important;
+  line-height: 1.55;
+  white-space: normal;
+  pointer-events: none;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  transition: opacity 0.15s;
+}
+[data-theme="twilio"] .tbl-title-tip {
+  background: #f8f8f8;
+  border-color: rgba(0,0,0,0.12);
+  color: #555 !important;
+}
+.tbl-title-wrap:hover .tbl-title-tip {
+  visibility: visible;
+  opacity: 1;
+}
+</style>

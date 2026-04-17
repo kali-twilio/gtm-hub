@@ -1471,7 +1471,7 @@ def compute_ae_engagement(ses: list) -> list:
             "se_names":   [name for name, _ in ses_sorted[:3]],
         })
 
-    return sorted(result, key=lambda x: x["deals"], reverse=True)[:25]
+    return sorted(result, key=lambda x: x["deals"], reverse=True)
 
 
 # ---------------------------------------------------------------------------
