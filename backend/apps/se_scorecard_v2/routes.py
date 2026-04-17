@@ -1196,9 +1196,53 @@ def _twiml_empty():
 _OPENAI_API_KEY   = os.environ.get("OPENAI_API_KEY", "")
 _OPENAI_MODEL     = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
+_SOQL_SELECT_RE = re.compile(r"^\s*SELECT\b", re.IGNORECASE)
+
+# Fields the AI may reference in SOQL (prevent hallucinated field names causing 400s)
+_SF_SCHEMA_HINT = """
+Salesforce Opportunity fields available:
+  Id, Name, CloseDate, StageName, Amount, Type
+  Comms_Segment_Combined_iACV__c  (iACV — primary revenue metric)
+  eARR_post_launch_No_Decimal__c  (eARR)
+  FY_16_Owner_Team__c             (team stamp)
+  Presales_Stage__c               (TW status; '4 - Technical Win Achieved' = TW)
+  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name
+  Owner.Name, Owner.UserRole.Name
+  Account.Name, Account.Owner.Name
+  SE_Notes__c, SE_Notes_History__c, Sales_Engineer_Notes__c
+  RecordType.Name
+Standard date literal: TODAY, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_N_DAYS:n
+Always filter StageName = 'Closed Won' unless asking about pipeline/open deals.
+Limit results to 50 rows unless the question needs more.
+"""
+
+_SOQL_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_soql",
+            "description": (
+                "Execute a SOQL SELECT query against the Twilio Salesforce org. "
+                "Use this when the pre-loaded scorecard data doesn't contain enough detail "
+                "to answer the question — e.g. specific account names, deal notes, pipeline "
+                "queries, or cross-team comparisons."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "soql": {
+                        "type": "string",
+                        "description": "A valid SOQL SELECT statement. Only SELECT is allowed.",
+                    }
+                },
+                "required": ["soql"],
+            },
+        },
+    }
+]
+
 
 def _build_chat_context(ses: list, team_key: str, period_key: str) -> str:
-    """Serialize SE data into a compact text block for Claude."""
     team  = TEAMS.get(team_key, {})
     info  = _period_info(period_key)
     lines = [
@@ -1212,12 +1256,10 @@ def _build_chat_context(ses: list, team_key: str, period_key: str) -> str:
         lines.append(f"  Activate wins: {se.get('act_wins',0)} iACV ${se.get('act_icav',0):,} | Expansion wins: {se.get('exp_wins',0)} iACV ${se.get('exp_icav',0):,}")
         lines.append(f"  Win rate: {se.get('win_rate',0)}% ({se.get('closed_won',0)}W/{se.get('closed_lost',0)}L)")
         lines.append(f"  Largest deal: {se.get('largest_deal','')} (${se.get('largest_deal_value',0):,}) acct: {se.get('largest_deal_acct','')}")
-        # Top deals with notes
         for opp in (se.get("tw_opps_detail") or [])[:10]:
             notes_flag = "[has_notes]" if opp.get("has_notes") else "[no_notes]"
             history_flag = "[has_history]" if opp.get("has_history") else "[no_history]"
             lines.append(f"    deal: {opp.get('name','')} | product: {opp.get('product','')} | iACV: ${opp.get('icav',0):,} | close: {opp.get('close_date','')} | motion: {opp.get('motion','')} | {notes_flag} {history_flag} | note_entries: {opp.get('note_entries',0)} | notes_len: {opp.get('notes_len',0)}")
-        # Expansion account detail
         for acct in (se.get("exp_account_detail") or [])[:5]:
             lines.append(f"    exp_acct: {acct.get('acct_name','')} | ARR: ${acct.get('arr',0):,} | MRR delta: ${acct.get('mrr_delta',0):,}/mo | MRR%: {acct.get('mrr_pct',0)}%")
         roast = se.get("roast", "")
@@ -1227,14 +1269,34 @@ def _build_chat_context(ses: list, team_key: str, period_key: str) -> str:
     return "\n".join(lines)
 
 
+def _execute_soql_tool(soql: str) -> str:
+    """Run a SOQL query and return results as compact text. Only SELECT allowed."""
+    if not _SOQL_SELECT_RE.match(soql):
+        return "Error: only SELECT queries are permitted."
+    if not sf.configured:
+        return "Error: Salesforce is not configured."
+    try:
+        rows = sf.query(soql, timeout=30)
+    except Exception as e:
+        return f"Query error: {e}"
+    if not rows:
+        return "No records returned."
+    # Serialize rows as compact lines, stripping the 'attributes' key SF adds
+    lines = []
+    for row in rows[:100]:
+        fields = {k: v for k, v in row.items() if k != "attributes"}
+        lines.append(str(fields))
+    return "\n".join(lines)
+
+
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/chat", methods=["POST"])
 def api_chat():
-    """AI chatbot — answers questions about the Salesforce SE scorecard data."""
+    """AI chatbot with Salesforce tool access."""
     if not _OPENAI_API_KEY:
         return jsonify({"error": "AI chatbot is not configured (missing OPENAI_API_KEY)."}), 503
 
-    body       = request.get_json(silent=True) or {}
-    message    = (body.get("message") or "").strip()
+    body        = request.get_json(silent=True) or {}
+    message     = (body.get("message") or "").strip()
     if not message:
         return jsonify({"error": "message is required"}), 400
     if len(message) > 2000:
@@ -1256,33 +1318,75 @@ def api_chat():
         return jsonify({"answer": "No SE data is available for the selected team and period."}), 200
 
     context = _build_chat_context(ses, team_key, period_key)
+    team_info = TEAMS.get(team_key, {})
+    period_info = _period_info(period_key)
 
     system_prompt = (
         "You are an AI assistant embedded in the Twilio SE Scorecard dashboard. "
-        "You have access to Salesforce opportunity data for a team of Solutions Engineers. "
-        "Answer questions clearly and concisely using the data provided. "
-        "When summarising SE notes or call activity, base your answer on the note metadata "
-        "(notes_len, note_entries, has_notes, has_history) since full note text is not included. "
-        "Be professional and helpful. Format numbers with $ and K/M suffixes."
+        "You have access to pre-loaded Salesforce opportunity data for a team of Solutions Engineers, "
+        f"and a run_soql tool to query Salesforce directly when you need more detail.\n\n"
+        f"Current context: team={team_info.get('label', team_key)}, period={period_info['label']} "
+        f"(CloseDate {period_info['start']} to {period_info['end']}), "
+        f"team SOQL filter: {team_info.get('soql_filter','')}\n\n"
+        f"{_SF_SCHEMA_HINT}\n"
+        "Answer questions clearly and concisely. Format numbers with $ and K/M suffixes. "
+        "When using run_soql, apply the team's SOQL filter so results stay scoped to this team."
     )
 
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Pre-loaded scorecard data:\n\n{context}\n\nQuestion: {message}"},
+    ]
+
     try:
+        # Agentic loop: up to 3 tool calls before forcing a final answer
+        for _ in range(3):
+            resp = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {_OPENAI_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model": _OPENAI_MODEL,
+                    "max_tokens": 1024,
+                    "messages": messages,
+                    "tools": _SOQL_TOOL,
+                    "tool_choice": "auto",
+                },
+                timeout=60,
+            )
+            resp.raise_for_status()
+            choice = resp.json()["choices"][0]
+            msg = choice["message"]
+            messages.append(msg)
+
+            if choice["finish_reason"] != "tool_calls":
+                return jsonify({"answer": msg.get("content", "No response generated.")})
+
+            # Execute each tool call and append results
+            for tc in msg.get("tool_calls", []):
+                if tc["function"]["name"] == "run_soql":
+                    try:
+                        args = json.loads(tc["function"]["arguments"])
+                        result = _execute_soql_tool(args.get("soql", ""))
+                    except Exception as e:
+                        result = f"Tool error: {e}"
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc["id"],
+                        "content": result,
+                    })
+
+        # Fallback: ask for a final answer without tools
+        messages.append({"role": "user", "content": "Please summarise what you found."})
         resp = requests.post(
             "https://api.openai.com/v1/chat/completions",
             headers={"Authorization": f"Bearer {_OPENAI_API_KEY}", "Content-Type": "application/json"},
-            json={
-                "model": _OPENAI_MODEL,
-                "max_tokens": 1024,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Here is the current SE scorecard data:\n\n{context}\n\nQuestion: {message}"},
-                ],
-            },
+            json={"model": _OPENAI_MODEL, "max_tokens": 1024, "messages": messages},
             timeout=60,
         )
         resp.raise_for_status()
-        answer = resp.json()["choices"][0]["message"]["content"]
+        answer = resp.json()["choices"][0]["message"].get("content", "No response generated.")
         return jsonify({"answer": answer})
+
     except Exception as e:
         log.error("Chat API error: %s", e)
         return jsonify({"error": "AI request failed. Please try again."}), 503
