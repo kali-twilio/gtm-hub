@@ -26,7 +26,7 @@ fi
 source deploy.env
 
 # Validate required vars
-for var in OWNER PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN; do
+for var in OWNER PROFILE REGION BUCKET SG_ID TAG_NAME KEY_NAME EIP_ALLOC DOMAIN CF_DIST_ID GOOGLE_CLIENT_ID GOOGLE_CLIENT_SECRET SECRET_KEY FRONTEND_URL TWILIO_ACCOUNT_SID TWILIO_AUTH_TOKEN; do
   if [ -z "${!var}" ]; then
     echo "ERROR: $var is not set in deploy.env"
     exit 1
@@ -368,6 +368,15 @@ fi
 echo "Waiting 3 minutes for instance to fetch secrets, then cleaning up S3..."
 sleep 180
 aws s3 rm s3://$BUCKET/secrets.env --profile "$PROFILE" --region "$REGION" && echo "Secrets file deleted from S3." || echo "Warning: could not delete secrets.env from S3 — delete manually."
+
+# ── 9. Invalidate CloudFront cache ───────────────────────────────────────────
+echo ""
+echo "Invalidating CloudFront cache..."
+aws cloudfront create-invalidation \
+  --profile "$PROFILE" \
+  --distribution-id "$CF_DIST_ID" \
+  --paths "/*" \
+  --query "Invalidation.Id" --output text | xargs -I{} echo "Invalidation ID: {}"
 
 echo ""
 echo "✓ Done. App should be live now or within ~1 minute at:"
