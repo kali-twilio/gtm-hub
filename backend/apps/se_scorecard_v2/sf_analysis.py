@@ -1443,10 +1443,13 @@ def generate_recommendations(ses: list, motion: str = "dsr") -> list:
 # AE/DSR engagement leaderboard
 # ---------------------------------------------------------------------------
 
-def compute_ae_engagement(ses: list) -> list:
+def compute_ae_engagement(ses: list, all_owner_opps: list | None = None) -> list:
     """Aggregate AE/DSR engagement from TW opps across all SEs.
-    Returns list sorted by deal count descending, capped at 25."""
+    all_owner_opps includes every Closed Won opp for the team (regardless of SE tagging)
+    so AEs/DSRs with zero SE-tagged deals still appear in the table."""
     ae_data: dict[str, dict] = {}
+
+    # First pass: AEs/DSRs who appear on TW opps (have SE engagement)
     for se in ses:
         se_name = se["name"]
         for opp in se.get("tw_opps_detail", []):
@@ -1458,6 +1461,14 @@ def compute_ae_engagement(ses: list) -> list:
             ae_data[owner]["deals"] += 1
             ae_data[owner]["total_icav"] += opp.get("icav", 0) or 0
             ae_data[owner]["ses"][se_name] = ae_data[owner]["ses"].get(se_name, 0) + 1
+
+    # Second pass: all owners from team opps — add zeros for those not already present
+    for opp in (all_owner_opps or []):
+        owner_rec = opp.get("Owner") or {}
+        owner = (owner_rec.get("Name") or "").strip()
+        if not owner or owner in ae_data:
+            continue
+        ae_data[owner] = {"name": owner, "deals": 0, "total_icav": 0, "ses": {}}
 
     result = []
     for d in ae_data.values():
@@ -1471,7 +1482,7 @@ def compute_ae_engagement(ses: list) -> list:
             "se_names":   [name for name, _ in ses_sorted[:3]],
         })
 
-    return sorted(result, key=lambda x: x["deals"], reverse=True)
+    return sorted(result, key=lambda x: (x["deals"], x["total_icav"]), reverse=True)
 
 
 # ---------------------------------------------------------------------------
