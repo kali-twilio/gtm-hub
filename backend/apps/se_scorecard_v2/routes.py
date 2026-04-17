@@ -179,7 +179,14 @@ TEAMS = {
         "label":            "DORG",
         "description":      ".ORG SE team",
         "motion":           "ae",
+        # AE engagement table: opps owned by .org-role AEs
         "team_total_filter": "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'",
+        # iACV denominator: union of .org-role AE opps + any opp a DORG SE touched
+        # (DORG SEs work across DSR, Not Found, etc. buckets — union captures their full universe)
+        "team_icav_filter": (
+            "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'"
+            " OR Technical_Lead__r.UserRole.Name = 'SE - DORG'"
+        ),
         "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
         "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
         "criteria": [
@@ -189,7 +196,7 @@ TEAMS = {
             },
             {
                 "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE 'DORG%' OR LIKE '%.org%'. FY_16_Owner_Team__c is not used here — DORG SEs tag opps across multiple AE team buckets (ORG, DSR, Not Found, etc.) so the AE role filter is the reliable denominator for this team.",
+                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE 'DORG%' OR '%.org%' OR Technical_Lead__r.UserRole.Name = 'SE - DORG'. Union covers the full universe DORG SEs work — their opps span multiple AE team buckets (ORG, DSR, Not Found).",
             },
         ],
     },
@@ -522,6 +529,9 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
     act_total_icav:  int | None = None
     exp_total_icav:  int | None = None
     team_total_filter = team.get("team_total_filter")
+    # team_icav_filter overrides team_total_filter for the iACV denominator only.
+    # team_total_filter is still used for the AE engagement (all_owners) query.
+    team_icav_filter  = team.get("team_icav_filter") or team_total_filter
     motion            = team.get("motion", "dsr")
 
     with ThreadPoolExecutor(max_workers=8) as pool:
@@ -531,9 +541,9 @@ def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: st
         f_email    = pool.submit(sf.query, _build_email_soql(info["start"], info["end"], email_owner_filter))
         f_meetings = pool.submit(sf.query, _build_meeting_soql(info["start"], info["end"], email_owner_filter))
         if team_total_filter and not subteam_key:
-            f_team_total  = pool.submit(_get_team_total_icav, team_total_filter, info["start"], info["end"])
-            f_act_total   = pool.submit(_get_team_total_icav, _motion_total_filter(team_total_filter, motion, "act"), info["start"], info["end"])
-            f_exp_total   = pool.submit(_get_team_total_icav, _motion_total_filter(team_total_filter, motion, "exp"), info["start"], info["end"])
+            f_team_total  = pool.submit(_get_team_total_icav, team_icav_filter, info["start"], info["end"])
+            f_act_total   = pool.submit(_get_team_total_icav, _motion_total_filter(team_icav_filter, motion, "act"), info["start"], info["end"])
+            f_exp_total   = pool.submit(_get_team_total_icav, _motion_total_filter(team_icav_filter, motion, "exp"), info["start"], info["end"])
             f_all_owners  = pool.submit(sf.query, _build_all_owners_soql(team_total_filter, info["start"], info["end"]))
         else:
             f_team_total = f_act_total = f_exp_total = f_all_owners = None
