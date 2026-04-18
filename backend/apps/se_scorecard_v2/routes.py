@@ -965,7 +965,9 @@ _sms_rl_store: dict[str, list[float]] = {}
 
 # Pending app selection: phone -> (text, caller_name, expires_at)
 _SMS_CONFIRM_TTL = 300  # 5 minutes to respond
-_sms_app_pending: dict[str, tuple[str, str | None, float]] = {}
+# stage "app"     -> (stage, caller_name, expires_at)            — waiting for app selection
+# stage "confirm" -> (stage, caller_name, expires_at, text, app) — waiting for Y/N confirm
+_sms_app_pending: dict[str, tuple] = {}
 
 def _sms_rate_limited(phone: str) -> bool:
     """Returns True if this phone number has exceeded the SMS rate limit."""
@@ -1251,29 +1253,53 @@ def api_sms_webhook():
             lines.append(f"{i}. {a['name']}")
         return "\n".join(lines)
 
-    # ── APP SELECTION FLOW ────────────────────────────────────────────────────
+    # ── MULTI-STEP FLOW ───────────────────────────────────────────────────────
     if from_number in _sms_app_pending:
-        pending_text, pending_name, expires_at = _sms_app_pending[from_number]
-        if time.time() > expires_at:
+        state = _sms_app_pending[from_number]
+        if time.time() > state[2]:  # expired
             del _sms_app_pending[from_number]
-        else:
-            # Expect a number selecting the app
+        elif state[0] == "app":
+            # Waiting for app selection — expect a number
+            _, caller_name, _ = state
             try:
                 choice = int(body.strip()) - 1
                 if choice < 0 or choice >= len(_live_apps):
                     raise ValueError
             except (ValueError, TypeError):
                 return _twiml_reply(_app_menu())
-            del _sms_app_pending[from_number]
             selected_app = _live_apps[choice]["id"]
-            try:
-                reply, err = _save_suggestion(pending_text, pending_name, selected_app)
-                if err:
-                    return _twiml_reply(err)
-                return _twiml_reply(reply)
-            except Exception as e:
-                log.error("Firestore SMS save failed: %s", e)
-                return _twiml_reply("Sorry, something went wrong. Please try again.")
+            selected_name = _live_apps[choice]["name"]
+            # Move to "awaiting message" stage
+            _sms_app_pending[from_number] = ("msg", caller_name, time.time() + _SMS_CONFIRM_TTL, selected_app, selected_name)
+            return _twiml_reply(f"Got it — {selected_name}.\n\nNow send your feedback or suggestion:")
+        elif state[0] == "msg":
+            # Waiting for the message text — show confirmation
+            _, caller_name, _, selected_app, selected_name = state
+            if len(body) > 1000:
+                return _twiml_reply("Too long (max 1000 chars). Please shorten and resend:")
+            preview = body[:80] + ("..." if len(body) > 80 else "")
+            _sms_app_pending[from_number] = ("confirm", caller_name, time.time() + _SMS_CONFIRM_TTL, selected_app, selected_name, body)
+            return _twiml_reply(f'Save this to {selected_name}?\n\n"{preview}"\n\nReply Y to confirm or N to cancel.')
+        elif state[0] == "confirm":
+            # Waiting for Y/N
+            _, caller_name, _, selected_app, selected_name, pending_text = state
+            answer = body.strip().upper()
+            if answer in ("Y", "YES"):
+                del _sms_app_pending[from_number]
+                try:
+                    reply, err = _save_suggestion(pending_text, caller_name, selected_app)
+                    if err:
+                        return _twiml_reply(err)
+                    return _twiml_reply(reply)
+                except Exception as e:
+                    log.error("Firestore SMS save failed: %s", e)
+                    return _twiml_reply("Sorry, something went wrong. Please try again.")
+            elif answer in ("N", "NO"):
+                del _sms_app_pending[from_number]
+                return _twiml_reply("Cancelled. Send a new message any time to leave feedback.")
+            else:
+                preview = pending_text[:80] + ("..." if len(pending_text) > 80 else "")
+                return _twiml_reply(f'Reply Y to confirm or N to cancel.\n\n"{preview}"')
 
     # ── DELETE ────────────────────────────────────────────────────────────────
     if cmd.startswith("DELETE"):
@@ -1325,14 +1351,9 @@ def api_sms_webhook():
             log.error("Firestore delete (SMS) failed: %s", e)
             return _twiml_reply("Failed to delete suggestion.")
 
-    # ── SUBMIT (default) — ask app, then confirm before saving ───────────────
-    if len(body) > 1000:
-        return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
-
-    # Store text, ask which app
-    _sms_app_pending[from_number] = (body, lookup["caller_name"], time.time() + _SMS_CONFIRM_TTL)
-    preview = body[:80] + ("..." if len(body) > 80 else "")
-    return _twiml_reply(f'Got your message: "{preview}"\n\n{_app_menu()}')
+    # ── SUBMIT (default) — ask which app first ───────────────────────────────
+    _sms_app_pending[from_number] = ("app", lookup["caller_name"], time.time() + _SMS_CONFIRM_TTL)
+    return _twiml_reply(_app_menu())
 
 
 def _twiml_reply(message: str):
