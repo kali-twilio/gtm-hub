@@ -1258,9 +1258,9 @@ def api_sms_webhook():
         state = _sms_app_pending[from_number]
         if time.time() > state[2]:  # expired
             del _sms_app_pending[from_number]
-        elif state[0] == "app":
-            # Waiting for app selection — expect a number
-            _, caller_name, _ = state
+        elif state[0] == "confirm_app":
+            # User sent their message — waiting for app selection
+            _, caller_name, _, pending_text = state
             try:
                 choice = int(body.strip()) - 1
                 if choice < 0 or choice >= len(_live_apps):
@@ -1269,17 +1269,9 @@ def api_sms_webhook():
                 return _twiml_reply(_app_menu())
             selected_app = _live_apps[choice]["id"]
             selected_name = _live_apps[choice]["name"]
-            # Move to "awaiting message" stage
-            _sms_app_pending[from_number] = ("msg", caller_name, time.time() + _SMS_CONFIRM_TTL, selected_app, selected_name)
-            return _twiml_reply(f"Got it — {selected_name}.\n\nNow send your feedback or suggestion:")
-        elif state[0] == "msg":
-            # Waiting for the message text — show confirmation
-            _, caller_name, _, selected_app, selected_name = state
-            if len(body) > 1000:
-                return _twiml_reply("Too long (max 1000 chars). Please shorten and resend:")
-            preview = body[:80] + ("..." if len(body) > 80 else "")
-            _sms_app_pending[from_number] = ("confirm", caller_name, time.time() + _SMS_CONFIRM_TTL, selected_app, selected_name, body)
-            return _twiml_reply(f'Save this to {selected_name}?\n\n"{preview}"\n\nReply Y to confirm or N to cancel.')
+            preview = pending_text[:80] + ("..." if len(pending_text) > 80 else "")
+            _sms_app_pending[from_number] = ("confirm", caller_name, time.time() + _SMS_CONFIRM_TTL, selected_app, selected_name, pending_text)
+            return _twiml_reply(f'Save to {selected_name}?\n\n"{preview}"\n\nReply Y to confirm or N to cancel.')
         elif state[0] == "confirm":
             # Waiting for Y/N
             _, caller_name, _, selected_app, selected_name, pending_text = state
@@ -1351,8 +1343,11 @@ def api_sms_webhook():
             log.error("Firestore delete (SMS) failed: %s", e)
             return _twiml_reply("Failed to delete suggestion.")
 
-    # ── SUBMIT (default) — ask which app first ───────────────────────────────
-    _sms_app_pending[from_number] = ("app", lookup["caller_name"], time.time() + _SMS_CONFIRM_TTL)
+    # ── SUBMIT (default) — got the message, now ask which app ────────────────
+    if len(body) > 1000:
+        return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
+
+    _sms_app_pending[from_number] = ("confirm_app", lookup["caller_name"], time.time() + _SMS_CONFIRM_TTL, body)
     return _twiml_reply(_app_menu())
 
 
