@@ -639,15 +639,47 @@ def api_summarize():
 
 
 # ---------------------------------------------------------------------------
-# Chat context builder — called by the global /api/chat endpoint
+# Chat context — auto-discovered by app.py via CHAT_APP_ID + get_chat_context
 # ---------------------------------------------------------------------------
 
-def build_chat_context() -> str:
-    """Return a compact text summary of the current forecast pipeline for AI context."""
+CHAT_APP_ID = "se-forecast"
+
+_SOQL_SCHEMA = """
+Salesforce Opportunity fields available:
+  Id, Name, CloseDate, StageName, ForecastCategoryName, Amount, Type
+  Comms_Segment_Combined_iACV__c  (iACV — primary revenue metric)
+  eARR_post_launch_No_Decimal__c, eARR_post_Launch__c  (eARR)
+  Incremental_ACV__c, Current_eARR__c
+  FY_16_Owner_Team__c
+  Presales_Stage__c               ('4 - Technical Win Achieved' = TW)
+  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name
+  Owner.Name, Owner.UserRole.Name
+  Account.Name, Account.Owner.Name, Account.Website, Account.SE_Notes__c
+  SE_Notes__c, SE_Notes_History__c, Sales_Engineer_Notes__c
+  NextStep, LastActivityDate, RecordType.Name
+  Renegotiated_Deal_SE_Involved__c
+Standard date literals: TODAY, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_N_DAYS:n
+Limit results to 50 rows unless more are needed.
+"""
+
+_SYSTEM = (
+    "You are an AI assistant embedded in the SE Forecast dashboard for the "
+    "Twilio Digital Sales (Self Service) team. "
+    "You have access to pre-loaded pipeline data (open opportunities for the current and next quarter) "
+    f"and a run_soql tool to query Salesforce directly for additional detail.\n\n"
+    f"{_SOQL_SCHEMA}\n"
+    "Answer concisely. Format currency with $ and K/M suffixes. "
+    "When using run_soql, scope queries to the DSR/Self Service team using the filters already "
+    "present in the context (FY_16_Owner_Team__c LIKE 'DSR%' etc.)."
+)
+
+
+def get_chat_context(body: dict) -> tuple[str, str]:
+    """Return (system_prompt, context) for the global /api/chat endpoint."""
     start, _end_cur, end_next, period_key, label_cur, label_next = _two_quarter_range()
     data, err = _fetch(period_key, start, end_next)
     if err or not data:
-        return ""
+        return _SYSTEM, ""
 
     summary = data.get("summary", {})
     lines = [
@@ -697,4 +729,4 @@ def build_chat_context() -> str:
             f"  {d['name']} | acct:{d['account']} | iACV:${d['icav']:,} | close:{d['close_date']} | AE:{d['ae_name']}"
         )
 
-    return "\n".join(lines)
+    return _SYSTEM, "\n".join(lines)

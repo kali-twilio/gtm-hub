@@ -164,6 +164,7 @@ def _rate_limited(ip: str) -> bool:
 # Optionally expose enrich_me(email) -> dict to add fields to /api/me.
 
 _me_enrichers: list = []
+_chat_context_providers: dict = {}  # app_id -> callable(body) -> (system_prompt, context)
 
 
 def _load_app_env(app_dir: Path) -> None:
@@ -198,6 +199,9 @@ for _app_dir in sorted(APPS_DIR.iterdir()):
         log.info("Registered blueprint: %s (%s)", _app_dir.name, _bp.name)
     if hasattr(_mod, "enrich_me"):
         _me_enrichers.append(_mod.enrich_me)
+    if hasattr(_mod, "get_chat_context") and hasattr(_mod, "CHAT_APP_ID"):
+        _chat_context_providers[_mod.CHAT_APP_ID] = _mod.get_chat_context
+        log.info("Registered chat context provider: %s", _mod.CHAT_APP_ID)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -636,47 +640,23 @@ def api_chat():
         "If asked to modify data, refuse clearly.\n\n"
     )
 
-    # ── SE Forecast context ───────────────────────────────────────────────────
-    if app_id == "se-forecast":
+    _DEFAULT_SYSTEM = (
+        NO_WRITE +
+        "You are an AI assistant with access to the Twilio Salesforce org via the run_soql tool. "
+        f"{_SOQL_SCHEMA}\n"
+        "Answer clearly and concisely. Format currency with $ and K/M suffixes."
+    )
+
+    provider = _chat_context_providers.get(app_id)
+    if provider:
         try:
-            from apps.se_forecast.routes import build_chat_context as _forecast_ctx
-            context = _forecast_ctx()
+            system_prompt, context = provider(body)
+            system_prompt = NO_WRITE + system_prompt
         except Exception as e:
-            log.warning("Could not build forecast context: %s", e)
-            context = ""
-        system_prompt = (
-            NO_WRITE +
-            "You are an AI assistant embedded in the SE Forecast dashboard for the "
-            "Twilio Digital Sales (Self Service) team. "
-            "You have access to pre-loaded pipeline data (open opportunities for the current and next quarter) "
-            f"and a run_soql tool to query Salesforce directly for additional detail.\n\n"
-            f"{_SOQL_SCHEMA}\n"
-            "Answer concisely. Format currency with $ and K/M suffixes. "
-            "When using run_soql, scope queries to the DSR/Self Service team using the filters already "
-            "present in the context (FY_16_Owner_Team__c LIKE 'DSR%' etc.)."
-        )
-
-    # ── GTM Hub (no preloaded data — pure SOQL access) ───────────────────────
-    elif app_id == "gtm-hub":
-        context = ""
-        system_prompt = (
-            NO_WRITE +
-            "You are an AI assistant embedded in the GTM Hub platform for Twilio's Sales Engineering org. "
-            "You have access to the Twilio Salesforce org via the run_soql tool. "
-            f"{_SOQL_SCHEMA}\n"
-            "Answer clearly and concisely. Format currency with $ and K/M suffixes. "
-            "When querying, always include appropriate filters to keep result sets manageable."
-        )
-
-    # ── Fallback: generic Salesforce assistant ────────────────────────────────
+            log.warning("Chat context provider for %r failed: %s", app_id, e)
+            system_prompt, context = _DEFAULT_SYSTEM, ""
     else:
-        context = ""
-        system_prompt = (
-            NO_WRITE +
-            "You are an AI assistant with access to the Twilio Salesforce org via the run_soql tool. "
-            f"{_SOQL_SCHEMA}\n"
-            "Answer clearly and concisely."
-        )
+        system_prompt, context = _DEFAULT_SYSTEM, ""
 
     result = _run_chat(system_prompt, context, message)
     return jsonify(result)
