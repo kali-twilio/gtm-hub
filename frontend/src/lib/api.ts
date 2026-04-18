@@ -104,17 +104,32 @@ export async function deleteSuggestion(id: string): Promise<boolean> {
 // AI Chatbot
 // ---------------------------------------------------------------------------
 
+async function _parseChat(r: Response): Promise<{ answer?: string; error?: string }> {
+  const text = await r.text();
+  try {
+    const j = JSON.parse(text);
+    if (!r.ok) return { error: j.error || `Request failed (${r.status})` };
+    return j;
+  } catch {
+    return { error: r.ok ? 'Invalid response from server.' : `Request failed (${r.status})` };
+  }
+}
+
 export async function chatWithAI(
   message: string,
   app: string,
   params: Record<string, string | number> = {},
 ): Promise<{ answer?: string; error?: string }> {
-  const r = await fetch('/api/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, app, ...params }),
-  });
-  return r.json();
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, app, ...params }),
+    });
+    return _parseChat(r);
+  } catch (e: any) {
+    return { error: e?.message || 'Network error — is the backend running?' };
+  }
 }
 
 export async function chatWithSEScorecard(
@@ -124,12 +139,16 @@ export async function chatWithSEScorecard(
   icavMin = 0,
   subteam = '',
 ): Promise<{ answer?: string; error?: string }> {
-  const r = await fetch('/api/se-scorecard-v2/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, team, period, icav_min: icavMin, subteam }),
-  });
-  return r.json();
+  try {
+    const r = await fetch('/api/se-scorecard-v2/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, team, period, icav_min: icavMin, subteam }),
+    });
+    return _parseChat(r);
+  } catch (e: any) {
+    return { error: e?.message || 'Network error — is the backend running?' };
+  }
 }
 
 export function fmt(n: number): string {
