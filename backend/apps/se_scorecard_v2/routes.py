@@ -1040,7 +1040,7 @@ def _lookup_phone(phone: str) -> dict:
 def _display_author(doc: dict) -> str:
     """Return display name: email prefix, Lookup name, or formatted phone."""
     source = doc.get("source", "web")
-    if source == "sms":
+    if source in ("sms", "whatsapp"):
         phone = doc.get("phone", "")
         name = doc.get("caller_name")
         if name:
@@ -1048,7 +1048,7 @@ def _display_author(doc: dict) -> str:
         # Format +18005551234 → (800) 555-1234
         if phone.startswith("+1") and len(phone) == 12:
             return f"({phone[2:5]}) {phone[5:8]}-{phone[8:]}"
-        return phone or "SMS"
+        return phone or source.upper()
     return _masked(doc.get("email", ""))
 
 
@@ -1168,19 +1168,26 @@ def api_sms_webhook():
             log.warning("Twilio signature validation failed — url=%s", url)
             return "Forbidden", 403
 
-    from_number = request.form.get("From", "").strip()
+    raw_from    = request.form.get("From", "").strip()
     body        = request.form.get("Body", "").strip()
 
-    if not from_number or not body:
+    if not raw_from or not body:
         return _twiml_reply("No message body received.")
+
+    # Normalise WhatsApp sender — Twilio prefixes with "whatsapp:"
+    is_whatsapp = raw_from.lower().startswith("whatsapp:")
+    from_number = raw_from[len("whatsapp:"):] if is_whatsapp else raw_from
+    channel     = "whatsapp" if is_whatsapp else "sms"
 
     # ── 2. Per-phone rate limiting (SMS pump protection) ─────────────────────
     if _sms_rate_limited(from_number):
-        log.warning("SMS rate limit exceeded for %s", from_number)
+        log.warning("%s rate limit exceeded for %s", channel, from_number)
         return _twiml_reply("You've sent too many messages. Please wait an hour before trying again.")
 
     # ── 3. Lookup: verify mobile number + get caller name ────────────────────
-    lookup = _lookup_phone(from_number) if not _local_dev else {"caller_name": None, "is_mobile": True}
+    # Skip line-type check for WhatsApp — number is already verified by WhatsApp
+    lookup = ({"caller_name": None, "is_mobile": True} if (is_whatsapp or _local_dev)
+              else _lookup_phone(from_number))
     if not lookup["is_mobile"]:
         log.info("SMS from non-mobile %s — ignoring silently", from_number)
         return _twiml_empty()
@@ -1215,7 +1222,7 @@ def api_sms_webhook():
             return None, "Sorry, we've reached our suggestion limit. Thank you for your interest!"
         doc_id     = str(uuid.uuid4())
         created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        doc = {"phone": from_number, "text": text, "source": "sms", "created_at": created_at}
+        doc = {"phone": from_number, "text": text, "source": channel, "created_at": created_at}
         if caller_name:
             doc["caller_name"] = caller_name
         if app_id:
