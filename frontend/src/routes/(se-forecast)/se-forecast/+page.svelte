@@ -462,7 +462,6 @@
             <th>Forecast</th>
             <th>iACV</th>
             <th>Close</th>
-            <th>Status</th>
           </tr></thead>
           <tbody>
             {#each topDeals as deal, i (deal.id)}
@@ -538,11 +537,6 @@
                 <td>{#if deal.forecast_cat}<span class="cat-pill" style="color:{CAT_COLOR[deal.forecast_cat]??'#6b7280'};background:{CAT_COLOR[deal.forecast_cat]??'#6b7280'}18;border:1px solid {CAT_COLOR[deal.forecast_cat]??'#6b7280'}30">{deal.forecast_cat}</span>{:else}<span class="dim">—</span>{/if}</td>
                 <td class="num">{fmt(deal.icav)}</td>
                 <td class="date">{fmtDate(deal.close_date)}</td>
-                <td>
-                  {#if !deal.se_name}<span class="badge-unassigned">No SE</span>
-                  {:else if deal.mismatch}<span class="badge-mis">⚠ Mismatch</span>
-                  {:else}<span class="badge-ok">✓</span>{/if}
-                </td>
               </tr>
             {/each}
           </tbody>
@@ -904,8 +898,8 @@
   .badge-unassigned { display:inline-block; padding:1px 6px; border-radius:20px; font-size:10px; font-weight:700; background:#f3f4f6; color:#6b7280; border:1px solid #e5e7eb; }
   .rank { font-size:12px; font-weight:700; color:rgba(13,18,43,0.3); text-align:center; }
   .opp-ae { font-size:10px; color:rgba(13,18,43,0.35); margin-top:1px; }
-  .col-enrich { width:180px; }
-  .col-summary { width:260px; }
+  .col-enrich { width:220px; min-width:200px; }
+  .col-summary { width:320px; min-width:280px; }
   .enrich-loading { font-size:11px; color:rgba(13,18,43,0.3); font-style:italic; }
   .enrich-wrap { display:flex; flex-direction:column; gap:4px; }
   .enrich-top { display:flex; align-items:center; gap:5px; flex-wrap:wrap; }
@@ -928,7 +922,7 @@
   .confidence-high   { background:#d1fae5; color:#065f46; }
   .confidence-medium { background:#fef3c7; color:#92400e; }
   .confidence-low    { background:#fef2f2; color:#991b1b; }
-  .stage-pill { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; background:rgba(13,18,43,0.07); color:rgba(13,18,43,0.6); white-space:nowrap; }
+  .stage-pill { display:inline-block; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; background:rgba(13,18,43,0.07); color:rgba(13,18,43,0.6); white-space:nowrap; max-width:100px; overflow:hidden; text-overflow:ellipsis; }
   .stage-pill.tw { background:#d1fae5; color:#065f46; }
   .stage-missing { font-size:11px; color:#dc2626; font-weight:600; }
 

@@ -312,6 +312,19 @@ def build_repo_map(repo_dir):
                 lines.append(f"{indent}{rel}")
     return "\n".join(lines)
 
+def read_files_for_context(file_list, repo_dir):
+    """Read files and return their contents formatted for prompt injection."""
+    parts = []
+    for f in file_list:
+        abs_path = os.path.join(repo_dir, f)
+        try:
+            with open(abs_path) as fh:
+                content = fh.read()
+            parts.append(f"=== {f} ===\n{content}")
+        except Exception as e:
+            parts.append(f"=== {f} === (could not read: {e})")
+    return "\n\n".join(parts)
+
 def identify_files(suggestion_text, repo_map):
     """
     Step A — Haiku: given the suggestion and the repo map, return the list of
@@ -387,9 +400,15 @@ def implement_suggestion(suggestion, repo_map):
     target_files = identify_files(text, repo_map)
 
     if target_files:
-        git_add_cmd  = "git add " + " ".join(f'"{f}"' for f in target_files)
-        files_list   = "\n".join(f"  - {f}" for f in target_files)
-        context_note = f"Focus your changes on these files (read them with the Read tool first):\n{files_list}"
+        git_add_cmd    = "git add " + " ".join(f'"{f}"' for f in target_files)
+        file_contents  = read_files_for_context(target_files, repo_dir)
+        files_list     = "\n".join(f"  - {f}" for f in target_files)
+        context_note   = (
+            f"The following files need changing. Their current contents are pre-loaded below — "
+            f"do NOT use the Read tool on them, use these contents directly:\n\n"
+            f"{file_contents}\n\n"
+            f"Files to modify:\n{files_list}"
+        )
     else:
         git_add_cmd  = "git add -A"
         context_note = f"The se-scorecard-v2 file tree is:\n{repo_map}\nRead whatever files you need."
@@ -410,6 +429,7 @@ def implement_suggestion(suggestion, repo_map):
         proc = subprocess.Popen(
             ["claude", "-p", initial_prompt,
              "--model", "sonnet",
+             "--output-format", "text",
              "--dangerously-skip-permissions"],
             cwd=repo_dir,
             stdout=subprocess.PIPE,
@@ -437,6 +457,7 @@ def implement_suggestion(suggestion, repo_map):
             proc = subprocess.Popen(
                 ["claude", "--continue", "-p", "continue",
                  "--model", "sonnet",
+                 "--output-format", "text",
                  "--dangerously-skip-permissions"],
                 cwd=repo_dir,
                 stdout=subprocess.PIPE,
@@ -471,11 +492,15 @@ def implement_suggestion(suggestion, repo_map):
 
         {context_note}
 
-        Do not modify any other app. After making all changes, you MUST:
-        1. Stage changed files: {git_add_cmd}
-        2. Commit: git commit -m "suggestion: {text[:80]}"
+        Do not modify any other app. After making all changes, you MUST run this single command:
+          {git_add_cmd} && git commit -m "suggestion: {text[:80]}"
 
-        The task is NOT complete until git commit has run successfully.
+        The task is NOT complete until that command succeeds. Use one Bash call for it.
+
+        IMPORTANT — to minimise tool round-trips:
+        - Chain related shell commands with && in a single Bash call instead of separate calls.
+        - When you need to inspect multiple small files, read them in one multi-file operation if possible.
+        - Do NOT re-read any file whose contents were already provided above.
     """)
 
     ok, _ = run_claude_with_continuation(prompt)
@@ -498,10 +523,7 @@ def implement_suggestion(suggestion, repo_map):
         writeback("no_changes", suggestion)
         return False
 
-    # ── Security review (Haiku — classify only the diff lines) ───────────
-    # Feed ONLY the raw diff — no surrounding context — to avoid hallucination
-    # about code that appears elsewhere in the conversation.
-    sec_prompt = (
+    SEC_REVIEW_HEADER = (
         "You are a security reviewer for a SvelteKit + Flask web app (gtm-hub).\n"
         "Read the git diff below and reply with ONLY one of:\n"
         "  SAFE   — no significant security issues in the changed lines\n"
@@ -516,8 +538,10 @@ def implement_suggestion(suggestion, repo_map):
         "- Minor style issues are NOT security issues.\n"
         "- False positives waste developer time — only flag real, concrete risks.\n\n"
         "Diff:\n"
-        + diff_text[:16000]
     )
+
+    # ── Security review (Haiku — classify only the diff lines) ───────────
+    sec_prompt = SEC_REVIEW_HEADER + diff_text[:16000]
 
     MAX_SEC_FIXES = 3
     for sec_attempt in range(1, MAX_SEC_FIXES + 2):  # +1 final review after last fix
@@ -548,9 +572,8 @@ def implement_suggestion(suggestion, repo_map):
 
             Fix these security issues in the relevant files. Do not change any
             functionality — only harden the code against the identified risks.
-            After fixing, stage and amend the commit:
-              git add -A
-              git commit --amend --no-edit
+            After fixing, run this single command:
+              git add -A && git commit --amend --no-edit
         """)
         fix_ok, _ = run_claude_with_continuation(fix_prompt)
         if not fix_ok:
@@ -560,24 +583,8 @@ def implement_suggestion(suggestion, repo_map):
             return False
 
         # Refresh diff for next review iteration
-        diff_text = run(["git", "diff", "main...HEAD"], cwd=repo_dir, capture=True).stdout
-        sec_prompt = (
-            "You are a security reviewer for a SvelteKit + Flask web app (gtm-hub).\n"
-            "Read the git diff below and reply with ONLY one of:\n"
-            "  SAFE   — no significant security issues in the changed lines\n"
-            "  UNSAFE <reason> — the changed lines introduce a real security risk\n\n"
-            "Rules:\n"
-            "- Analyse ONLY the lines prefixed with + or - in the diff.\n"
-            "- Do NOT infer or speculate about content beyond what is explicitly in the diff.\n"
-            "- If the diff is truncated, review only what you can see — do not guess the rest.\n"
-            "- Trust file extensions: a .ts file is TypeScript, a .py file is Python.\n"
-            "  Flag a language mismatch ONLY if you explicitly see it in the +/- lines.\n"
-            "- Hardcoded reference data (e.g. revenue figures, thresholds, field names) is NOT a risk.\n"
-            "- Minor style issues are NOT security issues.\n"
-            "- False positives waste developer time — only flag real, concrete risks.\n\n"
-            "Diff:\n"
-            + diff_text[:16000]
-        )
+        diff_text  = run(["git", "diff", "main...HEAD"], cwd=repo_dir, capture=True).stdout
+        sec_prompt = SEC_REVIEW_HEADER + diff_text[:16000]
 
     # ── Push ───────────────────────────────────────────────────────────────
     print("  Pushing branch ...")
