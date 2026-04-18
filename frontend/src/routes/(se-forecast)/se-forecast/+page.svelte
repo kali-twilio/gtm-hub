@@ -140,7 +140,7 @@
   let topDeals = $derived.by(() => {
     const pred = makeFilter(selectedQuarter, selectedMonth);
     const fromUnassigned: Deal[] = unassigned.map(u => ({
-      id: u.id, name: u.name, account: u.account, account_notes: '',
+      id: u.id, name: u.name, account: u.account, account_notes: '', account_website: '',
       se_name: '', ae_name: u.ae_name, ae_role: '',
       stage: u.stage, presales: u.presales, forecast_cat: u.forecast_cat,
       close_date: u.close_date, icav: u.icav, earr: u.earr,

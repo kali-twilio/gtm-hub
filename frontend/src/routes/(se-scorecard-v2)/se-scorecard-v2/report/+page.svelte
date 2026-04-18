@@ -53,17 +53,6 @@
     ? { act: 'New Business', exp: 'Strategic', actDesc: "Owner role contains ' NB'", expDesc: "Owner role contains 'Strat'" }
     : { act: 'Activate',     exp: 'Expansion', actDesc: "Owner role contains 'Activation' (DSR Activation sub-teams)", expDesc: "Owner role contains 'Expansion' (DSR Expansion sub-teams)" }
   );
-  const colDefs = $derived(data ? [
-    {h:'#',              show:true,          tip:`Rank by composite score: 85% iACV · 8% MRR% · 5% ARR · 2% notes. Each metric percentile-ranked 0–100 within the team.`},
-    {h:'SE',             show:true,          tip:''},
-    {h:motionLabels.act, show:hasActCol,     tip:`Sum of iACV from Technical Win Closed Won opps classified as ${motionLabels.act}. ${motionLabels.actDesc}. Only TW opps count toward ranking.`},
-    {h:motionLabels.exp, show:hasExpCol,     tip:`Sum of iACV from Technical Win Closed Won opps classified as ${motionLabels.exp}. ${motionLabels.expDesc}. Only TW opps count toward ranking.`},
-    {h:'Total iACV',     show:true,          tip:`${motionLabels.act} + ${motionLabels.exp} iACV combined (TW only). In "All Closed Won" view the non-TW delta is shown inline.`},
-    {h:'Quarter MRR Δ', show:hasArrCol,     tip:`Total MRR change across the SE's ${motionLabels.exp.toLowerCase()} accounts: avg monthly usage in the opp's close quarter minus avg of the 3 months prior. % is total-based so it always matches the ↑/↓ direction. Each account counted once.`},
-    {h:'SE Notes',       show:hasNotesCol,   tip:'Opps with both Sales_Engineer_Notes__c and SE_Notes_History__c filled ÷ total TW Closed Won opps above the iACV floor. Avg entries = history entry count per opp.'},
-    {h:'Emails',         show:hasEmailCol,   tip:`Salesforce Tasks (TaskSubtype = Email) sent to Opportunities during the period. Classified by opp owner role into ${motionLabels.act.toLowerCase()} vs ${motionLabels.exp.toLowerCase()}, and in-Q (closing this period) vs pipeline (future opps).`},
-    {h:'Meetings',       show:hasMeetingCol, tip:`Salesforce Events linked to Opportunities during the period. Recurring series deduplicated — same series on the same opp counts once. In-Q vs pipeline split matches email logic.`},
-  ].filter(c => c.show) : []);
 
   function titleLevel(t: string): number {
     const l = t.toLowerCase();
@@ -149,6 +138,18 @@
   const hasWinRateCol = $derived(filteredRanked.some((s: any) => s.win_rate > 0));
   const hasEmailCol   = $derived(showActivity && filteredRanked.some((s: any) => emailTotal(s) > 0));
   const hasMeetingCol = $derived(showActivity && filteredRanked.some((s: any) => meetingTotal(s) > 0));
+
+  const colDefs = $derived(data ? [
+    {h:'#',              show:true,          tip:`Rank by composite score: 85% iACV · 8% MRR% · 5% ARR · 2% notes. Each metric percentile-ranked 0–100 within the team.`},
+    {h:'SE',             show:true,          tip:''},
+    {h:motionLabels.act, show:hasActCol,     tip:`Sum of iACV from Technical Win Closed Won opps classified as ${motionLabels.act}. ${motionLabels.actDesc}. Only TW opps count toward ranking.`},
+    {h:motionLabels.exp, show:hasExpCol,     tip:`Sum of iACV from Technical Win Closed Won opps classified as ${motionLabels.exp}. ${motionLabels.expDesc}. Only TW opps count toward ranking.`},
+    {h:'Total iACV',     show:true,          tip:`${motionLabels.act} + ${motionLabels.exp} iACV combined (TW only). In "All Closed Won" view the non-TW delta is shown inline.`},
+    {h:'Quarter MRR Δ', show:hasArrCol,     tip:`Total MRR change across the SE's ${motionLabels.exp.toLowerCase()} accounts: avg monthly usage in the opp's close quarter minus avg of the 3 months prior. % is total-based so it always matches the ↑/↓ direction. Each account counted once.`},
+    {h:'SE Notes',       show:hasNotesCol,   tip:'Opps with both Sales_Engineer_Notes__c and SE_Notes_History__c filled ÷ total TW Closed Won opps above the iACV floor. Avg entries = history entry count per opp.'},
+    {h:'Emails',         show:hasEmailCol,   tip:`Salesforce Tasks (TaskSubtype = Email) sent to Opportunities during the period. Classified by opp owner role into ${motionLabels.act.toLowerCase()} vs ${motionLabels.exp.toLowerCase()}, and in-Q (closing this period) vs pipeline (future opps).`},
+    {h:'Meetings',       show:hasMeetingCol, tip:`Salesforce Events linked to Opportunities during the period. Recurring series deduplicated — same series on the same opp counts once. In-Q vs pipeline split matches email logic.`},
+  ].filter(c => c.show) : []);
   const actSes      = $derived(actSorted.filter((s: any) => actKey(s) > 0));
   const expSes      = $derived(expSorted.filter((s: any) => s.exp_wins > 0));
   const actTotals   = $derived({

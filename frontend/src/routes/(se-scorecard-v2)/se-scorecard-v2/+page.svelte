@@ -5,7 +5,8 @@
   import { goto } from '$app/navigation';
 
   interface Criterion { label: string; detail: string; }
-  interface Team { key: string; label: string; description: string; criteria: Criterion[]; }
+  interface Subteam { key: string; label: string; }
+  interface Team { key: string; label: string; description: string; criteria: Criterion[]; subteams?: Subteam[]; }
   interface Period { key: string; label: string; }
 
   let teams: Team[] = $state([]);
