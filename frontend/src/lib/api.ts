@@ -79,8 +79,9 @@ export interface Suggestion {
   is_mine:    boolean;
 }
 
-export async function getSuggestions(): Promise<Suggestion[]> {
-  const r = await fetch('/api/suggestions');
+export async function getSuggestions(app?: string): Promise<Suggestion[]> {
+  const url = app ? `/api/suggestions?app=${encodeURIComponent(app)}` : '/api/suggestions';
+  const r = await fetch(url);
   if (!r.ok) return [];
   return r.json();
 }

@@ -19,7 +19,7 @@
 
   async function load() {
     loading = true;
-    items   = await getSuggestions();
+    items   = await getSuggestions(app || undefined);
     loading = false;
   }
 
@@ -135,7 +135,7 @@
                   {/if}
                   {s.author}
                 </span>
-                {#if s.app}
+                {#if s.app && !app}
                 <span style="font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:{p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'};background:{p5?'rgba(255,255,255,0.06)':'rgba(13,18,43,0.06)'};border:1px solid {p5?'rgba(255,255,255,0.1)':'rgba(13,18,43,0.1)'};border-radius:3px;padding:1px 5px">{s.app}</span>
                 {/if}
               </div>

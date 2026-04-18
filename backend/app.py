@@ -400,8 +400,12 @@ def api_suggestions_list():
     db = _suggestions_firestore()
     if db is None:
         return jsonify({"error": "Storage unavailable"}), 503
+    app_filter = (request.args.get("app") or "").strip() or None
     try:
-        docs = db.collection(_SUGGESTIONS_COLLECTION).order_by("created_at", direction="DESCENDING").stream()
+        q = db.collection(_SUGGESTIONS_COLLECTION).order_by("created_at", direction="DESCENDING")
+        if app_filter:
+            q = q.where("app", "==", app_filter)
+        docs = q.stream()
         items = []
         for doc in docs:
             s = doc.to_dict()
