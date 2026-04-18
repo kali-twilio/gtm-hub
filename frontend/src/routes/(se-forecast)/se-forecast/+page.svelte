@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { user } from '$lib/stores';
 
   interface Enrichment {
     business_model: string;
@@ -73,6 +74,7 @@
   let editNote = $state('');
   let saving = $state(false);
   let lastRefreshed = $state<Date | null>(null);
+  let isFLM = $derived($user?.sf_role_name === 'SE FLM - Self Service');
   let enrichCache  = $state(new Map<string, Enrichment | 'loading' | 'error'>());
   let summaryCache = $state(new Map<string, DealSummary | 'loading' | 'error'>());
 
@@ -769,7 +771,7 @@
           Manager Notes
           {#if deal.manager_note_author}<span class="notes-meta">— {deal.manager_note_author} · {deal.manager_note_at.slice(0,10)}</span>{/if}
         </div>
-        {#if editingId === deal.id}
+        {#if isFLM && editingId === deal.id}
           <textarea class="note-ta" bind:value={editNote} placeholder="Add notes…" rows="4"></textarea>
           <div class="note-btns">
             <button class="btn-save" onclick={() => saveNote(deal)} disabled={saving}>{saving?'Saving…':'Save'}</button>
@@ -778,9 +780,11 @@
         {:else}
           {#if deal.manager_note}<div class="notes-body">{deal.manager_note}</div>
           {:else}<div class="notes-empty">No manager notes yet</div>{/if}
-          <button class="btn-edit" onclick={(e)=>{e.stopPropagation();editingId=deal.id;editNote=deal.manager_note;}}>
-            {deal.manager_note?'Edit':'+ Add note'}
-          </button>
+          {#if isFLM}
+            <button class="btn-edit" onclick={(e)=>{e.stopPropagation();editingId=deal.id;editNote=deal.manager_note;}}>
+              {deal.manager_note?'Edit':'+ Add note'}
+            </button>
+          {/if}
         {/if}
       </div>
     </div>

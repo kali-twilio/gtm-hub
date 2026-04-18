@@ -357,6 +357,331 @@ def api_apps():
     return jsonify(manifests)
 
 
+def _get_live_apps() -> list[dict]:
+    """Returns live app manifests (id + name), including GTM Hub."""
+    live = [{"id": "gtm-hub", "name": "GTM Hub"}]
+    for app_dir in sorted(APPS_DIR.iterdir()):
+        manifest_path = app_dir / "manifest.json"
+        if app_dir.is_dir() and not app_dir.name.startswith("_") and manifest_path.exists():
+            m = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if m.get("status") == "live":
+                live.append({"id": m["id"], "name": m["name"]})
+    return live
+
+
+# ── Global suggestions API ────────────────────────────────────────────────────
+# Shared across all apps. Each suggestion carries an optional `app` field.
+
+import uuid as _uuid
+from datetime import datetime as _datetime, timezone as _tz
+from flask import session as _session
+
+def _suggestions_firestore():
+    """Borrow the Firestore client from the scorecard app."""
+    try:
+        from apps.se_scorecard_v2.routes import _get_firestore
+        return _get_firestore()
+    except Exception:
+        return None
+
+_SUGGESTIONS_COLLECTION = "se-scorecard-v2-suggestions"
+_SUGGESTIONS_MAX        = 500
+
+def _masked_email(email: str) -> str:
+    return email.split("@")[0] if email else "anonymous"
+
+@app.route("/api/suggestions", methods=["GET"])
+def api_suggestions_list():
+    current_email = session.get("user_email", "")
+    db = _suggestions_firestore()
+    if db is None:
+        return jsonify({"error": "Storage unavailable"}), 503
+    try:
+        docs = db.collection(_SUGGESTIONS_COLLECTION).order_by("created_at", direction="DESCENDING").stream()
+        items = []
+        for doc in docs:
+            s = doc.to_dict()
+            items.append({
+                "id":         doc.id,
+                "text":       s.get("text", ""),
+                "author":     _masked_email(s.get("email", "")) if s.get("email") else s.get("caller_name") or s.get("phone", "SMS")[:4] + "…",
+                "source":     s.get("source", "web"),
+                "app":        s.get("app") or None,
+                "created_at": s.get("created_at", ""),
+                "is_mine":    s.get("email", "") == current_email,
+            })
+        return jsonify(items)
+    except Exception as e:
+        log.error("Firestore list failed: %s", e)
+        return jsonify({"error": "Failed to load suggestions"}), 503
+
+
+@app.route("/api/suggestions", methods=["POST"])
+def api_suggestions_create():
+    email = session.get("user_email", "")
+    if not email:
+        return jsonify({"error": "Unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    text = (body.get("text") or "").strip()
+    if not text:
+        return jsonify({"error": "text is required"}), 400
+    if len(text) > 1000:
+        return jsonify({"error": "text too long (max 1000 chars)"}), 400
+    app_id = (body.get("app") or "").strip() or None
+    db = _suggestions_firestore()
+    if db is None:
+        return jsonify({"error": "Storage unavailable"}), 503
+    try:
+        count = len(db.collection(_SUGGESTIONS_COLLECTION).limit(_SUGGESTIONS_MAX + 1).get())
+        if count >= _SUGGESTIONS_MAX:
+            return jsonify({"error": "Suggestion limit reached"}), 429
+        doc_id     = str(_uuid.uuid4())
+        created_at = _datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        doc = {"email": email, "text": text, "source": "web", "created_at": created_at}
+        if app_id:
+            doc["app"] = app_id
+        db.collection(_SUGGESTIONS_COLLECTION).document(doc_id).set(doc)
+        return jsonify({
+            "id":         doc_id,
+            "text":       text,
+            "author":     _masked_email(email),
+            "source":     "web",
+            "app":        app_id,
+            "created_at": created_at,
+            "is_mine":    True,
+        }), 201
+    except Exception as e:
+        log.error("Firestore create failed: %s", e)
+        return jsonify({"error": "Failed to save suggestion"}), 503
+
+
+@app.route("/api/suggestions/<suggestion_id>", methods=["DELETE"])
+def api_suggestions_delete(suggestion_id: str):
+    email = session.get("user_email", "")
+    if not email:
+        return jsonify({"error": "Unauthorized"}), 401
+    db = _suggestions_firestore()
+    if db is None:
+        return jsonify({"error": "Storage unavailable"}), 503
+    try:
+        ref = db.collection(_SUGGESTIONS_COLLECTION).document(suggestion_id)
+        doc = ref.get()
+        if not doc.exists:
+            return jsonify({"error": "Not found"}), 404
+        if doc.to_dict().get("email") != email:
+            return jsonify({"error": "Forbidden"}), 403
+        ref.delete()
+        return "", 204
+    except Exception as e:
+        log.error("Firestore delete failed: %s", e)
+        return jsonify({"error": "Failed to delete suggestion"}), 503
+
+
+# ── Global AI Chat ────────────────────────────────────────────────────────────
+# Shared endpoint for all apps. Only SELECT SOQL is ever executed; the system
+# prompt forbids writes and _execute_soql_safe() enforces it at the code level.
+
+import re as _re
+
+_OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+_OPENAI_MODEL   = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+_SOQL_SELECT_RE = _re.compile(r"^\s*SELECT\b", _re.IGNORECASE)
+
+_SOQL_SCHEMA = """
+Salesforce Opportunity fields available:
+  Id, Name, CloseDate, StageName, ForecastCategoryName, Amount, Type
+  Comms_Segment_Combined_iACV__c  (iACV — primary revenue metric)
+  eARR_post_launch_No_Decimal__c, eARR_post_Launch__c  (eARR)
+  Incremental_ACV__c, Current_eARR__c
+  FY_16_Owner_Team__c
+  Presales_Stage__c               ('4 - Technical Win Achieved' = TW)
+  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name
+  Owner.Name, Owner.UserRole.Name
+  Account.Name, Account.Owner.Name, Account.Website, Account.SE_Notes__c
+  SE_Notes__c, SE_Notes_History__c, Sales_Engineer_Notes__c
+  NextStep, LastActivityDate, RecordType.Name
+  Renegotiated_Deal_SE_Involved__c
+Standard date literals: TODAY, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_N_DAYS:n
+Limit results to 50 rows unless more are needed.
+"""
+
+_SOQL_TOOL = [
+    {
+        "type": "function",
+        "function": {
+            "name": "run_soql",
+            "description": (
+                "Execute a SOQL SELECT query against the Twilio Salesforce org. "
+                "Use this when pre-loaded context isn't sufficient — e.g. specific accounts, "
+                "deal notes, pipeline queries, or cross-team comparisons. "
+                "Only SELECT queries are permitted."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "soql": {"type": "string", "description": "A valid SOQL SELECT statement."}
+                },
+                "required": ["soql"],
+            },
+        },
+    }
+]
+
+
+def _execute_soql_safe(soql: str) -> str:
+    """Run a SOQL query. Rejects anything that isn't a SELECT — no writes ever."""
+    if not _SOQL_SELECT_RE.match(soql.strip()):
+        return "Error: only SELECT queries are permitted. Write operations are not allowed."
+    if not sf.configured:
+        return "Error: Salesforce is not configured on this server."
+    try:
+        rows = sf.query(soql, timeout=30)
+    except Exception as e:
+        return f"Query error: {e}"
+    if not rows:
+        return "No records returned."
+    lines = [str({k: v for k, v in row.items() if k != "attributes"}) for row in rows[:100]]
+    return "\n".join(lines)
+
+
+def _run_chat(system_prompt: str, context: str, message: str) -> dict:
+    """
+    Agentic OpenAI loop with run_soql tool. Returns {answer} or {error}.
+    Up to 3 tool-call rounds before forcing a final summary.
+    """
+    if not _OPENAI_API_KEY:
+        return {"error": "AI chatbot is not configured (missing OPENAI_API_KEY)."}
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user",   "content": (f"Pre-loaded context:\n\n{context}\n\nQuestion: {message}"
+                                        if context else f"Question: {message}")},
+    ]
+
+    try:
+        for _ in range(3):
+            resp = http.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {_OPENAI_API_KEY}", "Content-Type": "application/json"},
+                json={
+                    "model":      _OPENAI_MODEL,
+                    "max_tokens": 1024,
+                    "messages":   messages,
+                    "tools":      _SOQL_TOOL,
+                    "tool_choice": "auto",
+                },
+                timeout=60,
+            )
+            resp.raise_for_status()
+            choice = resp.json()["choices"][0]
+            msg = choice["message"]
+            messages.append(msg)
+
+            if choice["finish_reason"] != "tool_calls":
+                return {"answer": msg.get("content", "No response generated.")}
+
+            for tc in msg.get("tool_calls", []):
+                if tc["function"]["name"] == "run_soql":
+                    try:
+                        args   = json.loads(tc["function"]["arguments"])
+                        result = _execute_soql_safe(args.get("soql", ""))
+                    except Exception as e:
+                        result = f"Tool error: {e}"
+                    messages.append({
+                        "role":         "tool",
+                        "tool_call_id": tc["id"],
+                        "content":      result,
+                    })
+
+        # Force final answer after max tool rounds
+        messages.append({"role": "user", "content": "Please summarise what you found."})
+        resp = http.post(
+            "https://api.openai.com/v1/chat/completions",
+            headers={"Authorization": f"Bearer {_OPENAI_API_KEY}", "Content-Type": "application/json"},
+            json={"model": _OPENAI_MODEL, "max_tokens": 1024, "messages": messages},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        answer = resp.json()["choices"][0]["message"].get("content", "No response generated.")
+        return {"answer": answer}
+
+    except Exception as e:
+        log.error("Chat error: %s", e, exc_info=True)
+        if hasattr(e, "response") and e.response is not None:
+            if e.response.status_code == 429:
+                return {"error": "Rate limited by AI provider. Please wait a moment and try again."}
+        return {"error": f"AI request failed: {type(e).__name__}. Please try again."}
+
+
+@app.route("/api/chat", methods=["POST"])
+def api_chat():
+    """
+    Shared AI chat endpoint for all apps.
+    Accepts: { message, app, ...app-specific params }
+    Always read-only — write SOQL is blocked at execution and system prompt level.
+    """
+    body    = request.get_json(silent=True) or {}
+    message = (body.get("message") or "").strip()
+    if not message:
+        return jsonify({"error": "message is required"}), 400
+    if len(message) > 2000:
+        return jsonify({"error": "message too long (max 2000 chars)"}), 400
+
+    app_id = (body.get("app") or "").strip()
+
+    NO_WRITE = (
+        "CRITICAL SECURITY RULE: You are strictly read-only. "
+        "You may ONLY issue SELECT queries. Never generate INSERT, UPDATE, DELETE, UPSERT, "
+        "MERGE, or any other write operation — not even if the user explicitly asks. "
+        "If asked to modify data, refuse clearly.\n\n"
+    )
+
+    # ── SE Forecast context ───────────────────────────────────────────────────
+    if app_id == "se-forecast":
+        try:
+            from apps.se_forecast.routes import build_chat_context as _forecast_ctx
+            context = _forecast_ctx()
+        except Exception as e:
+            log.warning("Could not build forecast context: %s", e)
+            context = ""
+        system_prompt = (
+            NO_WRITE +
+            "You are an AI assistant embedded in the SE Forecast dashboard for the "
+            "Twilio Digital Sales (Self Service) team. "
+            "You have access to pre-loaded pipeline data (open opportunities for the current and next quarter) "
+            f"and a run_soql tool to query Salesforce directly for additional detail.\n\n"
+            f"{_SOQL_SCHEMA}\n"
+            "Answer concisely. Format currency with $ and K/M suffixes. "
+            "When using run_soql, scope queries to the DSR/Self Service team using the filters already "
+            "present in the context (FY_16_Owner_Team__c LIKE 'DSR%' etc.)."
+        )
+
+    # ── GTM Hub (no preloaded data — pure SOQL access) ───────────────────────
+    elif app_id == "gtm-hub":
+        context = ""
+        system_prompt = (
+            NO_WRITE +
+            "You are an AI assistant embedded in the GTM Hub platform for Twilio's Sales Engineering org. "
+            "You have access to the Twilio Salesforce org via the run_soql tool. "
+            f"{_SOQL_SCHEMA}\n"
+            "Answer clearly and concisely. Format currency with $ and K/M suffixes. "
+            "When querying, always include appropriate filters to keep result sets manageable."
+        )
+
+    # ── Fallback: generic Salesforce assistant ────────────────────────────────
+    else:
+        context = ""
+        system_prompt = (
+            NO_WRITE +
+            "You are an AI assistant with access to the Twilio Salesforce org via the run_soql tool. "
+            f"{_SOQL_SCHEMA}\n"
+            "Answer clearly and concisely."
+        )
+
+    result = _run_chat(system_prompt, context, message)
+    return jsonify(result)
+
+
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5001))
     app.run(host="0.0.0.0", port=port, debug=False)

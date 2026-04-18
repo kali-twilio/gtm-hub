@@ -74,34 +74,48 @@ export interface Suggestion {
   text:       string;
   author:     string;
   source:     'web' | 'sms' | 'whatsapp';
+  app:        string | null;
   created_at: string;
   is_mine:    boolean;
 }
 
 export async function getSuggestions(): Promise<Suggestion[]> {
-  const r = await fetch('/api/se-scorecard-v2/suggestions');
+  const r = await fetch('/api/suggestions');
   if (!r.ok) return [];
   return r.json();
 }
 
-export async function createSuggestion(text: string): Promise<Suggestion | null> {
-  const r = await fetch('/api/se-scorecard-v2/suggestions', {
+export async function createSuggestion(text: string, app?: string): Promise<Suggestion | null> {
+  const r = await fetch('/api/suggestions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ text }),
+    body: JSON.stringify({ text, app }),
   });
   if (!r.ok) return null;
   return r.json();
 }
 
 export async function deleteSuggestion(id: string): Promise<boolean> {
-  const r = await fetch(`/api/se-scorecard-v2/suggestions/${id}`, { method: 'DELETE' });
+  const r = await fetch(`/api/suggestions/${id}`, { method: 'DELETE' });
   return r.ok;
 }
 
 // ---------------------------------------------------------------------------
 // AI Chatbot
 // ---------------------------------------------------------------------------
+
+export async function chatWithAI(
+  message: string,
+  app: string,
+  params: Record<string, string | number> = {},
+): Promise<{ answer?: string; error?: string }> {
+  const r = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, app, ...params }),
+  });
+  return r.json();
+}
 
 export async function chatWithSEScorecard(
   message: string,

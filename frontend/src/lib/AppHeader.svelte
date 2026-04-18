@@ -1,14 +1,19 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { theme, msgChannel, sfTeam, sfPeriod, sfSubteam } from '$lib/stores';
+  import { theme, msgChannel } from '$lib/stores';
   import SuggestionBox from '$lib/SuggestionBox.svelte';
-  import { chatWithSEScorecard } from '$lib/api';
+  import { chatWithAI } from '$lib/api';
 
-  let { children } = $props();
-
-  onMount(() => {
-    if (!localStorage.getItem('theme')) theme.set('twilio');
-  });
+  let {
+    appName    = '',
+    appId      = '',
+    showAskAI  = false,
+    chatOpen   = $bindable(false),
+  }: {
+    appName?:   string;
+    appId?:     string;
+    showAskAI?: boolean;
+    chatOpen?:  boolean;
+  } = $props();
 
   const p5 = $derived($theme === 'p5');
 
@@ -18,12 +23,29 @@
     return `sms:${PHONE}`;
   }
 
-  let chatOpen    = $state(false);
+  // ── Ask AI panel ────────────────────────────────────────────────────────────
   let chatInput   = $state('');
   let chatLoading = $state(false);
   interface ChatMsg { role: 'user' | 'assistant'; text: string; }
   let chatMessages: ChatMsg[] = $state([]);
   let chatEndEl: HTMLElement | null = $state(null);
+
+  const SUGGESTED_PROMPTS: Record<string, string[]> = {
+    'se-forecast': [
+      "What's our total pipeline iACV this quarter?",
+      "Which SEs have the most deals without a TW?",
+      "List all deals in Commit without a Technical Win",
+      "How many unassigned deals are there?",
+    ],
+    'gtm-hub': [
+      "How many closed won deals this quarter?",
+      "Who are the top 5 SEs by iACV closed this year?",
+      "Show me pipeline deals closing this month",
+      "What's the team's win rate this quarter?",
+    ],
+  };
+
+  const prompts = $derived(SUGGESTED_PROMPTS[appId] ?? SUGGESTED_PROMPTS['gtm-hub']);
 
   async function sendChat() {
     const msg = chatInput.trim();
@@ -32,7 +54,7 @@
     chatInput = '';
     chatLoading = true;
     setTimeout(() => chatEndEl?.scrollIntoView({ behavior: 'smooth' }), 50);
-    const res = await chatWithSEScorecard(msg, $sfTeam, $sfPeriod, 0, $sfSubteam);
+    const res = await chatWithAI(msg, appId);
     chatLoading = false;
     chatMessages = [...chatMessages, { role: 'assistant', text: res.answer ?? res.error ?? 'No response.' }];
     setTimeout(() => chatEndEl?.scrollIntoView({ behavior: 'smooth' }), 50);
@@ -43,14 +65,7 @@
   }
 </script>
 
-<!-- P5 decorative chrome (corner brackets + edge bars) -->
-{#if p5}
-<div style="position:fixed;top:0;left:0;right:0;height:4px;background:var(--red);z-index:200;box-shadow:0 0 12px var(--red)"></div>
-<div style="position:fixed;bottom:0;left:0;right:0;height:4px;background:var(--red);z-index:200;box-shadow:0 0 12px var(--red)"></div>
-<div style="position:fixed;bottom:-30px;right:-10px;font-size:280px;font-weight:900;font-style:italic;color:rgba(232,0,61,0.04);line-height:1;pointer-events:none;user-select:none;transform:skewX(-5deg);z-index:0">5</div>
-{/if}
-
-<!-- Header -->
+<!-- Fixed nav header -->
 <div
   style="position:fixed;top:0;left:0;right:0;height:56px;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:0 24px;
     {p5
@@ -62,15 +77,9 @@
       <img src="/Twilio-logo-red.svg.png" alt="Twilio" style="height:22px;width:auto">
     </a>
     <div style="width:1px;height:22px;background:{p5 ? 'rgba(232,0,61,0.3)' : 'rgba(13,18,43,0.12)'}"></div>
-    <button
-      onclick={() => theme.toggle()}
-      style="background:none;border:none;padding:2px 4px;margin:-2px -4px;cursor:pointer;font-size:13px;font-weight:600;letter-spacing:-0.01em;color:{p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'};border-radius:4px;transition:color 0.15s,background 0.15s"
-      onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.color = 'var(--red)'; el.style.background = p5 ? 'rgba(232,0,61,0.1)' : 'rgba(242,47,70,0.07)'; }}
-      onmouseleave={e => { const el = e.currentTarget as HTMLElement; el.style.color = p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'; el.style.background = 'none'; }}
-      title="Click for a surprise"
-    >SE Scorecard</button>
+    <span style="font-size:13px;font-weight:600;letter-spacing:-0.01em;color:{p5 ? 'rgba(255,255,255,0.5)' : 'rgba(13,18,43,0.45)'}">{appName}</span>
 
-    <!-- Ask AI button -->
+    {#if showAskAI}
     <button
       onclick={() => chatOpen = !chatOpen}
       style="display:flex;align-items:center;gap:6px;background:{chatOpen?(p5?'rgba(232,0,61,0.15)':'rgba(242,47,70,0.1)'):'none'};border:1px solid {chatOpen?'var(--red)':(p5?'rgba(255,255,255,0.12)':'rgba(13,18,43,0.12)')};border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px;font-weight:700;letter-spacing:0.02em;color:{chatOpen?'var(--red)':(p5?'rgba(255,255,255,0.6)':'rgba(13,18,43,0.5)')};transition:all 0.15s;white-space:nowrap"
@@ -80,10 +89,11 @@
       <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
       Ask AI
     </button>
+    {/if}
 
     <!-- Feedback group -->
-    <div style="display:flex;align-items:center;gap:4px;margin-left:16px;padding:4px 6px;border-radius:8px;background:{p5?'rgba(255,255,255,0.03)':'rgba(13,18,43,0.03)'};border:1px solid {p5?'rgba(255,255,255,0.07)':'rgba(13,18,43,0.07)'}">
-      <SuggestionBox app="se-scorecard-v2" />
+    <div style="display:flex;align-items:center;gap:4px;{showAskAI?'margin-left:16px;':''}padding:4px 6px;border-radius:8px;background:{p5?'rgba(255,255,255,0.03)':'rgba(13,18,43,0.03)'};border:1px solid {p5?'rgba(255,255,255,0.07)':'rgba(13,18,43,0.07)'}">
+      <SuggestionBox app={appId} />
       <div style="width:1px;height:18px;background:{p5?'rgba(255,255,255,0.1)':'rgba(13,18,43,0.1)'}"></div>
       <div style="display:flex;align-items:center;border-radius:5px;overflow:hidden;border:1px solid {p5?'rgba(255,255,255,0.12)':'rgba(13,18,43,0.12)'}">
         {#each [{id:'sms',label:'SMS'},{id:'whatsapp',label:'WA'}] as ch}
@@ -113,8 +123,8 @@
   </div>
 </div>
 
-<!-- AI Chat slide-in panel -->
-{#if chatOpen}
+<!-- Ask AI slide-in panel -->
+{#if showAskAI && chatOpen}
 <div style="position:fixed;top:56px;left:0;bottom:0;width:min(420px,100vw);z-index:10000;display:flex;flex-direction:column;
   {p5?'background:#111;border-right:1px solid rgba(232,0,61,0.25);':'background:white;border-right:1px solid rgba(13,18,43,0.1);box-shadow:4px 0 24px rgba(13,18,43,0.08);'}">
 
@@ -126,10 +136,10 @@
   <div style="flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:12px">
     {#if chatMessages.length === 0}
       <div style="color:{p5?'rgba(255,255,255,0.3)':'rgba(13,18,43,0.35)'};font-size:13px;text-align:center;margin-top:24px">
-        Ask anything about the current team's Salesforce data.
+        Ask anything about Salesforce data.
       </div>
       <div style="display:flex;flex-direction:column;gap:6px;margin-top:8px">
-        {#each ["Who has the highest iACV?","Which SEs are missing notes?","What's the top deal this quarter?","How is the team trending?"] as prompt}
+        {#each prompts as prompt}
         <button onclick={() => { chatInput = prompt; sendChat(); }}
           style="text-align:left;background:{p5?'rgba(255,255,255,0.04)':'rgba(13,18,43,0.03)'};border:1px solid {p5?'rgba(255,255,255,0.08)':'rgba(13,18,43,0.08)'};border-radius:6px;padding:8px 12px;cursor:pointer;font-size:12px;color:{p5?'rgba(255,255,255,0.5)':'rgba(13,18,43,0.5)'};transition:all 0.15s"
           onmouseenter={e => { const el = e.currentTarget as HTMLElement; el.style.borderColor='var(--red)'; el.style.color='var(--red)'; }}
@@ -162,7 +172,7 @@
       <textarea
         bind:value={chatInput}
         onkeydown={onChatKey}
-        placeholder="Ask about this team's data…"
+        placeholder="Ask about Salesforce data…"
         rows="2"
         style="flex:1;resize:none;border:1px solid {p5?'rgba(255,255,255,0.12)':'rgba(13,18,43,0.15)'};border-radius:8px;padding:8px 12px;font-size:13px;background:{p5?'rgba(255,255,255,0.05)':'white'};color:{p5?'rgba(255,255,255,0.85)':'rgba(13,18,43,0.85)'};outline:none;font-family:inherit;line-height:1.4"
       ></textarea>
@@ -170,18 +180,14 @@
         style="background:var(--red);border:none;border-radius:8px;padding:8px 14px;cursor:pointer;color:white;font-size:13px;font-weight:700;opacity:{chatLoading||!chatInput.trim()?'0.4':'1'};transition:opacity 0.15s;white-space:nowrap"
       >Send</button>
     </div>
-    <div style="font-size:10px;color:{p5?'rgba(255,255,255,0.2)':'rgba(13,18,43,0.25)'};margin-top:6px">Enter to send · Shift+Enter for newline</div>
+    <div style="font-size:10px;color:{p5?'rgba(255,255,255,0.2)':'rgba(13,18,43,0.25)'};margin-top:6px">Enter to send · Shift+Enter for newline · Read-only Salesforce access</div>
   </div>
 </div>
 {/if}
 
-<div style="padding-top:56px;transition:margin-left 0.2s;margin-left:{chatOpen?'min(420px,100vw)':'0'}">
-  {@render children()}
-</div>
-
 <style>
 @keyframes bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
-  40% { transform: translateY(-6px); opacity: 1; }
+  40%            { transform: translateY(-6px); opacity: 1; }
 }
 </style>

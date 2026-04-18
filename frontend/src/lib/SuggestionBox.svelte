@@ -2,6 +2,8 @@
   import { getSuggestions, createSuggestion, deleteSuggestion, type Suggestion } from '$lib/api';
   import { theme } from '$lib/stores';
 
+  let { app = '', dark = false }: { app?: string; dark?: boolean } = $props();
+
   let open       = $state(false);
   let tab        = $state<'view' | 'submit'>('view');
   let items      = $state<Suggestion[]>([]);
@@ -13,7 +15,7 @@
   let btnEl      = $state<HTMLButtonElement | null>(null);
   let panelLeft  = $state(0);
 
-  const p5 = $derived($theme === 'p5');
+  const p5 = $derived(dark || $theme === 'p5');
 
   async function load() {
     loading = true;
@@ -39,7 +41,7 @@
     const text = draft.trim();
     if (!text) { error = 'Type something first.'; return; }
     submitting = true;
-    const created = await createSuggestion(text);
+    const created = await createSuggestion(text, app || undefined);
     submitting = false;
     if (!created) { error = 'Failed to submit — try again.'; return; }
     items   = [created, ...items];
@@ -126,12 +128,17 @@
           <div style="padding:10px 12px;background:{p5?'rgba(255,255,255,0.04)':'rgba(13,18,43,0.03)'};border-radius:6px;border:1px solid {p5?'rgba(255,255,255,0.07)':'rgba(13,18,43,0.07)'};position:relative">
             <div style="font-size:13px;color:{p5?'rgba(255,255,255,0.85)':'#0d122b'};line-height:1.5;margin-bottom:6px;padding-right:{s.is_mine?'24px':'0'}">{s.text}</div>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-              <span style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600;color:var(--red)">
-                {#if s.source === 'sms'}
-                <svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="opacity:0.7;flex-shrink:0"><rect x="1" y="2" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M4 14l2-2h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+                <span style="display:flex;align-items:center;gap:4px;font-size:10px;font-weight:600;color:var(--red)">
+                  {#if s.source === 'sms'}
+                  <svg width="10" height="10" viewBox="0 0 16 16" fill="none" style="opacity:0.7;flex-shrink:0"><rect x="1" y="2" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M4 14l2-2h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+                  {/if}
+                  {s.author}
+                </span>
+                {#if s.app}
+                <span style="font-size:9px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:{p5?'rgba(255,255,255,0.35)':'rgba(13,18,43,0.35)'};background:{p5?'rgba(255,255,255,0.06)':'rgba(13,18,43,0.06)'};border:1px solid {p5?'rgba(255,255,255,0.1)':'rgba(13,18,43,0.1)'};border-radius:3px;padding:1px 5px">{s.app}</span>
                 {/if}
-                {s.author}
-              </span>
+              </div>
               <span style="font-size:10px;color:{p5?'rgba(255,255,255,0.25)':'rgba(13,18,43,0.3)'}">{fmtDate(s.created_at)}</span>
             </div>
             {#if s.is_mine}

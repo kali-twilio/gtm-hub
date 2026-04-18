@@ -479,6 +479,8 @@ def api_save_note(opp_id: str):
     email = session.get("user_email", "")
     if not email:
         return jsonify({"error": "Unauthorized"}), 401
+    if session.get("sf_role_name") != "SE FLM - Self Service":
+        return jsonify({"error": "Forbidden"}), 403
     if not opp_id or len(opp_id) > 50:
         return jsonify({"error": "Invalid opp_id"}), 400
     body = request.get_json(silent=True) or {}
@@ -634,3 +636,65 @@ def api_summarize():
 
     result = _summarize_with_bedrock(opp_name, close_date, se_notes, se_history, next_step, last_activity)
     return jsonify(result)
+
+
+# ---------------------------------------------------------------------------
+# Chat context builder — called by the global /api/chat endpoint
+# ---------------------------------------------------------------------------
+
+def build_chat_context() -> str:
+    """Return a compact text summary of the current forecast pipeline for AI context."""
+    start, _end_cur, end_next, period_key, label_cur, label_next = _two_quarter_range()
+    data, err = _fetch(period_key, start, end_next)
+    if err or not data:
+        return ""
+
+    summary = data.get("summary", {})
+    lines = [
+        f"SE Forecast — Digital Sales (Self Service) team",
+        f"Period: {label_cur} / {label_next}",
+        f"Total assigned deals: {summary.get('total_deals', 0)} | Total iACV: ${summary.get('total_icav', 0):,}",
+        f"Technical Wins: {summary.get('tw_count', 0)} (${summary.get('tw_icav', 0):,})",
+        f"No-TW pipeline: {summary.get('no_tw_count', 0)} (${summary.get('no_tw_icav', 0):,})",
+        f"Mismatches: {summary.get('mismatch_count', 0)} (${summary.get('mismatch_icav', 0):,})",
+        f"Unassigned: {summary.get('unassigned_count', 0)} (${summary.get('unassigned_icav', 0):,})",
+        "",
+        "--- Activation deals by SE ---",
+    ]
+
+    for group in data.get("act_by_se", []):
+        lines.append(f"SE: {group['se_name']} | iACV: ${group['total_icav']:,} | {len(group['deals'])} deals")
+        for d in group["deals"][:10]:
+            tw = "[TW]" if d["is_tw"] else ""
+            mm = f"[MISMATCH:{d['mismatch']}]" if d["mismatch"] else ""
+            lines.append(
+                f"  {d['name']} | acct:{d['account']} | stage:{d['stage']} | fc:{d['forecast_cat']} "
+                f"| presales:{d['presales']} | iACV:${d['icav']:,} | close:{d['close_date']} "
+                f"| AE:{d['ae_name']} {tw}{mm}"
+            )
+
+    lines.append("")
+    lines.append("--- Expansion deals by SE ---")
+    for group in data.get("exp_by_se", []):
+        lines.append(f"SE: {group['se_name']} | iACV: ${group['total_icav']:,} | {len(group['deals'])} deals")
+        for d in group["deals"][:5]:
+            lines.append(
+                f"  {d['name']} | acct:{d['account']} | stage:{d['stage']} | fc:{d['forecast_cat']} "
+                f"| iACV:${d['icav']:,} | close:{d['close_date']}"
+            )
+
+    lines.append("")
+    lines.append("--- Technical Wins (open) ---")
+    for d in data.get("tw_open", [])[:20]:
+        lines.append(
+            f"  {d['name']} | acct:{d['account']} | SE:{d['se_name']} | iACV:${d['icav']:,} | close:{d['close_date']}"
+        )
+
+    lines.append("")
+    lines.append("--- Unassigned deals ---")
+    for d in data.get("unassigned", [])[:10]:
+        lines.append(
+            f"  {d['name']} | acct:{d['account']} | iACV:${d['icav']:,} | close:{d['close_date']} | AE:{d['ae_name']}"
+        )
+
+    return "\n".join(lines)
