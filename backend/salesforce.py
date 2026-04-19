@@ -134,6 +134,24 @@ class SalesforceClient:
 
         return records
 
+    def patch(self, path: str, payload: dict) -> None:
+        """Authenticated PATCH against the Salesforce REST API. Retries once on 401."""
+        if not self.configured:
+            raise RuntimeError("Salesforce is not configured — check environment variables.")
+        for attempt in range(2):
+            stale = self._access_token
+            resp = requests.patch(
+                f"{self.instance_url}{path}",
+                headers={**self._headers(), "Content-Type": "application/json"},
+                json=payload,
+                timeout=15,
+            )
+            if resp.status_code == 401 and attempt == 0:
+                self._refresh(stale)
+                continue
+            resp.raise_for_status()
+            return
+
     def get_user_by_email(self, email: str) -> dict | None:
         """
         Return the Salesforce User record for a given email, or None if not found / SF unavailable.

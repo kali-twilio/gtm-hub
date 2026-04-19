@@ -22,12 +22,13 @@ import json
 import logging
 import importlib
 import inspect
+import re as _re
 import time
+import uuid as _uuid
 from collections import defaultdict
+from datetime import datetime as _datetime, timezone as _tz
 from pathlib import Path
-from flask import Blueprint
-
-from flask import Flask, request, jsonify, redirect, url_for, session
+from flask import Blueprint, Flask, request, jsonify, redirect, url_for, session
 from werkzeug.middleware.proxy_fix import ProxyFix
 from google_auth_oauthlib.flow import Flow
 import requests as http
@@ -94,7 +95,6 @@ def _sf_role_to_team(role_name: str) -> str | None:
 
 def _sf_role_to_subteam(role_name: str) -> str | None:
     """Map an IC SE's UserRole to a scorecard subteam key using the TEAMS config."""
-    import re as _re
     try:
         from apps.se_scorecard_v2.routes import TEAMS
         for team in TEAMS.values():
@@ -376,10 +376,6 @@ def _get_live_apps() -> list[dict]:
 # ── Global suggestions API ────────────────────────────────────────────────────
 # Shared across all apps. Each suggestion carries an optional `app` field.
 
-import uuid as _uuid
-from datetime import datetime as _datetime, timezone as _tz
-from flask import session as _session
-
 def _suggestions_firestore():
     """Borrow the Firestore client from the scorecard app."""
     try:
@@ -488,8 +484,6 @@ def api_suggestions_delete(suggestion_id: str):
 # ── Global AI Chat ────────────────────────────────────────────────────────────
 # Shared endpoint for all apps. Only SELECT SOQL is ever executed; the system
 # prompt forbids writes and _execute_soql_safe() enforces it at the code level.
-
-import re as _re
 
 _OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 _OPENAI_MODEL   = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")

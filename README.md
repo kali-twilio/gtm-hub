@@ -10,24 +10,44 @@ Internal platform for Twilio Sales tools. Sign in with your `@twilio.com` Google
 
 ```
 backend/
-├── app.py                  Platform: Google OAuth, /api/me, /api/apps
+├── app.py                  Platform: Google OAuth, /api/me, /api/apps, suggestions, AI chat
 ├── salesforce.py           Shared Salesforce client
 └── apps/
     ├── _template/          Copy this to start a new app
-    ├── scorecard/          SE Scorecard (CSV upload)
-    └── se_scorecard_v2/    SE Scorecard V2 (live Salesforce)
+    ├── se_scorecard_v2/    SE Scorecard V2 (live Salesforce)
+    └── se_forecast/        SE Forecast — DSR pipeline & forecast tracking
 
 frontend/
 └── src/
     ├── lib/                Shared stores, API helpers, color tokens
     └── routes/
-        ├── (launcher)/     Login page + app grid
-        ├── (scorecard)/    SE Scorecard pages
-        └── (se-scorecard-v2)/  SE Scorecard V2 pages
+        ├── (launcher)/         Login page + app grid
+        ├── (se-scorecard-v2)/  SE Scorecard V2 pages
+        └── (se-forecast)/      SE Forecast pages
 
 deploy.sh                   One-command deploy to EC2
 deploy.env                  Secrets + config (gitignored)
+process_suggestions.sh      Pull suggestions from Firestore, implement each via Claude, open PRs
 ```
+
+---
+
+## Apps
+
+### SE Scorecard V2 (`/se-scorecard-v2`)
+
+Live Salesforce dashboard for SE performance metrics. Supports DSR, NAMER, EMEA, APJ, LATAM, and DORG teams with per-team iACV, NB/Strat splits, usage (MRR), and tech-win tracking.
+
+- **Team view** — all SEs for a selected team/period with iACV filter
+- **Me** — personal stats for the signed-in SE (IC-restricted users land here automatically)
+- **Rankings** — power rankings across teams (manager-only)
+- **Report** — detailed breakdown with per-SE drill-down
+
+Data is fetched live from Salesforce. Current quarter: 10-minute cache. Historical quarters/years: 1-week cache.
+
+### SE Forecast (`/se-forecast`)
+
+DSR pipeline and forecast tracking. Four views mirror Salesforce forecast reports: assigned opportunities, pipeline by stage, won deals, and forecast summary.
 
 ---
 
@@ -68,12 +88,24 @@ def enforce_auth():
     if not session.get("user_email"):
         return jsonify({"error": "Unauthorized"}), 401
 
-    # 3. Rate limit: 60 requests / 60 seconds per user
+    # 3. Rate limit: 120 requests / 60 seconds per user
     if _rate_limited(session["user_email"]):
         return jsonify({"error": "Too many requests"}), 429
 ```
 
 App builders never implement auth themselves — if a request reaches a blueprint route, the user is authenticated, the request is same-origin, and the rate limit has not been exceeded.
+
+### Role-based access control
+
+Salesforce `UserRole.Name` is checked at login and stored in the session:
+
+| Role pattern | Access level | Restrictions |
+|---|---|---|
+| `SE FLM …` / `SE SLM …` | `full` | None — all teams, rankings, reports |
+| `SE - …` (IC SE) | `se_restricted` | Own team only; power rankings blocked |
+| All others | `full` | None |
+
+`se_restricted` users are redirected to `/se-scorecard-v2/me` after login.
 
 ### Input validation
 
@@ -118,10 +150,6 @@ This prevents both type errors (`?icav_min=abc` → 500) and parameter enumerati
 - **Nginx security headers** — `Permissions-Policy: geolocation=(), microphone=(), camera=()` added at the proxy layer in addition to app-level headers.
 - **No SSH open** — the EC2 security group does not expose port 22 to the internet. Access is via re-deploy only.
 
-### Simulate endpoint (local dev only)
-
-`/simulate?email=user@twilio.com` sets a session as that user without going through OAuth. Returns 404 in production (`LOCAL_DEV` is never set on the server).
-
 ---
 
 ## Adding a new app
@@ -160,6 +188,7 @@ def get_data():
 
 - Prefix all routes with `/api/<yourapp>/` to avoid collisions
 - Optionally expose `enrich_me(email: str) -> dict` to add fields to `/api/me`
+- Optionally expose `get_chat_context(body: dict) -> (system_prompt, context)` and `CHAT_APP_ID` to hook into the shared AI chat
 
 ### 3. `frontend/src/routes/(<yourapp>)/<yourapp>/+page.svelte`
 
@@ -192,9 +221,26 @@ opps = sf.query("SELECT Id, Name FROM Opportunity WHERE StageName = 'Closed Won'
 
 # Raw REST call
 record = sf.get("/services/data/v59.0/sobjects/Account/001XXXXXXXXXXXXXXX")
+
+# PATCH update
+sf.patch("/services/data/v59.0/sobjects/Account/001XXXXXXXXXXXXXXX", {"Name": "New Name"})
 ```
 
 Token refresh is automatic. Credentials come from `deploy.env` and are injected as environment variables — nothing to configure.
+
+---
+
+## Suggestions
+
+The suggestion box is available on every page via `SuggestionBox.svelte`. Suggestions are stored in Firestore (`gtm-hub-suggestions`) and tagged with the current app.
+
+**Channels:** web (in-app form), SMS, WhatsApp.
+
+**Processing:** `process_suggestions.sh` reads pending suggestions from Firestore, filters and deduplicates them with Claude Haiku, then uses Claude Sonnet to implement each one on a branch, runs a security review, and opens a pull request. Requires `deploy.env`, `gh` CLI, and `claude` CLI in PATH.
+
+```bash
+./process_suggestions.sh
+```
 
 ---
 
@@ -215,6 +261,34 @@ cd frontend && npm install && npm run dev
 Frontend: `http://localhost:5173` · Backend: `http://localhost:5001`. Vite proxies `/api/*` to Flask.
 
 > Restart Flask after any backend change — blueprints are discovered at startup only.
+
+### Simulate login (local only)
+
+`/simulate?email=user@twilio.com` — sets a session as that user without going through OAuth. Restricted SEs are redirected to `/se-scorecard-v2/me` automatically. Returns 404 in production.
+
+---
+
+## Local vs Production differences
+
+| | Local dev | Production |
+|---|---|---|
+| **HTTPS** | HTTP (`http://localhost:5173`) | CloudFront HTTPS (`d2nm4d5qi0glko.cloudfront.net`) |
+| **OAuth** | `OAUTHLIB_INSECURE_TRANSPORT=1` allows HTTP OAuth | Requires HTTPS; HTTP OAuth rejected |
+| **Session cookie** | `Secure=False` — cookie sent over HTTP | `Secure=True` — HTTPS only |
+| **SECRET_KEY** | Falls back to a hard-coded insecure dev key if not set | **Required** — Flask crashes at startup if missing |
+| **HSTS header** | Not sent | `Strict-Transport-Security: max-age=31536000; includeSubDomains` |
+| **Simulate endpoint** | `/simulate?email=…` bypasses OAuth | Returns 404 — `LOCAL_DEV` is never set on the server |
+| **Salesforce** | Optional — SF calls degrade gracefully if unconfigured | Required — all features rely on live SF data |
+| **Firestore** | Optional — suggestions return 503 if unconfigured | Required — suggestions and SMS/WhatsApp state stored there |
+| **Process** | `python3 app.py` (single worker, auto-reloader not enabled) | `gunicorn -b 0.0.0.0:5001 -w 2 app:app` behind nginx |
+| **Frontend** | Vite dev server (`npm run dev`) with HMR; proxies `/api/*` to Flask | Pre-built static files served by nginx |
+| **Rate limit** | 120 requests / 60 sec (same as prod) | 120 requests / 60 sec |
+
+**Key local gotchas:**
+- Set `LOCAL_DEV=1` and `FRONTEND_URL=http://localhost:5173` — without these the OAuth redirect and CSRF check break.
+- Flask must be restarted after any backend change — blueprints are only discovered at startup.
+- If Salesforce isn't configured, most scorecard data endpoints return empty results rather than erroring. Use dummy values in `deploy.env` or skip sourcing it to test the auth flow only.
+- The Vite proxy (`/api/*` → `localhost:5001`) is configured in `frontend/vite.config.ts`. If Flask runs on a different port, update that file.
 
 ---
 
@@ -269,5 +343,7 @@ Requires `deploy.env` with all secrets populated.
 | Hidden apps | Prefix directory with `_` |
 | Auth | Never implement it — the platform handles it |
 | `/api/me` enrichment | Expose `enrich_me(email) -> dict` in `routes.py` |
+| AI chat context | Expose `get_chat_context(body) -> (system_prompt, context)` and `CHAT_APP_ID` in `routes.py` |
 | Salesforce | `from salesforce import sf` |
 | Python compat | Always add `from __future__ import annotations` (server is Python 3.9) |
+| Suggestions | Tagged automatically with the `app` field; stored in Firestore `gtm-hub-suggestions` |

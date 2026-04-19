@@ -31,7 +31,7 @@ fi
 # shellcheck source=/dev/null
 source "$ENV_FILE"
 
-FIRESTORE_COLLECTION="se-scorecard-v2-suggestions"
+FIRESTORE_COLLECTION="gtm-hub-suggestions"
 REPO_URL="https://github.com/kali-twilio/gtm-hub"
 LOCK_FILE="$SCRIPT_DIR/process_suggestions.lock"
 WORK_DIR="$(mktemp -d)"
@@ -251,21 +251,17 @@ def writeback(status, suggestion, branch=None, pr_url=None):
     except Exception as e:
         print(f"  WARN: Firestore writeback failed: {e}")
 
-def sanitize_branch(owner, created_at):
-    # For email, use the local part; strip whatsapp: prefix; phone/other used as-is
-    if '@' in owner:
-        username = owner.split('@')[0]
-    elif owner.startswith('whatsapp:'):
-        username = owner[len('whatsapp:'):]
-    else:
-        username = owner
-    safe = re.sub(r'[^a-zA-Z0-9._-]', '-', username).strip('-')
-    # Use unix timestamp so branches sort chronologically for the same person
+def sanitize_branch(app, contact, created_at):
+    # contact is phone or email; strip whatsapp: prefix if present
+    if contact.startswith('whatsapp:'):
+        contact = contact[len('whatsapp:'):]
+    safe_contact = re.sub(r'[^a-zA-Z0-9._-]', '-', contact).strip('-')
+    safe_app = re.sub(r'[^a-zA-Z0-9._-]', '-', app).strip('-')
     try:
         ts = int(datetime.datetime.fromisoformat(created_at.replace("Z", "+00:00")).timestamp())
     except Exception:
         ts = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
-    return f"{safe[:40]}-{ts}"
+    return f"{safe_app[:20]}+{safe_contact[:40]}+{ts}"
 
 def strip_fences(text):
     """Remove markdown code fences from a Claude response."""
@@ -376,13 +372,16 @@ def identify_files(suggestion_text, repo_map):
 
 
 def implement_suggestion(suggestion, repo_map):
-    text   = suggestion["text"]
-    owner  = suggestion.get("email") or suggestion.get("phone") or suggestion.get("whatsapp", "anonymous")
-    sid    = suggestion["id"]
-    branch = f"suggestion-{sanitize_branch(owner, suggestion.get('created_at', ''))}"
+    text        = suggestion["text"]
+    app         = suggestion.get("app", "gtm-hub")
+    contact     = suggestion.get("phone") or suggestion.get("email") or "anonymous"
+    caller_name = suggestion.get("caller_name", "")
+    source      = suggestion.get("source", "unknown")
+    sid         = suggestion["id"]
+    branch      = f"suggestion-{sanitize_branch(app, contact, suggestion.get('created_at', ''))}"
 
     print(f"\n  Suggestion [{sid}]")
-    print(f"  Owner : {owner}")
+    print(f"  From  : {caller_name} ({contact}) via {source}")
     print(f"  Branch: {branch}")
     print(f"  Text  : {text}")
 
@@ -603,7 +602,7 @@ def implement_suggestion(suggestion, repo_map):
     pr_result = subprocess.run(
         ["gh", "pr", "create",
          "--title", f"Suggestion: {text[:72]}",
-         "--body", f"**Submitted by:** {owner}\n**Channel:** {'email' if '@' in owner else 'whatsapp' if owner.startswith('whatsapp:') else 'sms'}\n\n**Suggestion:**\n{text}\n\n---\n*Auto-implemented by process_suggestions.sh*",
+         "--body", f"**Submitted by:** {caller_name} ({contact})\n**Channel:** {source}\n\n**Suggestion:**\n{text}\n\n---\n*Auto-implemented by process_suggestions.sh*",
          "--head", branch,
          "--base", "main"],
         cwd=repo_dir, capture_output=True, text=True,
