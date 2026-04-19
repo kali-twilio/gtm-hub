@@ -951,7 +951,7 @@ def api_report():
 _SUGGESTIONS_MAX        = 500
 _FIRESTORE_PROJECT      = os.environ.get("FIRESTORE_PROJECT")
 _FIRESTORE_CREDENTIALS  = os.environ.get("FIRESTORE_CREDENTIALS_B64")  # base64-encoded JSON
-_FIRESTORE_COLLECTION   = "suggestions"
+_FIRESTORE_COLLECTION   = "gtm-hub-suggestions"
 _FIRESTORE_SMS_PENDING  = "sms-pending"
 _firestore_client       = None
 
