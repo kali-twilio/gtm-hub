@@ -352,7 +352,7 @@ aws ec2 associate-address \
 rm -f "$USERDATA_FILE"
 
 # ── 7. Register Twilio SMS webhook ───────────────────────────────────────────
-WEBHOOK_URL="https://${DOMAIN}/api/se-scorecard-v2/sms"
+WEBHOOK_URL="https://${DOMAIN}/api/sms"
 echo "Registering Twilio SMS webhook: $WEBHOOK_URL"
 _PHONE_SID=$(curl -s -u "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
   "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers.json?PhoneNumber=%2B18446990268" \
