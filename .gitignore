@@ -21,6 +21,9 @@ __pycache__/
 # Suggestion processing logs (contain email addresses and suggestion content)
 process_suggestions.log
 
+# Deployment artifacts
+.ami-cache
+
 # Deployment secrets — copy deploy.env.example to deploy.env and fill in values
 deploy.env
 
