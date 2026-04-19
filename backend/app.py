@@ -412,7 +412,7 @@ def api_suggestions_list():
             items.append({
                 "id":         doc.id,
                 "text":       s.get("text", ""),
-                "author":     _masked_email(s.get("email", "")) if s.get("email") else s.get("caller_name") or s.get("phone", "SMS")[:4] + "…",
+                "author":     s.get("email") or s.get("caller_name") or s.get("phone") or "Anonymous",
                 "source":     s.get("source", "web"),
                 "app":        s.get("app") or None,
                 "created_at": s.get("created_at", ""),
