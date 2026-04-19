@@ -402,19 +402,19 @@ def api_suggestions_list():
         return jsonify({"error": "Storage unavailable"}), 503
     app_filter = (request.args.get("app") or "").strip() or None
     try:
-        q = db.collection(_SUGGESTIONS_COLLECTION).order_by("created_at", direction="DESCENDING")
-        if app_filter:
-            q = q.where("app", "==", app_filter)
-        docs = q.stream()
+        docs = db.collection(_SUGGESTIONS_COLLECTION).order_by("created_at", direction="DESCENDING").stream()
         items = []
         for doc in docs:
             s = doc.to_dict()
+            doc_app = s.get("app") or None
+            if app_filter and doc_app != app_filter:
+                continue
             items.append({
                 "id":         doc.id,
                 "text":       s.get("text", ""),
                 "author":     s.get("email") or s.get("caller_name") or s.get("phone") or "Anonymous",
                 "source":     s.get("source", "web"),
-                "app":        s.get("app") or None,
+                "app":        doc_app,
                 "created_at": s.get("created_at", ""),
                 "is_mine":    s.get("email", "") == current_email,
             })
