@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import time
-import uuid
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -25,48 +24,6 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 _LOCAL_DEV  = os.environ.get("LOCAL_DEV") == "1"
 _ICAV_FIELD = "Comms_Segment_Combined_iACV__c"
-
-# ---------------------------------------------------------------------------
-# Firestore — manager notes per opportunity
-# ---------------------------------------------------------------------------
-
-_FIRESTORE_PROJECT     = os.environ.get("FIRESTORE_PROJECT")
-_FIRESTORE_CREDENTIALS = os.environ.get("FIRESTORE_CREDENTIALS_B64")
-_NOTES_COLLECTION      = "se-forecast-manager-notes"
-_firestore_client      = None
-
-
-def _get_firestore():
-    global _firestore_client
-    if _firestore_client is not None:
-        return _firestore_client
-    try:
-        from google.cloud import firestore
-        from google.oauth2 import service_account
-        if _FIRESTORE_CREDENTIALS:
-            import base64
-            info = json.loads(base64.b64decode(_FIRESTORE_CREDENTIALS).decode())
-            creds = service_account.Credentials.from_service_account_info(
-                info, scopes=["https://www.googleapis.com/auth/datastore"])
-            _firestore_client = firestore.Client(project=_FIRESTORE_PROJECT, credentials=creds)
-        else:
-            _firestore_client = firestore.Client(project=_FIRESTORE_PROJECT)
-        return _firestore_client
-    except Exception as e:
-        log.error("Firestore init failed: %s", e)
-        return None
-
-
-def _load_manager_notes() -> dict[str, dict]:
-    db = _get_firestore()
-    if db is None:
-        return {}
-    try:
-        return {doc.id: doc.to_dict() for doc in db.collection(_NOTES_COLLECTION).stream()}
-    except Exception as e:
-        log.error("Failed to load manager notes: %s", e)
-        return {}
-
 
 # ---------------------------------------------------------------------------
 # Quarter helpers
@@ -141,7 +98,7 @@ def _soql_assigned(start: str, end: str) -> str:
         f" NextStep, LastActivityDate,"
         f" Technical_Lead__r.Name, Technical_Lead__r.UserRole.Name,"
         f" Owner.Name, Owner.UserRole.Name,"
-        f" Account.Name, Account.Website, Account.SE_Notes__c,"
+        f" AccountId, Account.Name, Account.Website, Account.SE_Notes__c,"
         f" Sales_Engineer_Notes__c, SE_Notes_History__c,"
         f" FY_16_Owner_Team__c"
         f" FROM Opportunity"
@@ -209,49 +166,45 @@ def _earr(opp: dict) -> int:
         return 0
 
 
-def _fmt_opp(opp: dict, mgr_notes: dict) -> dict:
+def _fmt_opp(opp: dict) -> dict:
     tl    = opp.get("Technical_Lead__r") or {}
     owner = opp.get("Owner") or {}
     acct  = opp.get("Account") or {}
     oid   = opp.get("Id") or ""
-    note  = mgr_notes.get(oid) or {}
 
     presales     = (opp.get("Presales_Stage__c") or "").strip()
     forecast_cat = (opp.get("ForecastCategoryName") or "").strip()
     is_tw        = presales == "4 - Technical Win Achieved"
     expansion    = _is_expansion(opp)
 
-    # Mismatch check
     mismatch = _check_mismatch(forecast_cat, presales)
 
     return {
-        "id":            oid,
-        "name":          (opp.get("Name") or "").strip(),
+        "id":              oid,
+        "name":            (opp.get("Name") or "").strip(),
         "account":         (acct.get("Name") or "").strip(),
+        "account_id":      (opp.get("AccountId") or "").strip(),
         "account_website": (acct.get("Website") or "").strip(),
         "account_notes":   (acct.get("SE_Notes__c") or "").strip(),
-        "se_name":       (tl.get("Name") or "").strip(),
-        "ae_name":       (owner.get("Name") or "").strip(),
-        "ae_role":       ((owner.get("UserRole") or {}).get("Name") or "").strip(),
-        "stage":         (opp.get("StageName") or "").strip(),
-        "presales":      presales,
-        "presales_short": presales.replace(r"^\d+ - ", "").strip() if presales else "",
-        "forecast_cat":  forecast_cat,
-        "close_date":    opp.get("CloseDate") or "",
-        "icav":          _icav(opp),
-        "earr":          _earr(opp),
-        "current_earr":  int(float(opp.get("Current_eARR__c") or 0)),
+        "se_name":         (tl.get("Name") or "").strip(),
+        "ae_name":         (owner.get("Name") or "").strip(),
+        "ae_role":         ((owner.get("UserRole") or {}).get("Name") or "").strip(),
+        "stage":           (opp.get("StageName") or "").strip(),
+        "presales":        presales,
+        "presales_short":  presales.replace(r"^\d+ - ", "").strip() if presales else "",
+        "forecast_cat":    forecast_cat,
+        "close_date":      opp.get("CloseDate") or "",
+        "icav":            _icav(opp),
+        "earr":            _earr(opp),
+        "current_earr":    int(float(opp.get("Current_eARR__c") or 0)),
         "incremental_acv": int(float(opp.get("Incremental_ACV__c") or 0)),
-        "next_step":     (opp.get("NextStep") or "").strip(),
-        "last_activity": opp.get("LastActivityDate") or "",
-        "se_notes":      (opp.get("Sales_Engineer_Notes__c") or "").strip(),
-        "se_history":    (opp.get("SE_Notes_History__c") or "").strip(),
-        "is_tw":         is_tw,
-        "is_expansion":  expansion,
-        "mismatch":      mismatch,
-        "manager_note":        note.get("note", ""),
-        "manager_note_author": note.get("author", ""),
-        "manager_note_at":     note.get("updated_at", ""),
+        "next_step":       (opp.get("NextStep") or "").strip(),
+        "last_activity":   opp.get("LastActivityDate") or "",
+        "se_notes":        (opp.get("Sales_Engineer_Notes__c") or "").strip(),
+        "se_history":      (opp.get("SE_Notes_History__c") or "").strip(),
+        "is_tw":           is_tw,
+        "is_expansion":    expansion,
+        "mismatch":        mismatch,
     }
 
 
@@ -280,21 +233,28 @@ def _fmt_unassigned(opp: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 _MISMATCH_RULES = {
-    "Pipeline":    {"allowed": {"1 - Qualified", "2 - Discovery"}},
-    "Best Case":   {"allowed": {"2 - Discovery", "3 - Technical Evaluation", "4 - Technical Win Achieved"}},
-    "Most Likely": {"allowed": {"4 - Technical Win Achieved"}},
+    "Pipeline":    {"allowed": {"1 - Qualified"}},
+    "Best Case":   {"allowed": {"2 - Discovery", "3 - Technical Evaluation"}},
+    "Most Likely": {"allowed": {"3 - Technical Evaluation", "4 - Technical Win Achieved"}},
     "Commit":      {"allowed": {"4 - Technical Win Achieved"}},
+}
+
+_STAGE_LABEL = {
+    "1 - Qualified":             "Qualified",
+    "2 - Discovery":             "Discovery",
+    "3 - Technical Evaluation":  "Technical Evaluation",
+    "4 - Technical Win Achieved": "Technical Win",
 }
 
 
 def _check_mismatch(forecast_cat: str, presales: str) -> str | None:
+    if not presales:
+        return "No Presales Stage set"
     rule = _MISMATCH_RULES.get(forecast_cat)
     if not rule:
         return None
-    if not presales:
-        return f"{forecast_cat} requires a Presales Stage but none is set"
     if presales not in rule["allowed"]:
-        allowed = " or ".join(sorted(rule["allowed"]))
+        allowed = " or ".join(_STAGE_LABEL.get(s, s) for s in sorted(rule["allowed"]))
         return f"{forecast_cat} expects {allowed}"
     return None
 
@@ -362,9 +322,7 @@ def _fetch(period_key: str, start: str, end: str) -> tuple[dict | None, str | No
             return stale, None
         return None, f"Salesforce query failed: {e}"
 
-    mgr_notes = _load_manager_notes()
-
-    formatted   = [_fmt_opp(o, mgr_notes) for o in (assigned_opps or [])]
+    formatted   = [_fmt_opp(o) for o in (assigned_opps or [])]
     unassigned  = [_fmt_unassigned(o) for o in (unassigned_opps or [])]
 
     # Split assigned into views
@@ -449,22 +407,6 @@ def api_pipeline():
     if err:
         return jsonify({"error": err}), 503
 
-    # Re-attach fresh manager notes if served from cache
-    mgr_notes = _load_manager_notes()
-    if mgr_notes:
-        for section in ("act_by_se", "exp_by_se"):
-            for group in data.get(section, []):
-                for d in group.get("deals", []):
-                    note = mgr_notes.get(d["id"]) or {}
-                    d["manager_note"]        = note.get("note", "")
-                    d["manager_note_author"] = note.get("author", "")
-                    d["manager_note_at"]     = note.get("updated_at", "")
-        for d in data.get("tw_open", []):
-            note = mgr_notes.get(d["id"]) or {}
-            d["manager_note"]        = note.get("note", "")
-            d["manager_note_author"] = note.get("author", "")
-            d["manager_note_at"]     = note.get("updated_at", "")
-
     return jsonify({
         **data,
         "period_label":    label_cur,
@@ -472,6 +414,48 @@ def api_pipeline():
         "quarter_end_cur": end_cur,
         "sf_instance_url": sf.instance_url,
     })
+
+
+@se_forecast_bp.route("/api/se-forecast/se-notes/<opp_id>", methods=["POST"])
+def api_save_se_notes(opp_id: str):
+    email = session.get("user_email", "")
+    if not email:
+        return jsonify({"error": "Unauthorized"}), 401
+    if session.get("sf_role_name") != "SE - Self Service":
+        return jsonify({"error": "Forbidden"}), 403
+    if not opp_id or len(opp_id) > 50:
+        return jsonify({"error": "Invalid opp_id"}), 400
+    body = request.get_json(silent=True) or {}
+    notes = (body.get("se_notes") or "").strip()
+    if len(notes) > 32000:
+        return jsonify({"error": "Notes too long"}), 400
+
+    # Verify caller is the Technical Lead on this opportunity
+    try:
+        records = sf.query(
+            f"SELECT Id, Technical_Lead__r.Email FROM Opportunity WHERE Id = '{opp_id}' LIMIT 1"
+        )
+    except Exception as e:
+        log.error("SF ownership check failed: %s", e)
+        return jsonify({"error": "Could not verify ownership"}), 503
+
+    if not records:
+        return jsonify({"error": "Opportunity not found"}), 404
+    tl = (records[0].get("Technical_Lead__r") or {})
+    tl_email = (tl.get("Email") or "").lower()
+    if tl_email != email.lower():
+        return jsonify({"error": "Forbidden — you are not the Technical Lead on this opportunity"}), 403
+
+    try:
+        sf.patch(
+            f"/services/data/v59.0/sobjects/Opportunity/{opp_id}",
+            {"Sales_Engineer_Notes__c": notes},
+        )
+    except Exception as e:
+        log.error("SF SE notes update failed: %s", e)
+        return jsonify({"error": "Failed to save"}), 503
+
+    return jsonify({"se_notes": notes})
 
 
 @se_forecast_bp.route("/api/se-forecast/notes/<opp_id>", methods=["POST"])
@@ -485,19 +469,31 @@ def api_save_note(opp_id: str):
         return jsonify({"error": "Invalid opp_id"}), 400
     body = request.get_json(silent=True) or {}
     note = (body.get("note") or "").strip()
-    if len(note) > 2000:
+    if len(note) > 32000:
         return jsonify({"error": "Note too long"}), 400
-    db = _get_firestore()
-    if db is None:
-        return jsonify({"error": "Storage unavailable"}), 503
-    updated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
     try:
-        db.collection(_NOTES_COLLECTION).document(opp_id).set({
-            "note": note, "author": email.split("@")[0], "updated_at": updated_at,
-        })
-        return jsonify({"note": note, "author": email.split("@")[0], "updated_at": updated_at})
+        records = sf.query(
+            f"SELECT AccountId FROM Opportunity WHERE Id = '{opp_id}' LIMIT 1"
+        )
     except Exception as e:
-        log.error("Save note failed: %s", e)
+        log.error("SF account lookup failed: %s", e)
+        return jsonify({"error": "Could not look up account"}), 503
+
+    if not records:
+        return jsonify({"error": "Opportunity not found"}), 404
+    account_id = records[0].get("AccountId")
+    if not account_id:
+        return jsonify({"error": "No account linked to this opportunity"}), 400
+
+    try:
+        sf.patch(
+            f"/services/data/v59.0/sobjects/Account/{account_id}",
+            {"SE_Notes__c": note},
+        )
+        return jsonify({"note": note})
+    except Exception as e:
+        log.error("SF account notes update failed: %s", e)
         return jsonify({"error": "Failed to save"}), 503
 
 

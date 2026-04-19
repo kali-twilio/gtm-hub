@@ -27,7 +27,6 @@
     next_step: string; last_activity: string;
     se_notes: string; se_history: string;
     is_tw: boolean; is_expansion: boolean; mismatch: string | null;
-    manager_note: string; manager_note_author: string; manager_note_at: string;
   }
   interface SEGroup { se_name: string; total_icav: number; total_earr: number; deals: Deal[]; }
   interface UnassignedDeal {
@@ -51,7 +50,7 @@
     '3 - Technical Evaluation': 'Tech Evaluation', '4 - Technical Win Achieved': 'TW Achieved',
   };
   const CAT_COLOR: Record<string,string> = {
-    'Pipeline': '#6b7280', 'Best Case': '#2563eb', 'Most Likely': '#d97706', 'Commit': '#059669',
+    'Pipeline': '#94a3b8', 'Best Case': '#3b82f6', 'Most Likely': '#8b5cf6', 'Commit': '#10b981',
   };
 
   let tab = $state<'activation'|'expansion'|'tw'|'unassigned'|'top'>('activation');
@@ -73,8 +72,12 @@
   let editingId = $state('');
   let editNote = $state('');
   let saving = $state(false);
+  let editingSeId = $state('');
+  let editSeNote = $state('');
+  let savingSe = $state(false);
   let lastRefreshed = $state<Date | null>(null);
   let isFLM = $derived($user?.sf_role_name === 'SE FLM - Self Service');
+  let isSE  = $derived($user?.sf_role_name === 'SE - Self Service');
   let enrichCache  = $state(new Map<string, Enrichment | 'loading' | 'error'>());
   let summaryCache = $state(new Map<string, DealSummary | 'loading' | 'error'>());
 
@@ -177,6 +180,7 @@
     return map;
   });
 
+  let filteredUnassigned = $derived(unassigned.filter(d => makeFilter(selectedQuarter, selectedMonth)(d.close_date)));
   let mismatchCount = $derived(tabDeals.filter(d => d.mismatch).length);
   let mismatchIcav  = $derived(tabDeals.filter(d => d.mismatch).reduce((s,d) => s+d.icav, 0));
 
@@ -186,7 +190,7 @@
     const se   = seFilter;
     const all  = [...actBySE.flatMap(g => g.deals), ...expBySE.flatMap(g => g.deals), ...twOpen]
       .filter(d => pred(d.close_date) && (se === 'All SEs' || d.se_name === se));
-    const unass = unassigned.filter(d => pred(d.close_date));
+    const unass = filteredUnassigned;
     const total = all.reduce((s,d) => s+d.icav, 0);
     const twIcav = all.filter(d => d.is_tw).reduce((s,d) => s+d.icav, 0);
     const mis    = all.filter(d => d.mismatch);
@@ -218,7 +222,7 @@
       activation: actBySE.flatMap(g => g.deals).filter(filter).length,
       expansion:  expBySE.flatMap(g => g.deals).filter(filter).length,
       tw:         twOpen.filter(filter).length,
-      unassigned: unassigned.filter(d => pred(d.close_date)).length,
+      unassigned: filteredUnassigned.length,
     };
   });
 
@@ -331,8 +335,21 @@
     saving = false;
     if (!r.ok) return;
     const d = await r.json();
-    deal.manager_note = d.note; deal.manager_note_author = d.author; deal.manager_note_at = d.updated_at;
+    deal.account_notes = d.note;
     editingId = '';
+  }
+
+  async function saveSeNotes(deal: Deal) {
+    savingSe = true;
+    const r = await fetch(`/api/se-forecast/se-notes/${deal.id}`, {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ se_notes: editSeNote }),
+    });
+    savingSe = false;
+    if (!r.ok) return;
+    const d = await r.json();
+    deal.se_notes = d.se_notes;
+    editingSeId = '';
   }
 
 </script>
@@ -345,8 +362,10 @@
       <p class="sub">Digital Sales · Self Service</p>
     </div>
     <div class="hd-right">
-      {#if loading}<span class="loading-dot"></span>{/if}
       {#if lastRefreshed}<span class="last-refresh">Updated {lastRefreshed.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}</span>{/if}
+      <button class="refresh-btn" onclick={load} disabled={loading} title="Refresh">
+        <svg class:spinning={loading} xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+      </button>
     </div>
   </div>
 
@@ -389,24 +408,47 @@
 
   {#if error}<div class="error">{error}</div>{/if}
 
+  {#if loading && !summary}
+    <div class="skeleton-wrap">
+      <div class="skeleton-strip">
+        {#each [1,2,3,4,5] as _}
+          <div class="sk-card"><div class="sk-line sk-title"></div><div class="sk-line sk-val"></div><div class="sk-line sk-lbl"></div></div>
+        {/each}
+      </div>
+      <div class="skeleton-tabs"><div class="sk-line sk-tab"></div><div class="sk-line sk-tab"></div><div class="sk-line sk-tab"></div></div>
+      <div class="skeleton-table">
+        {#each [1,2,3,4,5,6,7,8] as _}
+          <div class="sk-row">
+            <div class="sk-line sk-cell sk-cell-sm"></div>
+            <div class="sk-line sk-cell sk-cell-lg"></div>
+            <div class="sk-line sk-cell sk-cell-md"></div>
+            <div class="sk-line sk-cell sk-cell-md"></div>
+            <div class="sk-line sk-cell sk-cell-sm"></div>
+            <div class="sk-line sk-cell sk-cell-sm"></div>
+          </div>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   {#if summary}
     {@const fs = filteredSummary}
     <!-- Summary strip -->
     <div class="strip">
-      <div class="sc">
+      <div class="sc sc-slate">
         <div class="sc-title">Total Pipeline</div>
         <div class="sc-val">{fmt(fs.total_icav)}</div>
         <div class="sc-lbl">{fs.total_deals} deals</div>
       </div>
-      <div class="sc sc-green">
-        <div class="sc-title">TW Achieved</div>
-        <div class="sc-val">{fmt(fs.tw_icav)}</div>
-        <div class="sc-lbl">{fs.tw_count} deals</div>
-      </div>
-      <div class="sc sc-amber">
+      <div class="sc sc-orange">
         <div class="sc-title">No TW</div>
         <div class="sc-val">{fmt(fs.no_tw_icav)}</div>
         <div class="sc-lbl">{fs.no_tw_count} deals</div>
+      </div>
+      <div class="sc sc-teal">
+        <div class="sc-title">TW Achieved</div>
+        <div class="sc-val">{fmt(fs.tw_icav)}</div>
+        <div class="sc-lbl">{fs.tw_count} deals</div>
       </div>
       {#if fs.mismatch_count > 0}
         <div class="sc sc-red">
@@ -415,7 +457,7 @@
           <div class="sc-lbl">{fs.mismatch_count} deals · {fs.mismatch_pct}%</div>
         </div>
       {/if}
-      {#each ['Commit','Most Likely','Best Case','Pipeline'] as cat}
+      {#each ['Pipeline','Best Case','Most Likely','Commit'] as cat}
         {#if fs.by_cat[cat]}
           {@const c = fs.by_cat[cat]}
           <div class="sc" style="border-top-color:{c.mismatch_count>0?'#dc2626':CAT_COLOR[cat]}">
@@ -578,11 +620,6 @@
                     <span class="card-close">{fmtDate(deal.close_date)}</span>
                   </div>
                   <div class="card-people">{deal.se_name || '—'} · {deal.ae_name || '—'}</div>
-                  {#if deal.mismatch}
-                    <div class="tw-mis-reason">⚠ {deal.mismatch}</div>
-                  {:else if deal.forecast_cat && deal.forecast_cat !== 'Most Likely' && deal.forecast_cat !== 'Commit'}
-                    <div class="tw-mis-reason">Forecast is {deal.forecast_cat} — needs Most Likely or Commit</div>
-                  {/if}
                 </div>
               {/each}
             {/if}
@@ -669,13 +706,13 @@
     {/if}<!-- end tab board -->
 
     <!-- Unassigned tab -->
-    {#if tab === 'unassigned' && unassigned.length > 0}
+    {#if tab === 'unassigned' && filteredUnassigned.length > 0}
       <div class="stage-section">
         <div class="stage-hd">
           <span class="stage-dot dot-empty"></span>
           <span class="stage-title">Unassigned</span>
-          <span class="stage-count">{unassigned.length}</span>
-          <span class="stage-icav">{fmt(unassigned.reduce((s,d)=>s+d.icav,0))}</span>
+          <span class="stage-count">{filteredUnassigned.length}</span>
+          <span class="stage-icav">{fmt(filteredUnassigned.reduce((s,d)=>s+d.icav,0))}</span>
         </div>
         <div class="tbl-wrap">
           <table>
@@ -688,7 +725,7 @@
               <th>SE Involved?</th>
             </tr></thead>
             <tbody>
-              {#each unassigned as d (d.id)}
+              {#each filteredUnassigned as d (d.id)}
                 <tr class="dr">
                   <td class="col-acct">
                     <div class="opp-acct">{d.account || d.name}</div>
@@ -716,7 +753,7 @@
 {#if expandedDeal}
   {@const deal = tabDeals.find(d => d.id === expandedDeal)}
   {#if deal}
-    <div class="modal-backdrop" onclick={() => { expandedDeal=''; editingId=''; }}></div>
+    <div class="modal-backdrop" onclick={() => { expandedDeal=''; editingId=''; editingSeId=''; }}></div>
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-hd">
         <div class="modal-hd-info">
@@ -736,7 +773,7 @@
             {#if sfUrl}<span class="modal-dot">·</span><a href="{sfUrl}/lightning/r/Opportunity/{deal.id}/view" target="_blank" rel="noopener" class="sf-link">Salesforce ↗</a>{/if}
           </div>
         </div>
-        <button class="modal-close" onclick={() => { expandedDeal=''; editingId=''; }}>✕</button>
+        <button class="modal-close" onclick={() => { expandedDeal=''; editingId=''; editingSeId=''; }}>✕</button>
       </div>
       <div class="modal-body">
         {@render dealDetail(deal)}
@@ -753,13 +790,25 @@
     <div class="detail-meta">
       {#if deal.next_step}<span><strong>Next:</strong> {deal.next_step}</span>{/if}
       {#if deal.last_activity}<span><strong>Last activity:</strong> {fmtDate(deal.last_activity)}</span>{/if}
-      {#if sfUrl}<a href="{sfUrl}/lightning/r/Opportunity/{deal.id}/view" target="_blank" rel="noopener" class="sf-link">View in SF ↗</a>{/if}
     </div>
     <div class="notes-grid">
       <div class="notes-card">
         <div class="notes-hd">SE Notes</div>
-        {#if deal.se_notes}<div class="notes-body">{deal.se_notes}</div>
-        {:else}<div class="notes-empty">No SE notes</div>{/if}
+        {#if isSE && $user?.sf_se_name === deal.se_name && editingSeId === deal.id}
+          <textarea class="note-ta" bind:value={editSeNote} placeholder="Add SE notes…" rows="4"></textarea>
+          <div class="note-btns">
+            <button class="btn-save" onclick={() => saveSeNotes(deal)} disabled={savingSe}>{savingSe?'Saving…':'Save'}</button>
+            <button class="btn-ghost" onclick={() => editingSeId=''}>Cancel</button>
+          </div>
+        {:else}
+          {#if deal.se_notes}<div class="notes-body">{deal.se_notes}</div>
+          {:else}<div class="notes-empty">No SE notes</div>{/if}
+          {#if isSE && $user?.sf_se_name === deal.se_name}
+            <button class="btn-edit" onclick={(e)=>{e.stopPropagation();editingSeId=deal.id;editSeNote=deal.se_notes;}}>
+              {deal.se_notes?'Edit':'+ Add note'}
+            </button>
+          {/if}
+        {/if}
       </div>
       <div class="notes-card">
         <div class="notes-hd">SE History</div>
@@ -767,10 +816,7 @@
         {:else}<div class="notes-empty">No history</div>{/if}
       </div>
       <div class="notes-card notes-mgr">
-        <div class="notes-hd">
-          Manager Notes
-          {#if deal.manager_note_author}<span class="notes-meta">— {deal.manager_note_author} · {deal.manager_note_at.slice(0,10)}</span>{/if}
-        </div>
+        <div class="notes-hd">Manager Notes</div>
         {#if isFLM && editingId === deal.id}
           <textarea class="note-ta" bind:value={editNote} placeholder="Add notes…" rows="4"></textarea>
           <div class="note-btns">
@@ -778,11 +824,11 @@
             <button class="btn-ghost" onclick={() => editingId=''}>Cancel</button>
           </div>
         {:else}
-          {#if deal.manager_note}<div class="notes-body">{deal.manager_note}</div>
+          {#if deal.account_notes}<div class="notes-body">{deal.account_notes}</div>
           {:else}<div class="notes-empty">No manager notes yet</div>{/if}
           {#if isFLM}
-            <button class="btn-edit" onclick={(e)=>{e.stopPropagation();editingId=deal.id;editNote=deal.manager_note;}}>
-              {deal.manager_note?'Edit':'+ Add note'}
+            <button class="btn-edit" onclick={(e)=>{e.stopPropagation();editingId=deal.id;editNote=deal.account_notes;}}>
+              {deal.account_notes?'Edit':'+ Add note'}
             </button>
           {/if}
         {/if}
@@ -799,9 +845,29 @@
   .period { font-size:14px; font-weight:500; color:rgba(13,18,43,0.4); margin-left:8px; }
   .sub { font-size:12px; color:rgba(13,18,43,0.45); margin:0; }
   .hd-right { display:flex; gap:8px; align-items:center; }
-  .loading-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#f22f46; animation:pulse 1.2s ease-in-out infinite; }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
   .last-refresh { font-size:11px; color:rgba(13,18,43,0.35); }
+  .refresh-btn { display:flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:7px; border:1px solid rgba(13,18,43,0.12); background:white; color:rgba(13,18,43,0.5); cursor:pointer; transition:all 0.12s; padding:0; }
+  .refresh-btn:hover:not(:disabled) { border-color:rgba(13,18,43,0.25); color:#0d122b; background:#f4f4f6; }
+  .refresh-btn:disabled { opacity:0.5; cursor:default; }
+  .refresh-btn svg.spinning { animation:spin 0.8s linear infinite; }
+  @keyframes spin { from{transform:rotate(0deg)} to{transform:rotate(360deg)} }
+  /* Skeleton loader */
+  .skeleton-wrap { display:flex; flex-direction:column; gap:12px; }
+  .skeleton-strip { display:flex; gap:10px; }
+  .sk-card { flex:1; background:white; border:1px solid rgba(13,18,43,0.07); border-radius:10px; padding:14px 16px; display:flex; flex-direction:column; gap:8px; }
+  .skeleton-tabs { display:flex; gap:8px; padding:4px 0; }
+  .skeleton-table { background:white; border:1px solid rgba(13,18,43,0.07); border-radius:10px; padding:12px 16px; display:flex; flex-direction:column; gap:10px; }
+  .sk-row { display:flex; gap:12px; align-items:center; }
+  .sk-line { border-radius:5px; background:linear-gradient(90deg,#f0f0f3 25%,#e4e4ea 50%,#f0f0f3 75%); background-size:200% 100%; animation:shimmer 1.4s ease-in-out infinite; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+  .sk-title { height:10px; width:60%; }
+  .sk-val { height:20px; width:45%; }
+  .sk-lbl { height:9px; width:50%; }
+  .sk-tab { height:28px; width:80px; border-radius:7px; }
+  .sk-cell { height:13px; }
+  .sk-cell-sm { width:48px; }
+  .sk-cell-md { width:120px; }
+  .sk-cell-lg { flex:1; min-width:160px; }
 
   /* Filter bar */
   .filter-bar { display:flex; align-items:center; gap:20px; background:white; border:1px solid rgba(13,18,43,0.09); border-radius:10px; padding:10px 16px; margin-bottom:16px; flex-wrap:wrap; }
@@ -831,11 +897,12 @@
   .error { background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:12px 16px; color:#dc2626; font-size:13px; margin-bottom:16px; }
 
   /* Summary strip */
-  .strip { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:20px; }
+  .strip { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:20px; align-items:flex-start; }
   .sc { background:white; border:1px solid rgba(13,18,43,0.1); border-top:3px solid rgba(13,18,43,0.12); border-radius:10px; padding:10px 14px; min-width:110px; box-shadow:0 1px 4px rgba(13,18,43,0.05); }
-  .sc-green { border-top-color:#059669; }
-  .sc-amber { border-top-color:#d97706; }
-  .sc-red { border-top-color:#dc2626; }
+  .sc-slate { border-top-color:#64748b; }
+  .sc-teal { border-top-color:#0d9488; }
+  .sc-orange { border-top-color:#f97316; }
+  .sc-red { border-top-color:#ef4444; }
   .sc-title { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.1em; color:rgba(13,18,43,0.4); margin-bottom:4px; }
   .sc-val { font-size:18px; font-weight:800; color:#0d122b; letter-spacing:-0.02em; }
   .sc-lbl { font-size:11px; color:rgba(13,18,43,0.5); margin-top:2px; }
