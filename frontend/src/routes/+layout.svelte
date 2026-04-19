@@ -30,9 +30,6 @@
     const me = data.me;
     if (!me?.email && $page.url.pathname !== '/') {
       goto('/');
-    } else if (me?.is_se) {
-      const allowedForSE = ['/', '/me'];
-      if (!allowedForSE.includes($page.url.pathname)) goto('/me');
     }
   });
 
