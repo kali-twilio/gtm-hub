@@ -388,7 +388,7 @@ def _suggestions_firestore():
     except Exception:
         return None
 
-_SUGGESTIONS_COLLECTION = "se-scorecard-v2-suggestions"
+_SUGGESTIONS_COLLECTION = "suggestions"
 _SUGGESTIONS_MAX        = 500
 
 def _masked_email(email: str) -> str:

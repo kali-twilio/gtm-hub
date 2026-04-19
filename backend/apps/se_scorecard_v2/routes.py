@@ -951,7 +951,8 @@ def api_report():
 _SUGGESTIONS_MAX        = 500
 _FIRESTORE_PROJECT      = os.environ.get("FIRESTORE_PROJECT")
 _FIRESTORE_CREDENTIALS  = os.environ.get("FIRESTORE_CREDENTIALS_B64")  # base64-encoded JSON
-_FIRESTORE_COLLECTION   = "se-scorecard-v2-suggestions"
+_FIRESTORE_COLLECTION   = "suggestions"
+_FIRESTORE_SMS_PENDING  = "sms-pending"
 _firestore_client       = None
 
 _TWILIO_ACCOUNT_SID     = os.environ.get("TWILIO_ACCOUNT_SID")
@@ -963,11 +964,29 @@ _SMS_RL_LIMIT  = 100  # max messages
 _SMS_RL_WINDOW = 3600 # per hour (seconds)
 _sms_rl_store: dict[str, list[float]] = {}
 
-# Pending app selection: phone -> (text, caller_name, expires_at)
 _SMS_CONFIRM_TTL = 300  # 5 minutes to respond
-# stage "app"     -> (stage, caller_name, expires_at)            — waiting for app selection
-# stage "confirm" -> (stage, caller_name, expires_at, text, app) — waiting for Y/N confirm
-_sms_app_pending: dict[str, tuple] = {}
+
+
+def _sms_pending_get(db, phone: str) -> dict | None:
+    """Load pending SMS state from Firestore. Returns None if missing or expired."""
+    doc = db.collection(_FIRESTORE_SMS_PENDING).document(phone).get()
+    if not doc.exists:
+        return None
+    data = doc.to_dict()
+    if time.time() > data.get("expires_at", 0):
+        db.collection(_FIRESTORE_SMS_PENDING).document(phone).delete()
+        return None
+    return data
+
+
+def _sms_pending_set(db, phone: str, data: dict):
+    """Persist pending SMS state to Firestore with TTL."""
+    data["expires_at"] = time.time() + _SMS_CONFIRM_TTL
+    db.collection(_FIRESTORE_SMS_PENDING).document(phone).set(data)
+
+
+def _sms_pending_delete(db, phone: str):
+    db.collection(_FIRESTORE_SMS_PENDING).document(phone).delete()
 
 def _sms_rate_limited(phone: str) -> bool:
     """Returns True if this phone number has exceeded the SMS rate limit."""
@@ -1091,9 +1110,10 @@ def api_sms_webhook():
         return _twiml_reply("No message body received.")
 
     # Normalise WhatsApp sender — Twilio prefixes with "whatsapp:"
-    is_whatsapp = raw_from.lower().startswith("whatsapp:")
-    from_number = raw_from[len("whatsapp:"):] if is_whatsapp else raw_from
-    channel     = "whatsapp" if is_whatsapp else "sms"
+    is_whatsapp  = raw_from.lower().startswith("whatsapp:")
+    from_number  = raw_from[len("whatsapp:"):] if is_whatsapp else raw_from
+    channel      = "whatsapp" if is_whatsapp else "sms"
+    pending_key  = f"{channel}:{from_number}"
 
     # ── 2. Per-phone rate limiting (SMS pump protection) ─────────────────────
     if _sms_rate_limited(from_number):
@@ -1168,30 +1188,38 @@ def api_sms_webhook():
         return "\n".join(lines)
 
     # ── MULTI-STEP FLOW ───────────────────────────────────────────────────────
-    if from_number in _sms_app_pending:
-        state = _sms_app_pending[from_number]
-        if time.time() > state[2]:  # expired
-            del _sms_app_pending[from_number]
-        elif state[0] == "confirm_app":
+    state = _sms_pending_get(db, pending_key)
+    if state is not None:
+        if state["stage"] == "confirm_app":
             # User sent their message — waiting for app selection
-            _, caller_name, _, pending_text = state
+            caller_name  = state["caller_name"]
+            pending_text = state["pending_text"]
             try:
                 choice = int(body.strip()) - 1
                 if choice < 0 or choice >= len(_live_apps):
                     raise ValueError
             except (ValueError, TypeError):
                 return _twiml_reply(_app_menu())
-            selected_app = _live_apps[choice]["id"]
+            selected_app  = _live_apps[choice]["id"]
             selected_name = _live_apps[choice]["name"]
             preview = pending_text[:80] + ("..." if len(pending_text) > 80 else "")
-            _sms_app_pending[from_number] = ("confirm", caller_name, time.time() + _SMS_CONFIRM_TTL, selected_app, selected_name, pending_text)
+            _sms_pending_set(db, pending_key, {
+                "stage":         "confirm",
+                "caller_name":   caller_name,
+                "pending_text":  pending_text,
+                "selected_app":  selected_app,
+                "selected_name": selected_name,
+            })
             return _twiml_reply(f'Save to {selected_name}?\n\n"{preview}"\n\nReply Y to confirm or N to cancel.')
-        elif state[0] == "confirm":
+        elif state["stage"] == "confirm":
             # Waiting for Y/N
-            _, caller_name, _, selected_app, selected_name, pending_text = state
+            caller_name   = state["caller_name"]
+            pending_text  = state["pending_text"]
+            selected_app  = state["selected_app"]
+            selected_name = state["selected_name"]
             answer = body.strip().upper()
             if answer in ("Y", "YES"):
-                del _sms_app_pending[from_number]
+                _sms_pending_delete(db, pending_key)
                 try:
                     reply, err = _save_suggestion(pending_text, caller_name, selected_app)
                     if err:
@@ -1201,7 +1229,7 @@ def api_sms_webhook():
                     log.error("Firestore SMS save failed: %s", e)
                     return _twiml_reply("Sorry, something went wrong. Please try again.")
             elif answer in ("N", "NO"):
-                del _sms_app_pending[from_number]
+                _sms_pending_delete(db, pending_key)
                 return _twiml_reply("Cancelled. Send a new message any time to leave feedback.")
             else:
                 preview = pending_text[:80] + ("..." if len(pending_text) > 80 else "")
@@ -1261,7 +1289,11 @@ def api_sms_webhook():
     if len(body) > 1000:
         return _twiml_reply("Your message is too long (max 1000 characters). Please shorten it and try again.")
 
-    _sms_app_pending[from_number] = ("confirm_app", lookup["caller_name"], time.time() + _SMS_CONFIRM_TTL, body)
+    _sms_pending_set(db, pending_key, {
+        "stage":        "confirm_app",
+        "caller_name":  lookup["caller_name"],
+        "pending_text": body,
+    })
     return _twiml_reply(_app_menu())
 
 
