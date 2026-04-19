@@ -32,25 +32,6 @@ process_suggestions.sh      Pull suggestions from Firestore, implement each via 
 
 ---
 
-## Apps
-
-### SE Scorecard V2 (`/se-scorecard-v2`)
-
-Live Salesforce dashboard for SE performance metrics. Supports DSR, NAMER, EMEA, APJ, LATAM, and DORG teams with per-team iACV, NB/Strat splits, usage (MRR), and tech-win tracking.
-
-- **Team view** — all SEs for a selected team/period with iACV filter
-- **Me** — personal stats for the signed-in SE (IC-restricted users land here automatically)
-- **Rankings** — power rankings across teams (manager-only)
-- **Report** — detailed breakdown with per-SE drill-down
-
-Data is fetched live from Salesforce. Current quarter: 10-minute cache. Historical quarters/years: 1-week cache.
-
-### SE Forecast (`/se-forecast`)
-
-DSR pipeline and forecast tracking. Four views mirror Salesforce forecast reports: assigned opportunities, pipeline by stage, won deals, and forecast summary.
-
----
-
 ## Security & Auth
 
 ### Authentication
@@ -94,18 +75,6 @@ def enforce_auth():
 ```
 
 App builders never implement auth themselves — if a request reaches a blueprint route, the user is authenticated, the request is same-origin, and the rate limit has not been exceeded.
-
-### Role-based access control
-
-Salesforce `UserRole.Name` is checked at login and stored in the session:
-
-| Role pattern | Access level | Restrictions |
-|---|---|---|
-| `SE FLM …` / `SE SLM …` | `full` | None — all teams, rankings, reports |
-| `SE - …` (IC SE) | `se_restricted` | Own team only; power rankings blocked |
-| All others | `full` | None |
-
-`se_restricted` users are redirected to `/se-scorecard-v2/me` after login.
 
 ### Input validation
 
@@ -230,20 +199,6 @@ Token refresh is automatic. Credentials come from `deploy.env` and are injected 
 
 ---
 
-## Suggestions
-
-The suggestion box is available on every page via `SuggestionBox.svelte`. Suggestions are stored in Firestore (`gtm-hub-suggestions`) and tagged with the current app.
-
-**Channels:** web (in-app form), SMS, WhatsApp.
-
-**Processing:** `process_suggestions.sh` reads pending suggestions from Firestore, filters and deduplicates them with Claude Haiku, then uses Claude Sonnet to implement each one on a branch, runs a security review, and opens a pull request. Requires `deploy.env`, `gh` CLI, and `claude` CLI in PATH.
-
-```bash
-./process_suggestions.sh
-```
-
----
-
 ## Running locally
 
 ```bash
@@ -289,48 +244,6 @@ Frontend: `http://localhost:5173` · Backend: `http://localhost:5001`. Vite prox
 - Flask must be restarted after any backend change — blueprints are only discovered at startup.
 - If Salesforce isn't configured, most scorecard data endpoints return empty results rather than erroring. Use dummy values in `deploy.env` or skip sourcing it to test the auth flow only.
 - The Vite proxy (`/api/*` → `localhost:5001`) is configured in `frontend/vite.config.ts`. If Flask runs on a different port, update that file.
-
----
-
-## Deploying
-
-### Before deploying — security audit
-
-Run a security audit with Claude before every production deploy:
-
-```
-claude "Perform a security audit of this codebase before I deploy to
-production. Check for: authentication bypasses, input validation gaps,
-injection vulnerabilities (SOQL, command, path traversal), secrets in code
-or logs, CSRF weaknesses, insecure direct object references, unprotected
-endpoints, and any other OWASP Top 10 issues. Review backend/app.py,
-backend/apps/se_scorecard_v2/routes.py, backend/salesforce.py, and the
-frontend API layer. Report findings with severity (Critical/High/Medium/Low)
-and recommended fixes."
-```
-
-Only proceed if there are no Critical or High findings.
-
-### One-time Google OAuth Console setup
-
-For a new domain, add these to your OAuth 2.0 Client ID at [console.cloud.google.com](https://console.cloud.google.com) → APIs & Services → Credentials:
-
-| Field | Value |
-|---|---|
-| Authorized JavaScript origins | `https://d2nm4d5qi0glko.cloudfront.net` |
-| Authorized redirect URIs | `https://d2nm4d5qi0glko.cloudfront.net/oauth2callback` |
-
-The redirect URI is built from `FRONTEND_URL` in `deploy.env` — if the domain ever changes, update both `deploy.env` and the Google Console.
-
-### Deploy
-
-```bash
-bash deploy.sh
-```
-
-Builds the frontend, uploads backend + frontend to S3, terminates the existing instance, launches a fresh AL2023 EC2 t3.micro, bootstraps nginx + gunicorn, and associates the Elastic IP. HTTPS is handled by CloudFront — no certs needed on the instance. ~7 minutes end to end.
-
-Requires `deploy.env` with all secrets populated.
 
 ---
 
