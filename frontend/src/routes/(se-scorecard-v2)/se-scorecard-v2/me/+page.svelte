@@ -25,11 +25,18 @@
     if (!data) return;
     sfInstanceUrl = data.sf_instance_url ?? '';
     ses = [...data.ses].sort((a, b) => a.name.localeCompare(b.name));
-    // Maintain selection across period switches; auto-select SE ICs on first load
-    const target = selected || ($user?.sf_is_se ? ($user.sf_se_name ?? '') : '');
-    const found = target ? ses.find(s => s.name === target) : null;
-    se = found ?? null;
-    if (found) selected = target;
+    // For restricted SEs the backend already filtered ses to just their row
+    if (isOwnProfile() && ses.length === 1) {
+      se = ses[0];
+      selected = ses[0].name;
+    } else {
+      // Maintain selection across period switches; auto-select SE ICs on first load
+      const target = selected || ($user?.sf_is_se ? ($user.sf_se_name ?? '') : '');
+      const found = target ? ses.find(s => s.name === target) : null;
+      se = found ?? null;
+      // Keep selected populated so the "not found" error shows when SE has no data this period
+      if (target) selected = target;
+    }
   }
 
   function onPeriodChange(key: string) {
@@ -42,7 +49,7 @@
     se = ses.find(s => s.name === selected) ?? null;
   }
 
-  const isOwnProfile = () => $user?.sf_is_se ?? false;
+  const isOwnProfile = () => ($user?.sf_is_se || $user?.sf_access === 'se_restricted') ?? false;
 
   let actSortKey = $state('icav');
   let actSortAsc = $state(false);
@@ -84,7 +91,21 @@
     periods = await getSFPeriods();
     const seName = $page.url.searchParams.get('se');
     if (seName) selected = seName;
-    await loadData($sfPeriod);
+    // Force restricted SEs onto their own team/subteam so the API call targets the right data
+    if (isOwnProfile() && $user?.sf_team) {
+      sfTeam.set($user.sf_team);
+      sfSubteam.set($user.sf_subteam ?? 'none');
+    }
+    // Default to previous (most complete) quarter: second entry in the list, which is
+    // the first non-current period. Only auto-select if viewing own profile so managers
+    // retain whatever period they had selected.
+    if (isOwnProfile() && periods.length > 1) {
+      const prev = periods[1];
+      sfPeriod.set(prev.key);
+      await loadData(prev.key);
+    } else {
+      await loadData($sfPeriod);
+    }
   });
 </script>
 

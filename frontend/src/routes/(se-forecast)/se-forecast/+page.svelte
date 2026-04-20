@@ -78,6 +78,7 @@
   let lastRefreshed = $state<Date | null>(null);
   let isFLM = $derived($user?.sf_role_name === 'SE FLM - Self Service');
   let isSE  = $derived($user?.sf_role_name === 'SE - Self Service');
+  let mySeName = $derived($user?.sf_se_name ?? $user?.sf_display_name ?? null);
   let enrichCache  = $state(new Map<string, Enrichment | 'loading' | 'error'>());
   let summaryCache = $state(new Map<string, DealSummary | 'loading' | 'error'>());
 
@@ -794,7 +795,7 @@
     <div class="notes-grid">
       <div class="notes-card">
         <div class="notes-hd">SE Notes</div>
-        {#if isSE && $user?.sf_se_name === deal.se_name && editingSeId === deal.id}
+        {#if isSE && mySeName === deal.se_name && editingSeId === deal.id}
           <textarea class="note-ta" bind:value={editSeNote} placeholder="Add SE notes…" rows="4"></textarea>
           <div class="note-btns">
             <button class="btn-save" onclick={() => saveSeNotes(deal)} disabled={savingSe}>{savingSe?'Saving…':'Save'}</button>
@@ -803,7 +804,7 @@
         {:else}
           {#if deal.se_notes}<div class="notes-body">{deal.se_notes}</div>
           {:else}<div class="notes-empty">No SE notes</div>{/if}
-          {#if isSE && $user?.sf_se_name === deal.se_name}
+          {#if isSE && mySeName === deal.se_name}
             <button class="btn-edit" onclick={(e)=>{e.stopPropagation();editingSeId=deal.id;editSeNote=deal.se_notes;}}>
               {deal.se_notes?'Edit':'+ Add note'}
             </button>
