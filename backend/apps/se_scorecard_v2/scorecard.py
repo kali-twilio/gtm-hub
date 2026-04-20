@@ -7,7 +7,7 @@ import re
 import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date as _date
+from datetime import date
 from pathlib import Path
 
 from salesforce import sf
@@ -239,11 +239,11 @@ def _quarter_mrr_delta(acct: dict, close_date_str: str) -> tuple[int, int, int]:
     Falls back to the caller using the rolling 3mo average instead.
     """
     try:
-        close = _date.fromisoformat(close_date_str)
+        close = date.fromisoformat(close_date_str)
     except (ValueError, TypeError):
         return 0, 0, 0
 
-    today     = _date.today()
+    today     = date.today()
     q_start   = ((close.month - 1) // 3) * 3 + 1          # first month of close quarter
     q_months  = [_month_add(close.year, q_start, i)     for i in range(3)]
     pre_months= [_month_add(close.year, q_start, i - 3) for i in range(3)]
@@ -803,7 +803,7 @@ def _merge_activity(ses: list, records: list, period_end: str, prefix: str,
     For meetings only: recurring-series deduplication via RecurrenceActivityId so a
     weekly sync on one opp counts once per quarter, not 13 times.
     """
-    p_end    = _date.fromisoformat(period_end)
+    p_end    = date.fromisoformat(period_end)
     icav_key = FIELD_CONFIG["icav_field"]
 
     def _blank():
@@ -844,7 +844,7 @@ def _merge_activity(ses: list, records: list, period_end: str, prefix: str,
         if not close_date_str:
             continue
         try:
-            close_date = _date.fromisoformat(close_date_str)
+            close_date = date.fromisoformat(close_date_str)
         except ValueError:
             continue
 
