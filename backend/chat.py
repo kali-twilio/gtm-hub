@@ -12,7 +12,7 @@ from salesforce import sf
 log = logging.getLogger(__name__)
 
 _OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
-_OPENAI_MODEL   = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+_OPENAI_MODEL   = os.environ.get("OPENAI_MODEL", "gpt-4o")
 _SOQL_SELECT_RE = _re.compile(r"^\s*SELECT\b", _re.IGNORECASE)
 
 SOQL_SCHEMA = """

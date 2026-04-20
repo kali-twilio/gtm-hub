@@ -2285,20 +2285,75 @@ def email_to_se_name(email: str, ses: list) -> str | None:
 # ---------------------------------------------------------------------------
 
 SF_SCHEMA_HINT = """
-Salesforce Opportunity fields available:
+## Salesforce fields
   Id, Name, CloseDate, StageName, Amount, Type
-  Comms_Segment_Combined_iACV__c  (iACV — primary revenue metric)
-  eARR_post_launch_No_Decimal__c  (eARR)
-  FY_16_Owner_Team__c             (team stamp)
-  Presales_Stage__c               (TW status; '4 - Technical Win Achieved' = TW)
-  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name
+  Comms_Segment_Combined_iACV__c     (iACV — primary revenue metric, use this for all dollar figures)
+  eARR_post_launch_No_Decimal__c     (eARR — post-launch ARR)
+  FY_16_Owner_Team__c                (team stamp frozen at opp assignment)
+  Presales_Stage__c                  ('4 - Technical Win Achieved' = TW; TW is required for a win to count in rankings)
+  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name, Technical_Lead__r.Title
   Owner.Name, Owner.UserRole.Name
   Account.Name, Account.Owner.Name
   SE_Notes__c, SE_Notes_History__c, Sales_Engineer_Notes__c
   RecordType.Name
-Standard date literal: TODAY, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_N_DAYS:n
-Always filter StageName = 'Closed Won' unless asking about pipeline/open deals.
-Limit results to 50 rows unless the question needs more.
+Standard date literals: TODAY, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_N_DAYS:n
+Always filter StageName = 'Closed Won' unless asking about open pipeline.
+Limit results to 50 rows unless more are explicitly needed.
+
+## How scorecard metrics are calculated
+
+**iACV** = SUM(Comms_Segment_Combined_iACV__c) on Closed Won opps with Presales_Stage__c = '4 - Technical Win Achieved'.
+Only TW deals count toward iACV rankings. Non-TW closed won is supplemental.
+
+**Activate wins / iACV (DSR team)**
+  Activate = Owner.UserRole.Name LIKE '%Activation%'
+           OR (FY_16_Owner_Team__c LIKE 'DSR%' AND FY_16_Owner_Team__c NOT LIKE '%Expansion%')
+  Fallback: Account.Owner.Name LIKE '%Self%' (self-service-owned accounts are always Activate)
+
+**Expansion wins / iACV (DSR team)**
+  Expansion = Owner.UserRole.Name LIKE '%Expansion%'
+           OR FY_16_Owner_Team__c LIKE '%Expansion%'
+
+**New Business / Strategic (AE-motion teams: NAMER, EMEA, APJ, LATAM)**
+  New Business = Owner.UserRole.Name LIKE '% NB%' OR FY_16_Owner_Team__c LIKE '% NB%'
+  Strategic    = Owner.UserRole.Name LIKE '%Strat%' OR FY_16_Owner_Team__c LIKE '%Strat%'
+
+**Win rate** = Closed Won TW Activate (or NB) opps ÷ (Closed Won + Closed Lost Activate/NB opps).
+Win rate only covers Activate/NB — Expansion/Strategic opps are excluded.
+
+**Team SE filter by team**
+  DSR/Self Service:  Technical_Lead__r.UserRole.Name = 'SE - Self Service' AND Technical_Lead__r.Title LIKE '%Engineer%'
+  NAMER:             Technical_Lead__r.UserRole.Name LIKE 'SE - NAMER%'
+  EMEA:              Technical_Lead__r.UserRole.Name LIKE 'SE - EMEA%'
+  APJ:               Technical_Lead__r.UserRole.Name = 'SE - APJ'
+  LATAM:             Technical_Lead__r.UserRole.Name LIKE 'SE - LATAM%'
+  DORG:              Technical_Lead__r.UserRole.Name = 'SE - DORG'
+
+**DSR opp scope filter** (use in every DSR query to get the right universe):
+  (FY_16_Owner_Team__c LIKE 'DSR%'
+   OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
+
+**Ranking** = composite percentile score: 85% total iACV + 8% MRR % growth + 5% total ARR touched + 2% notes hygiene.
+Tiers: Elite (top 20%), Strong (21–50%), Steady (51–75%), Develop (bottom 25%).
+
+**MRR delta** = quarter avg MRR minus 3 months prior avg MRR, from Account.Total_Amortized_Twilio_Usage_* snapshot fields.
+Expansion status: Growing (avg MRR% ≥+5%, more growing than contracting), Contracting (≤-5%), Mixed, Expanding ($0 median but positive iACV), Retaining ($0 median flat MRR).
+
+**Notes quality** = fraction of TW opps with Comms_Segment_Combined_iACV__c ≥ notes floor that have BOTH Sales_Engineer_Notes__c AND SE_Notes_History__c filled.
+
+## SOQL example — DSR team Closed Won by SE this quarter
+  SELECT Technical_Lead__r.Name se,
+         COUNT(Id) wins,
+         SUM(Comms_Segment_Combined_iACV__c) icav
+  FROM Opportunity
+  WHERE StageName = 'Closed Won'
+  AND Presales_Stage__c = '4 - Technical Win Achieved'
+  AND CloseDate = THIS_QUARTER
+  AND (FY_16_Owner_Team__c LIKE 'DSR%' OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
+  AND Technical_Lead__r.UserRole.Name = 'SE - Self Service'
+  AND Technical_Lead__r.Title LIKE '%Engineer%'
+  GROUP BY Technical_Lead__r.Name
+  ORDER BY icav DESC
 """
 
 

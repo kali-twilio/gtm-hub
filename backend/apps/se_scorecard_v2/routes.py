@@ -205,14 +205,15 @@ def api_chat():
     period_info = logic.period_info(period_key)
     system_prompt = (
         "You are an AI assistant embedded in the Twilio SE Scorecard dashboard. "
-        "You have access to pre-loaded Salesforce opportunity data for a team of Solutions Engineers, "
-        f"and a run_soql tool to query Salesforce directly when you need more detail.\n\n"
+        "You have access to pre-loaded SE performance data and a run_soql tool to query Salesforce directly.\n\n"
         f"Current context: team={team_info.get('label', team_key)}, period={period_info['label']} "
-        f"(CloseDate {period_info['start']} to {period_info['end']}), "
-        f"team SOQL filter: {team_info.get('soql_filter','')}\n\n"
+        f"(CloseDate {period_info['start']} to {period_info['end']})\n"
+        f"Team SE filter: {team_info.get('soql_filter','')}\n"
+        f"Team opp scope filter: {team_info.get('team_total_filter','')}\n\n"
         f"{logic.SF_SCHEMA_HINT}\n"
         "Answer questions clearly and concisely. Format numbers with $ and K/M suffixes. "
-        "When using run_soql, apply the team's SOQL filter so results stay scoped to this team."
+        "Always apply both the team SE filter AND the team opp scope filter when calling run_soql. "
+        "Use the metric definitions above to explain how any number shown on the scorecard was calculated."
     )
     return jsonify(_run_chat(system_prompt, context, message))
 

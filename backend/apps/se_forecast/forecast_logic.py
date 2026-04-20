@@ -1,5 +1,5 @@
 """
-SE Forecast — business logic, SOQL builders, data transformers, cache, and Bedrock integrations.
+SE Forecast — business logic, SOQL builders, data transformers, cache, and OpenAI integrations.
 All non-route logic lives here; routes.py imports from this module.
 """
 from __future__ import annotations
@@ -383,15 +383,14 @@ def fetch_pipeline(period_key: str, start: str, end: str) -> tuple[dict | None, 
 
 
 # ---------------------------------------------------------------------------
-# Bedrock — account enrichment
+# OpenAI — account enrichment
 # ---------------------------------------------------------------------------
 
-_BEDROCK_MODEL = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+_OPENAI_MODEL = "gpt-4o"
 
 
 def _strip_json_fences(raw: str) -> str:
     return _re.sub(r"^```json\s*|^```\s*|```$", "", raw, flags=_re.MULTILINE).strip()
-_AWS_REGION    = os.environ.get("REGION", "us-west-2")
 
 
 def fetch_website_text(url: str) -> str:
@@ -419,30 +418,28 @@ _LLM_SYSTEM = """You are a B2B business analyst. Given a company name and option
 Respond with ONLY valid JSON. No explanation."""
 
 
-def classify_with_bedrock(account_name: str, website_text: str) -> dict:
-    import boto3
-    client = boto3.client("bedrock-runtime", region_name=_AWS_REGION)
+def classify_account(account_name: str, website_text: str) -> dict:
+    from openai import OpenAI
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     prompt = f"Company: {account_name}\n\nWebsite excerpt:\n{website_text[:6000]}" if website_text else f"Company: {account_name}"
-    body = json.dumps({
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 256,
-        "system": _LLM_SYSTEM,
-        "messages": [{"role": "user", "content": prompt}],
-    })
     try:
-        resp = boto3.client("bedrock-runtime", region_name=_AWS_REGION).invoke_model(
-            modelId=_BEDROCK_MODEL, body=body, contentType="application/json", accept="application/json"
+        resp = client.chat.completions.create(
+            model=_OPENAI_MODEL,
+            max_tokens=256,
+            messages=[
+                {"role": "system", "content": _LLM_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
         )
-        raw = json.loads(resp["body"].read())["content"][0]["text"].strip()
-        raw = _strip_json_fences(raw)
+        raw = _strip_json_fences(resp.choices[0].message.content.strip())
         return json.loads(raw)
     except Exception as e:
-        log.warning("Bedrock classify failed: %s", e)
+        log.warning("OpenAI classify failed: %s", e)
         return {"business_model": "Could not determine", "category": "Other", "is_lead_gen_or_marketing": False, "tags": []}
 
 
 # ---------------------------------------------------------------------------
-# Bedrock — deal summarization
+# OpenAI — deal summarization
 # ---------------------------------------------------------------------------
 
 _DEAL_SUMMARY_SYSTEM = """You are a sales intelligence assistant. Given an opportunity's notes, next steps, and context, output a JSON object with exactly these fields:
@@ -456,8 +453,9 @@ _DEAL_SUMMARY_SYSTEM = """You are a sales intelligence assistant. Given an oppor
 Respond with ONLY valid JSON. No explanation, no markdown."""
 
 
-def summarize_with_bedrock(opp_name: str, close_date: str, se_notes: str, se_history: str, next_step: str, last_activity: str) -> dict:
-    import boto3
+def summarize_deal(opp_name: str, close_date: str, se_notes: str, se_history: str, next_step: str, last_activity: str) -> dict:
+    from openai import OpenAI
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
     today  = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     prompt = f"""Opportunity: {opp_name}
 Close date: {close_date}
@@ -472,21 +470,20 @@ SE Notes:
 SE History:
 {se_history or 'No SE history'}"""
 
-    client = boto3.client("bedrock-runtime", region_name=_AWS_REGION)
-    body = {
-        "anthropic_version": "bedrock-2023-05-31",
-        "max_tokens": 400,
-        "system": _DEAL_SUMMARY_SYSTEM,
-        "messages": [{"role": "user", "content": prompt}],
-    }
     try:
-        resp = client.invoke_model(modelId=_BEDROCK_MODEL, body=json.dumps(body))
-        raw  = json.loads(resp["body"].read())["content"][0]["text"].strip()
-        raw  = _re.sub(r"^```json\s*|^```\s*|```$", "", raw, flags=_re.MULTILINE).strip()
-        log.info("Bedrock summarize raw: %s", raw[:300])
+        resp = client.chat.completions.create(
+            model=_OPENAI_MODEL,
+            max_tokens=400,
+            messages=[
+                {"role": "system", "content": _DEAL_SUMMARY_SYSTEM},
+                {"role": "user", "content": prompt},
+            ],
+        )
+        raw = _strip_json_fences(resp.choices[0].message.content.strip())
+        log.info("OpenAI summarize raw: %s", raw[:300])
         return json.loads(raw)
     except Exception as e:
-        log.warning("Bedrock summarize failed: %s", e)
+        log.warning("OpenAI summarize failed: %s", e)
         return {"next_steps": "Could not summarize", "next_meeting_date": None, "next_meeting_label": None, "confidence": "Low", "confidence_reason": "Summarization failed"}
 
 
@@ -512,16 +509,66 @@ Standard date literals: TODAY, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_N_DAY
 Limit results to 50 rows unless more are needed.
 """
 
-CHAT_SYSTEM = (
-    "You are an AI assistant embedded in the SE Forecast dashboard for the "
-    "Twilio Digital Sales (Self Service) team. "
-    "You have access to pre-loaded pipeline data (open opportunities for the current and next quarter) "
-    f"and a run_soql tool to query Salesforce directly for additional detail.\n\n"
-    f"{_SOQL_SCHEMA}\n"
-    "Answer concisely. Format currency with $ and K/M suffixes. "
-    "When using run_soql, scope queries to the DSR/Self Service team using the filters already "
-    "present in the context (FY_16_Owner_Team__c LIKE 'DSR%' etc.)."
-)
+CHAT_SYSTEM = """You are an AI assistant embedded in the SE Forecast dashboard for the Twilio Digital Sales (Self Service) team.
+You have access to pre-loaded pipeline data (open opportunities for the current and next quarter) and a run_soql tool to query Salesforce directly for additional detail.
+
+## Revenue metrics
+- iACV = Comms_Segment_Combined_iACV__c — the primary revenue metric. All dollar figures in this dashboard are iACV unless stated otherwise.
+- eARR = eARR_post_Launch__c — post-launch ARR. Used as a secondary metric.
+- Incremental_ACV__c and Current_eARR__c are supplemental and rarely used.
+
+## Team scope — always apply these filters when calling run_soql
+DSR opp filter (use for all pipeline/closed queries):
+  (FY_16_Owner_Team__c LIKE 'DSR%'
+   OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
+
+SE-tagged filter (add when asking about specific SE performance):
+  Technical_Lead__r.UserRole.Name = 'SE - Self Service'
+  AND Technical_Lead__r.Title LIKE '%Engineer%'
+
+Closed Won filter: StageName = 'Closed Won'
+Open pipeline filter: StageName NOT IN ('Closed Won', 'Closed Lost') AND ForecastCategoryName != 'Omitted'
+
+## Forecast categories (open pipeline)
+Pipeline → Presales_Stage__c should be '1 - Qualified'
+Best Case → should be '2 - Discovery' or '3 - Technical Evaluation'
+Most Likely → should be '3 - Technical Evaluation' or '4 - Technical Win Achieved'
+Commit → should be '4 - Technical Win Achieved'
+A mismatch means ForecastCategoryName and Presales_Stage__c are misaligned.
+
+## Technical Win (TW)
+Presales_Stage__c = '4 - Technical Win Achieved'. TW deals are the most confident pipeline signal — the SE has technically validated the deal.
+
+## Activate vs Expansion
+Activate (new logos): Owner.UserRole.Name LIKE '%Activation%' OR (FY_16_Owner_Team__c LIKE 'DSR%' AND NOT 'Expansion')
+Expansion (existing accounts): Owner.UserRole.Name LIKE '%Expansion%' OR FY_16_Owner_Team__c LIKE '%Expansion%'
+
+## SOQL examples for common questions
+Closed Won this quarter for DSR team (SE-tagged, iACV ≥ $30K):
+  SELECT Technical_Lead__r.Name, SUM(Comms_Segment_Combined_iACV__c) icav
+  FROM Opportunity
+  WHERE StageName = 'Closed Won'
+  AND CloseDate = THIS_QUARTER
+  AND (FY_16_Owner_Team__c LIKE 'DSR%' OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
+  AND Technical_Lead__r.UserRole.Name = 'SE - Self Service'
+  AND Technical_Lead__r.Title LIKE '%Engineer%'
+  AND Comms_Segment_Combined_iACV__c >= 30000
+  GROUP BY Technical_Lead__r.Name
+  ORDER BY icav DESC
+
+Open pipeline by forecast category:
+  SELECT ForecastCategoryName, COUNT(Id) cnt, SUM(Comms_Segment_Combined_iACV__c) icav
+  FROM Opportunity
+  WHERE StageName NOT IN ('Closed Won', 'Closed Lost')
+  AND ForecastCategoryName != 'Omitted'
+  AND (FY_16_Owner_Team__c LIKE 'DSR%' OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
+  AND CloseDate = THIS_QUARTER
+  GROUP BY ForecastCategoryName
+
+## Formatting
+Answer concisely. Format currency with $ and K/M suffixes. Always scope run_soql to the DSR team.
+
+""" + f"{_SOQL_SCHEMA}"
 
 
 def build_chat_context(body: dict) -> tuple[str, str]:

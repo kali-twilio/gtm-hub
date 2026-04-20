@@ -136,7 +136,7 @@ def api_enrich():
         return jsonify({"error": "account_name required"}), 400
 
     website_text = logic.fetch_website_text(account_website) if account_website else ""
-    result = logic.classify_with_bedrock(account_name, website_text)
+    result = logic.classify_account(account_name, website_text)
     result["account_name"] = account_name
     result["website"]      = account_website
     return jsonify(result)
@@ -157,5 +157,5 @@ def api_summarize():
     if not opp_id:
         return jsonify({"error": "id required"}), 400
 
-    result = logic.summarize_with_bedrock(opp_name, close_date, se_notes, se_history, next_step, last_activity)
+    result = logic.summarize_deal(opp_name, close_date, se_notes, se_history, next_step, last_activity)
     return jsonify(result)
