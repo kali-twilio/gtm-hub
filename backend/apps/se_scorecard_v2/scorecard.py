@@ -1814,8 +1814,6 @@ def _roast(se, ranked, motion: str = "dsr"):
 
 
 
-from . import sf_analysis
-
 log = logging.getLogger(__name__)
 
 OUTPUT_DIR = Path(__file__).parent.parent.parent / "outputs"
@@ -1823,9 +1821,9 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 _LOCAL_DEV = os.environ.get("LOCAL_DEV") == "1"
 
-_ICAV_FIELD = sf_analysis.FIELD_CONFIG["icav_field"]
-_EARR_FIELD = sf_analysis.FIELD_CONFIG["earr_field"]
-_TEAM_FIELD = sf_analysis.FIELD_CONFIG["team_field"]
+_ICAV_FIELD = FIELD_CONFIG["icav_field"]
+_EARR_FIELD = FIELD_CONFIG["earr_field"]
+_TEAM_FIELD = FIELD_CONFIG["team_field"]
 
 _ICAV_PRESETS = {0, 10_000, 30_000, 50_000, 100_000}
 
@@ -2042,9 +2040,9 @@ def save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0,
     for i, se in enumerate(ranked, 1):
         entry          = {k: v for k, v in se.items() if not k.startswith("_")}
         entry["rank"]  = i
-        entry["tier"]  = sf_analysis.tier(i, total)
-        entry["flags"] = sf_analysis.collect_se_flags(se, ranked, motion)
-        entry["roast"] = sf_analysis._roast(se, ranked, motion)
+        entry["tier"]  = tier(i, total)
+        entry["flags"] = collect_se_flags(se, ranked, motion)
+        entry["roast"] = _roast(se, ranked, motion)
         payload.append(entry)
     if not _LOCAL_DEV:
         result = {"ses": payload}
@@ -2209,27 +2207,27 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
     if not opps:
         return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps
 
-    ses = sf_analysis.build_ses(opps, motion, notes_floor=icav_min, period_key=period_key)
-    sf_analysis.merge_win_rate(ses, win_rate_opps, motion)
+    ses = build_ses(opps, motion, notes_floor=icav_min, period_key=period_key)
+    merge_win_rate(ses, win_rate_opps, motion)
 
     opp_motion_map: dict[str, str] = {}
     for opp in list(opps) + list(pipe_opps or []):
         oid = opp.get("Id") or ""
         if oid and oid not in opp_motion_map:
-            if sf_analysis._is_activate(opp):
+            if _is_activate(opp):
                 opp_motion_map[oid] = "activate"
-            elif sf_analysis._is_expansion(opp):
+            elif _is_expansion(opp):
                 opp_motion_map[oid] = "expansion"
 
     if email_tasks is not None:
         try:
-            sf_analysis.merge_email_activity(ses, email_tasks, info["end"], opp_motion_map)
+            merge_email_activity(ses, email_tasks, info["end"], opp_motion_map)
         except Exception:
             log.warning("Email merge failed %s/%s", cache_key, period_key, exc_info=True)
 
     if meeting_events is not None:
         try:
-            sf_analysis.merge_meeting_activity(ses, meeting_events, info["end"], opp_motion_map)
+            merge_meeting_activity(ses, meeting_events, info["end"], opp_motion_map)
         except Exception:
             log.warning("Meeting merge failed %s/%s", cache_key, period_key, exc_info=True)
 
@@ -2237,7 +2235,7 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
     if not ses:
         return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps
 
-    ranked = sf_analysis.rank_ses(ses)
+    ranked = rank_ses(ses)
     result = save_cached(ranked, cache_key, period_key, icav_min, motion, team_total_icav, act_total_icav, exp_total_icav)
     log.info("Refreshed %s/%s (min $%s): %d opps", cache_key, period_key, icav_min, len(opps))
     return result, None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps
