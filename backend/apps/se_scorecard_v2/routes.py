@@ -1,773 +1,33 @@
 """
-SE Scorecard V2 — Flask Blueprint.
-Data is fetched live from Salesforce on demand and cached per-team per-period.
-Current quarter: 10-minute TTL. Historical quarters/years: 1-week TTL.
+SE Scorecard V2 — Flask Blueprint. Routes only; all business logic is in scorecard.py.
 """
 from __future__ import annotations
 
 import json
 import logging
-import os
-import re
-import time
-import uuid
-from concurrent.futures import ThreadPoolExecutor
-from datetime import date, datetime, timezone
-from pathlib import Path
 
-import requests as http_requests
 from flask import Blueprint, jsonify, request, session
 
 from salesforce import sf
-from . import sf_analysis
+from . import scorecard as logic
+from suggestions import get_firestore as _get_firestore, masked_email as _masked, display_author as _display_author
+from suggestions import FIRESTORE_COLLECTION as _FIRESTORE_COLLECTION, SUGGESTIONS_MAX as _SUGGESTIONS_MAX
+from chat import run_chat as _run_chat
 
 log = logging.getLogger(__name__)
 
 se_scorecard_v2_bp = Blueprint("se_scorecard_v2", __name__)
 
-OUTPUT_DIR = Path(__file__).parent.parent.parent / "outputs"
-OUTPUT_DIR.mkdir(exist_ok=True)
-
-_ICAV_PRESETS = {0, 10_000, 30_000, 50_000, 100_000}
-
-def _parse_icav_min(raw: str | None) -> tuple[int, str | None]:
-    """Parse and validate icav_min. Returns (value, error) — only preset values allowed."""
-    try:
-        val = int(raw or 0)
-    except (ValueError, TypeError):
-        return 0, "icav_min must be an integer"
-    if val not in _ICAV_PRESETS:
-        return 0, f"icav_min must be one of {sorted(_ICAV_PRESETS)}"
-    return val, None
-
-# ---------------------------------------------------------------------------
-# Team config — add new teams here; no other file needs to change
-# ---------------------------------------------------------------------------
-
-TEAMS = {
-    "digital_sales": {
-        "label":            "Digital Sales",
-        "description":      "Self Service SE team (DSR)",
-        "motion":           "dsr",
-        "team_total_filter": (
-            "(FY_16_Owner_Team__c LIKE 'DSR%'"
-            " OR (Owner.UserRole.Name LIKE '%DSR%'"
-            " AND (NOT (Owner.UserRole.Name LIKE '%Twilio.org%'))))"
-        ),
-        "soql_filter": (
-            # Primary: FY_16_Owner_Team__c stamped as DSR (frozen at assignment — survives AE role changes).
-            # Fallback: owner's current UserRole contains DSR but FY_16 was never stamped correctly
-            #   (observed as null/'Not Found'/'Digital Sales Representative'/'Sales Operations').
-            #   Excludes Twilio.org roles to avoid org-specific opps.
-            "(FY_16_Owner_Team__c LIKE 'DSR%'"
-            " OR (Owner.UserRole.Name LIKE '%DSR%'"
-            " AND (NOT (Owner.UserRole.Name LIKE '%Twilio.org%'))))"
-            " AND Technical_Lead__r.UserRole.Name = 'SE - Self Service'"
-            " AND Technical_Lead__r.Title LIKE '%Engineer%'"
-        ),
-        # Historical periods: FY_16_Owner_Team__c didn't exist pre-2026; use SE role only
-        "historical_soql_filter": (
-            "Technical_Lead__r.UserRole.Name = 'SE - Self Service'"
-            " AND Technical_Lead__r.Title LIKE '%Engineer%'"
-        ),
-        "email_owner_filter": "Owner.UserRole.Name = 'SE - Self Service'",
-        "criteria": [
-            {
-                "label":  "DSR Opportunity",
-                "detail": "Opp WHERE FY_16_Owner_Team__c LIKE 'DSR%' (stamped at assignment, frozen) OR Owner.UserRole.Name LIKE '%DSR%' AND NOT LIKE '%Twilio.org%' (fallback when FY_16 was never stamped).",
-            },
-            {
-                "label":  "SE Tagged",
-                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name = 'SE - Self Service' AND Technical_Lead__r.Title LIKE '%Engineer%'. Both conditions required — role identifies the team, title excludes non-SE roles sharing the same UserRole.",
-            },
-            {
-                "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE (FY_16_Owner_Team__c LIKE 'DSR%' OR Owner.UserRole.Name LIKE '%DSR%' …) — no SE tag required. Represents the full DSR team's iACV against which SE-tagged deals are measured.",
-            },
-        ],
-    },
-    "namer": {
-        "label":            "NAMER",
-        "description":      "All NAMER SEs",
-        "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE '%NAMER%' AND (NOT Owner.UserRole.Name LIKE '%DSR%') AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')",
-        # Total iACV denominator = NB + Strat universe by UserRole, so NB + Strat = Total exactly.
-        # UserRole required for NAMER: FY_16 undercounts Strat by ~$1M due to AE transfers.
-        "team_icav_filter": (
-            "Owner.UserRole.Name LIKE '%NAMER%'"
-            " AND (NOT Owner.UserRole.Name LIKE '%DSR%')"
-            " AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')"
-            " AND (Owner.UserRole.Name LIKE '% NB%' OR Owner.UserRole.Name LIKE '%Strat%')"
-        ),
-        "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - NAMER%'",
-        "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - NAMER%'",
-        "act_icav_clause": "Owner.UserRole.Name LIKE '% NB%'",
-        "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
-        "criteria": [
-            {
-                "label":  "SE Tagged",
-                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name LIKE 'SE - NAMER%' AND StageName = 'Closed Won'. Covers all NAMER sub-roles (Retail, NB, ISV, HighTech, RegVerts, MarTech).",
-            },
-            {
-                "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on Closed Won opps WHERE Owner.UserRole.Name LIKE '%NAMER%' AND role is NB or Strat. Total = NB + Strat exactly. Uses current AE role — more accurate than FY_16 for NAMER due to AE transfers.",
-            },
-            {
-                "label":  "NB / Strat Split",
-                "detail": "NB denominator: Owner.UserRole.Name LIKE '% NB%'. Strat denominator: Owner.UserRole.Name LIKE '%Strat%'. Uses current AE role (not FY_16) because NAMER AE transfers leave a ~$1M gap in Strat when using FY_16 stamp.",
-            },
-        ],
-        "subteams": [
-            {"key": "namer_retail",   "label": "Retail",   "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - NAMER - Retail'",   "email_owner_filter": "Owner.UserRole.Name = 'SE - NAMER - Retail'"},
-            {"key": "namer_nb",       "label": "NB",       "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - NAMER - NB'",       "email_owner_filter": "Owner.UserRole.Name = 'SE - NAMER - NB'"},
-            {"key": "namer_isv",      "label": "ISV",      "soql_filter": "Technical_Lead__r.UserRole.Name IN ('SE - NAMER - ISV1', 'SE - NAMER - ISV2')", "email_owner_filter": "Owner.UserRole.Name IN ('SE - NAMER - ISV1', 'SE - NAMER - ISV2')"},
-            {"key": "namer_hightech", "label": "HighTech", "soql_filter": "Technical_Lead__r.UserRole.Name IN ('SE - NAMER - HighTech1', 'SE - NAMER - HighTech2')", "email_owner_filter": "Owner.UserRole.Name IN ('SE - NAMER - HighTech1', 'SE - NAMER - HighTech2')"},
-            {"key": "namer_regverts", "label": "RegVerts", "soql_filter": "Technical_Lead__r.UserRole.Name IN ('SE - NAMER - RegVerts1', 'SE - NAMER - RegVerts2')", "email_owner_filter": "Owner.UserRole.Name IN ('SE - NAMER - RegVerts1', 'SE - NAMER - RegVerts2')"},
-            {"key": "namer_martech",  "label": "MarTech",  "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - NAMER - MarTech'",  "email_owner_filter": "Owner.UserRole.Name = 'SE - NAMER - MarTech'"},
-        ],
-    },
-    "emea": {
-        "label":            "EMEA",
-        "description":      "All EMEA SEs",
-        "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE '%EMEA%'",
-        # Total iACV denominator = NB + Strat universe only, so NB + Strat = Total exactly.
-        "team_icav_filter": (
-            "Owner.UserRole.Name LIKE '%EMEA%'"
-            " AND (FY_16_Owner_Team__c LIKE '% NB%' OR FY_16_Owner_Team__c LIKE '%Strat%')"
-        ),
-        "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - EMEA%'",
-        "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - EMEA%'",
-        "act_icav_clause": "FY_16_Owner_Team__c LIKE '% NB%'",
-        "exp_icav_clause": "FY_16_Owner_Team__c LIKE '%Strat%'",
-        "criteria": [
-            {
-                "label":  "SE Tagged",
-                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name LIKE 'SE - EMEA%' AND StageName = 'Closed Won'. Covers North, DACH, and South sub-roles.",
-            },
-            {
-                "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on Closed Won opps WHERE Owner.UserRole.Name LIKE '%EMEA%' AND FY_16_Owner_Team__c is NB or Strat. Total = NB + Strat exactly.",
-            },
-            {
-                "label":  "NB / Strat Split",
-                "detail": "NB denominator: FY_16_Owner_Team__c LIKE '% NB%'. Strat denominator: FY_16_Owner_Team__c LIKE '%Strat%'. FY_16 is frozen at opp assignment — AEs who transferred into EMEA after deal close appear in the total only if their FY_16 was stamped as EMEA NB/Strat.",
-            },
-        ],
-        "subteams": [
-            {"key": "emea_north", "label": "North", "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - EMEA - North'", "email_owner_filter": "Owner.UserRole.Name = 'SE - EMEA - North'"},
-            {"key": "emea_dach",  "label": "DACH",  "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - EMEA - DACH'",  "email_owner_filter": "Owner.UserRole.Name = 'SE - EMEA - DACH'"},
-            {"key": "emea_south", "label": "South", "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - EMEA - South'", "email_owner_filter": "Owner.UserRole.Name = 'SE - EMEA - South'"},
-        ],
-    },
-    "apj": {
-        "label":            "APJ",
-        "description":      "APJ SE team",
-        "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE '%APJ%'",
-        # UserRole required for APJ: FY_16 undercounts Strat due to AE transfers (~$300K gap).
-        "team_icav_filter": (
-            "Owner.UserRole.Name LIKE '%APJ%'"
-            " AND (Owner.UserRole.Name LIKE '% NB%' OR Owner.UserRole.Name LIKE '%Strat%')"
-        ),
-        "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - APJ'",
-        "email_owner_filter": "Owner.UserRole.Name = 'SE - APJ'",
-        "act_icav_clause": "Owner.UserRole.Name LIKE '% NB%'",
-        "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
-        "criteria": [
-            {
-                "label":  "SE Tagged",
-                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name = 'SE - APJ' AND StageName = 'Closed Won'.",
-            },
-            {
-                "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on Closed Won opps WHERE Owner.UserRole.Name LIKE '%APJ%' AND role is NB or Strat. Total = NB + Strat exactly. Uses current AE role — more accurate than FY_16 for APJ due to AE transfers.",
-            },
-            {
-                "label":  "NB / Strat Split",
-                "detail": "NB denominator: Owner.UserRole.Name LIKE '% NB%'. Strat denominator: Owner.UserRole.Name LIKE '%Strat%'. Uses current AE role (not FY_16) because APJ AE transfers undercount Strat when using FY_16 stamp.",
-            },
-        ],
-    },
-    "latam": {
-        "label":            "LATAM",
-        "description":      "LATAM SE team",
-        "motion":           "ae",
-        "team_total_filter": "Owner.UserRole.Name LIKE '%LATAM%'",
-        # UserRole used for LATAM (consistent with NAMER/APJ): avoids AE-transfer undercounting.
-        "team_icav_filter": (
-            "Owner.UserRole.Name LIKE '%LATAM%'"
-            " AND (Owner.UserRole.Name LIKE '% NB%' OR Owner.UserRole.Name LIKE '%Strat%')"
-        ),
-        "soql_filter":      "Technical_Lead__r.UserRole.Name LIKE 'SE - LATAM%'",
-        "email_owner_filter": "Owner.UserRole.Name LIKE 'SE - LATAM%'",
-        "act_icav_clause": "Owner.UserRole.Name LIKE '% NB%'",
-        "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
-        "criteria": [
-            {
-                "label":  "SE Tagged",
-                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name LIKE 'SE - LATAM%' AND StageName = 'Closed Won'. Covers Brazil (SE - LATAM - BR) and Rest of LATAM (SE - LATAM - ROL).",
-            },
-            {
-                "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on Closed Won opps WHERE Owner.UserRole.Name LIKE '%LATAM%' AND role is NB or Strat. Total = NB + Strat exactly. Uses current AE role.",
-            },
-            {
-                "label":  "NB / Strat Split",
-                "detail": "NB denominator: Owner.UserRole.Name LIKE '% NB%'. Strat denominator: Owner.UserRole.Name LIKE '%Strat%'. Uses current AE role — consistent with NAMER and APJ.",
-            },
-        ],
-        "subteams": [
-            {"key": "latam_brazil", "label": "Brazil", "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - LATAM - BR'",  "email_owner_filter": "Owner.UserRole.Name = 'SE - LATAM - BR'"},
-            {"key": "latam_rol",    "label": "ROL",    "soql_filter": "Technical_Lead__r.UserRole.Name = 'SE - LATAM - ROL'", "email_owner_filter": "Owner.UserRole.Name = 'SE - LATAM - ROL'"},
-        ],
-    },
-    "dorg": {
-        "label":            "DORG",
-        "description":      ".ORG SE team",
-        "motion":           "ae",
-        # AE engagement table: opps owned by .org-role AEs
-        "team_total_filter": "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'",
-        # iACV denominator: union of .org-role AE opps + any opp a DORG SE touched
-        # (DORG SEs work across DSR, Not Found, etc. buckets — union captures their full universe)
-        "team_icav_filter": (
-            "Owner.UserRole.Name LIKE 'DORG%' OR Owner.UserRole.Name LIKE '%.org%'"
-            " OR Technical_Lead__r.UserRole.Name = 'SE - DORG'"
-        ),
-        # NB/Strat denominators use the full AE pool so they add up to the team total.
-        # NB = everything not Strat (matches build_ses fallback for unrecognised roles).
-        "act_icav_clause": "(NOT Owner.UserRole.Name LIKE '%Strat%')",
-        "exp_icav_clause": "Owner.UserRole.Name LIKE '%Strat%'",
-        "soql_filter":      "Technical_Lead__r.UserRole.Name = 'SE - DORG'",
-        "email_owner_filter": "Owner.UserRole.Name = 'SE - DORG'",
-        "criteria": [
-            {
-                "label":  "SE Tagged",
-                "detail": "Opp WHERE Technical_Lead__r.UserRole.Name = 'SE - DORG' AND StageName = 'Closed Won'.",
-            },
-            {
-                "label":  "Total iACV",
-                "detail": "SUM(Comms_Segment_Combined_iACV__c) on all Closed Won opps WHERE Owner.UserRole.Name LIKE 'DORG%' OR '%.org%' OR Technical_Lead__r.UserRole.Name = 'SE - DORG'. Union covers the full universe DORG SEs work — their opps span multiple AE team buckets (ORG, DSR, Not Found).",
-            },
-        ],
-    },
-}
-
-_DEFAULT_TEAM = "digital_sales"
-
-# ---------------------------------------------------------------------------
-# Period config
-# ---------------------------------------------------------------------------
-
-_ICAV_FIELD = sf_analysis.FIELD_CONFIG["icav_field"]
-_EARR_FIELD = sf_analysis.FIELD_CONFIG["earr_field"]
-_TEAM_FIELD = sf_analysis.FIELD_CONFIG["team_field"]
-
-_QUARTER_ENDS   = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
-_QUARTER_STARTS = {1: "01-01", 2: "04-01", 3: "07-01", 4: "10-01"}
-
-# Current quarter cache: 10 min (data is live). Historical: 1 week (never changes).
-_CACHE_TTL_CURRENT    = 600
-_CACHE_TTL_HISTORICAL = 604_800
-
-
-def _period_info(period_key: str) -> dict:
-    """Parse a period key into start, end, label, and cache TTL."""
-    today = date.today()
-    if "_Q" in period_key:
-        year_s, q_s = period_key.split("_Q")
-        year, q = int(year_s), int(q_s)
-        start = f"{year}-{_QUARTER_STARTS[q]}"
-        end   = f"{year}-{_QUARTER_ENDS[q]}"
-        label = f"Q{q} {year}"
-        qtr_end = date(year, q * 3, int(_QUARTER_ENDS[q].split("-")[1]))
-        ttl = _CACHE_TTL_HISTORICAL if qtr_end < today else _CACHE_TTL_CURRENT
-    else:
-        year = int(period_key.split("_")[0])
-        start, end = f"{year}-01-01", f"{year}-12-31"
-        label = f"Full Year {year}"
-        ttl   = _CACHE_TTL_HISTORICAL
-    return {"start": start, "end": end, "label": label, "ttl": ttl}
-
-
-def _available_periods() -> list[dict]:
-    """Build the list of selectable periods: current-year quarters + prior full years."""
-    today   = date.today()
-    year    = today.year
-    cur_q   = (today.month - 1) // 3 + 1
-    periods = []
-
-    for q in range(cur_q, 0, -1):
-        key   = f"{year}_Q{q}"
-        label = f"Q{q} {year}"
-        if q == cur_q:
-            label += " (current)"
-        periods.append({"key": key, "label": label})
-
-    for y in range(year - 1, year - 4, -1):
-        periods.append({"key": f"{y}_FY", "label": f"Full Year {y}"})
-
-    return periods
-
-
-def _default_period() -> str:
-    """Most recently completed quarter, or Q1 if still in Q1."""
-    today = date.today()
-    year  = today.year
-    cur_q = (today.month - 1) // 3 + 1
-    if cur_q > 1:
-        return f"{year}_Q{cur_q - 1}"
-    return f"{year - 1}_Q4"
-
-
-def _build_soql(team_filter: str, start: str, end: str, icav_min: int = 0) -> str:
-    """All Closed Won opps. Presales_Stage__c included to tag TW vs non-TW."""
-    icav_clause = f"AND {_ICAV_FIELD} >= {icav_min} " if icav_min > 0 else ""
-    return (
-        f"SELECT Id, Name, CloseDate, {_ICAV_FIELD}, {_EARR_FIELD}, {_TEAM_FIELD}, Presales_Stage__c, "
-        f"Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.Title, "
-        f"Owner.Name, Owner.UserRole.Name, "
-        f"Sales_Engineer_Notes__c, SE_Notes_History__c, "
-        f"Account.Name, Account.Owner.Name, "
-        f"Account.Current_ARR_Based_on_Last_6_Months__c, "
-        f"Account.Average_Amortized_Usage_Last_3_Months__c, "
-        # Monthly amortized usage snapshots — used to compute quarter-anchored MRR delta
-        f"Account.Total_Amortized_Twilio_Usage_This_Month__c, "
-        f"Account.Total_Amortized_Twilio_Usage_Last_Month__c, "
-        f"Account.Total_Amortized_Twilio_Usage_2_Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_3_Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_4_Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_5_Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_6_Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_7_Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_8_Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_9_Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_10Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_11Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_12Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_13Month_Ago__c, "
-        f"Account.Total_Amortized_Twilio_Usage_14Month_Ago__c, "
-        f"Account.Fast_Revenue_Growth__c, "
-        f"Account.Significant_Revenue_Contraction__c "
-        f"FROM Opportunity "
-        f"WHERE StageName = 'Closed Won' "
-        f"AND {team_filter} "
-        f"AND Technical_Lead__c != null "
-        f"AND CloseDate >= {start} "
-        f"AND CloseDate <= {end} "
-        f"{icav_clause}"
-    )
-
-
-def _build_all_owners_soql(team_total_filter: str, start: str, end: str) -> str:
-    """All Closed Won opps for the team regardless of SE tagging — used to surface zero-SE AEs/DSRs."""
-    return (
-        f"SELECT Owner.Name, {_ICAV_FIELD}, Technical_Lead__c "
-        f"FROM Opportunity "
-        f"WHERE StageName = 'Closed Won' "
-        f"AND ({team_total_filter}) "
-        f"AND CloseDate >= {start} "
-        f"AND CloseDate <= {end}"
-    )
-
-
-def _build_win_rate_soql(team_filter: str, start: str, end: str) -> str:
-    """Lightweight: all Closed Won + Closed Lost per SE for win rate. No iACV threshold."""
-    return (
-        f"SELECT Technical_Lead__r.Name, StageName, Owner.UserRole.Name, Account.Owner.Name "
-        f"FROM Opportunity "
-        f"WHERE StageName IN ('Closed Won', 'Closed Lost') "
-        f"AND {team_filter} "
-        f"AND Technical_Lead__c != null "
-        f"AND CloseDate >= {start} "
-        f"AND CloseDate <= {end}"
-    )
-
-
-def _build_pipeline_soql(team_filter: str, end: str) -> str:
-    """Open opps closing after the period — used to classify out-q email targets."""
-    return (
-        f"SELECT Id, Owner.UserRole.Name, {_ICAV_FIELD} "
-        f"FROM Opportunity "
-        f"WHERE StageName NOT IN ('Closed Won', 'Closed Lost') "
-        f"AND {team_filter} "
-        f"AND Technical_Lead__c != null "
-        f"AND CloseDate > {end}"
-    )
-
-
-def _build_email_soql(start: str, end: str, se_owner_filter: str) -> str:
-    """Task emails sent by SEs during the period, linked to Opps.
-    Opp owner role drives activate/expansion classification directly — no motion map needed."""
-    return (
-        f"SELECT Id, WhatId, Owner.Name, ActivityDate, "
-        f"TYPEOF What "
-        f"  WHEN Opportunity THEN CloseDate, StageName, Owner.UserRole.Name, {_ICAV_FIELD} "
-        f"END "
-        f"FROM Task "
-        f"WHERE TaskSubtype = 'Email' "
-        f"AND What.Type = 'Opportunity' "
-        f"AND ActivityDate >= {start} "
-        f"AND ActivityDate <= {end} "
-        f"AND {se_owner_filter}"
-    )
-
-
-def _build_meeting_soql(start: str, end: str, se_owner_filter: str) -> str:
-    """Calendar events (meetings) logged by SEs during the period, linked to Opps.
-    Same classification logic as emails — opp owner role drives activate/expansion.
-
-    IsRecurrence = false excludes series master records — a recurring event creates
-    one master (IsRecurrence=true) plus N child occurrences (IsRecurrence=false,
-    RecurrenceActivityId=<master>). Without this filter the master would be
-    double-counted alongside its own occurrences.
-    RecurrenceActivityId is fetched so merge_meeting_activity can further
-    deduplicate: the same recurring series on the same opp counts once."""
-    return (
-        f"SELECT Id, WhatId, Owner.Name, ActivityDate, RecurrenceActivityId, "
-        f"TYPEOF What "
-        f"  WHEN Opportunity THEN CloseDate, StageName, Owner.UserRole.Name, {_ICAV_FIELD} "
-        f"END "
-        f"FROM Event "
-        f"WHERE What.Type = 'Opportunity' "
-        f"AND IsRecurrence = false "
-        f"AND ActivityDate >= {start} "
-        f"AND ActivityDate <= {end} "
-        f"AND {se_owner_filter}"
-    )
+TEAMS         = logic.TEAMS  # re-exported; app.py does `from apps.se_scorecard_v2.routes import TEAMS`
+_DEFAULT_TEAM = logic.DEFAULT_TEAM
 
 
 # ---------------------------------------------------------------------------
-# Cache helpers
-# ---------------------------------------------------------------------------
-
-def _cache_path(team_key: str, period_key: str, icav_min: int = 0) -> Path:
-    suffix = f"_min{icav_min}" if icav_min > 0 else ""
-    return OUTPUT_DIR / f"sf_se_data_{team_key}_{period_key}{suffix}.json"
-
-
-_LOCAL_DEV = os.environ.get("LOCAL_DEV") == "1"
-
-_SOQL_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-
-
-def _safe_soql_date(value: str) -> str:
-    if not _SOQL_DATE_RE.match(value):
-        raise ValueError(f"Invalid SOQL date parameter: {value!r}")
-    return value
-
-
-def _build_team_total_soql(team_filter: str, start: str, end: str) -> str:
-    s = _safe_soql_date(start)
-    e = _safe_soql_date(end)
-    return (
-        f"SELECT SUM({_ICAV_FIELD}) total_icav "
-        f"FROM Opportunity "
-        f"WHERE StageName = 'Closed Won' "
-        f"AND ({team_filter}) "
-        f"AND CloseDate >= {s} "
-        f"AND CloseDate <= {e}"
-    )
-
-
-def _get_team_total_icav(team_total_filter: str, start: str, end: str) -> int | None:
-    if not sf.configured:
-        return None
-    try:
-        rows = sf.query(_build_team_total_soql(team_total_filter, start, end), timeout=60)
-        if rows:
-            val = rows[0].get("total_icav") or rows[0].get("expr0")
-            return int(float(val)) if val is not None else None
-    except Exception:
-        log.warning("team total iACV query failed for filter: %s", team_total_filter, exc_info=True)
-    return None
-
-
-def _motion_total_filter(team_total_filter: str, motion: str, which: str,
-                         act_clause: str | None = None, exp_clause: str | None = None) -> str:
-    base = f"({team_total_filter})"
-    if act_clause and exp_clause:
-        clause = act_clause if which == "act" else exp_clause
-    elif motion == "dsr":
-        # Mirror _is_expansion/_is_activate: expansion = Expansion in role OR FY_16;
-        # activate = everything else (NOT expansion in either field).
-        clause = ("(NOT Owner.UserRole.Name LIKE '%Expansion%') AND (NOT FY_16_Owner_Team__c LIKE '%Expansion%')"
-                  if which == "act" else
-                  "(Owner.UserRole.Name LIKE '%Expansion%' OR FY_16_Owner_Team__c LIKE '%Expansion%')")
-    else:
-        clause = "Owner.UserRole.Name LIKE '% NB%'" if which == "act" else "Owner.UserRole.Name LIKE '%Strat%'"
-    return f"{base} AND {clause}"
-
-
-def _is_fresh(team_key: str, period_key: str, icav_min: int, ttl: int) -> bool:
-    if _LOCAL_DEV:
-        return False
-    p = _cache_path(team_key, period_key, icav_min)
-    return p.exists() and (time.time() - p.stat().st_mtime) < ttl
-
-
-def _load_cached(team_key: str, period_key: str, icav_min: int = 0) -> tuple[list | None, int | None, int | None, int | None]:
-    p = _cache_path(team_key, period_key, icav_min)
-    if not p.exists():
-        return None, None, None, None
-    raw = json.loads(p.read_text(encoding="utf-8"))
-    if isinstance(raw, list):
-        # Old cache format — delete and treat as a miss so it gets rebuilt with current schema
-        p.unlink(missing_ok=True)
-        return None, None, None, None
-    return raw.get("ses"), raw.get("team_total_icav"), raw.get("act_total_icav"), raw.get("exp_total_icav")
-
-
-def _save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0, motion: str = "dsr",
-                  team_total_icav: int | None = None, act_total_icav: int | None = None, exp_total_icav: int | None = None) -> list:
-    total   = len(ranked)
-    payload = []
-    for i, se in enumerate(ranked, 1):
-        entry          = {k: v for k, v in se.items() if not k.startswith("_")}
-        entry["rank"]  = i
-        entry["tier"]  = sf_analysis.tier(i, total)
-        entry["flags"] = sf_analysis.collect_se_flags(se, ranked, motion)
-        entry["roast"] = sf_analysis._roast(se, ranked, motion)
-        payload.append(entry)
-    if not _LOCAL_DEV:
-        result = {"ses": payload}
-        if team_total_icav is not None:
-            result["team_total_icav"] = team_total_icav
-        if act_total_icav is not None:
-            result["act_total_icav"] = act_total_icav
-        if exp_total_icav is not None:
-            result["exp_total_icav"] = exp_total_icav
-        p   = _cache_path(team_key, period_key, icav_min)
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(result), encoding="utf-8")
-        tmp.replace(p)
-    return payload
-
-
-
-def _get_data(team_key: str, period_key: str, icav_min: int = 0, subteam_key: str = "") -> tuple[list | None, str | None, int | None, int | None, int | None, list | None]:
-    """Return (ranked_ses, error_msg, team_total_icav, act_total_icav, exp_total_icav)."""
-    team = TEAMS.get(team_key)
-    if not team:
-        return None, f"Unknown team '{team_key}'", None, None, None
-
-    soql_filter        = team["soql_filter"]
-    email_owner_filter = team["email_owner_filter"]
-    display_label      = team["label"]
-
-    if subteam_key:
-        subteam = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None)
-        if not subteam:
-            return None, f"Unknown subteam '{subteam_key}' for team '{team_key}'", None, None, None
-        soql_filter        = subteam["soql_filter"]
-        email_owner_filter = subteam["email_owner_filter"]
-        display_label      = f"{team['label']} · {subteam['label']}"
-
-    cache_key = f"{team_key}_{subteam_key}" if subteam_key else team_key
-    info      = _period_info(period_key)
-
-    period_year = int(period_key.split("_")[0])
-    if not subteam_key and period_year < date.today().year and "historical_soql_filter" in team:
-        soql_filter = team["historical_soql_filter"]
-
-    if _is_fresh(cache_key, period_key, icav_min, info["ttl"]):
-        ses, tti, ati, eti = _load_cached(cache_key, period_key, icav_min)
-        return ses, None, tti, ati, eti, None
-
-    if not sf.configured:
-        stale, tti, ati, eti = _load_cached(cache_key, period_key, icav_min)
-        if stale:
-            log.warning("Salesforce not configured — serving stale cache for %s/%s", cache_key, period_key)
-            return stale, None, tti, ati, eti, None
-        return None, "Salesforce is not configured.", None, None, None, None
-
-    core_exc: Exception | None = None
-    opps = win_rate_opps = pipe_opps = email_tasks = meeting_events = all_owner_opps = None
-    team_total_icav: int | None = None
-    act_total_icav:  int | None = None
-    exp_total_icav:  int | None = None
-    team_total_filter = team.get("team_total_filter")
-    # team_icav_filter overrides team_total_filter for the iACV denominator only.
-    # team_total_filter is still used for the AE engagement (all_owners) query.
-    team_icav_filter  = team.get("team_icav_filter") or team_total_filter
-    act_icav_clause   = team.get("act_icav_clause")
-    exp_icav_clause   = team.get("exp_icav_clause")
-    # Full filter overrides (bypass _motion_total_filter entirely when set)
-    act_icav_filter   = team.get("act_icav_filter")
-    exp_icav_filter   = team.get("exp_icav_filter")
-    motion            = team.get("motion", "dsr")
-
-    act_filter_used = act_icav_filter if act_icav_filter else _motion_total_filter(team_icav_filter, motion, "act", act_icav_clause, exp_icav_clause)
-    exp_filter_used = exp_icav_filter if exp_icav_filter else _motion_total_filter(team_icav_filter, motion, "exp", act_icav_clause, exp_icav_clause)
-
-    with ThreadPoolExecutor(max_workers=8) as pool:
-        f_opps     = pool.submit(sf.query, _build_soql(soql_filter, info["start"], info["end"], icav_min))
-        f_win_rate = pool.submit(sf.query, _build_win_rate_soql(soql_filter, info["start"], info["end"]))
-        f_pipeline = pool.submit(sf.query, _build_pipeline_soql(soql_filter, info["end"]))
-        f_email    = pool.submit(sf.query, _build_email_soql(info["start"], info["end"], email_owner_filter))
-        f_meetings = pool.submit(sf.query, _build_meeting_soql(info["start"], info["end"], email_owner_filter))
-        if team_total_filter and not subteam_key:
-            f_team_total  = pool.submit(_get_team_total_icav, team_icav_filter, info["start"], info["end"])
-            f_act_total   = pool.submit(_get_team_total_icav, act_filter_used, info["start"], info["end"])
-            f_exp_total   = pool.submit(_get_team_total_icav, exp_filter_used, info["start"], info["end"])
-            f_all_owners  = pool.submit(sf.query, _build_all_owners_soql(team_total_filter, info["start"], info["end"]))
-        else:
-            f_team_total = f_act_total = f_exp_total = f_all_owners = None
-
-        try:
-            opps          = f_opps.result()
-            win_rate_opps = f_win_rate.result()
-        except Exception as e:
-            core_exc = e
-            log.exception("Salesforce query failed for team %s / %s", cache_key, period_key)
-
-        try:
-            pipe_opps = f_pipeline.result()
-        except Exception:
-            log.warning("Pipeline query for email motion failed — classifying closed-won opps only")
-            pipe_opps = []
-
-        try:
-            email_tasks = f_email.result()
-        except Exception:
-            log.warning("Email activity query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
-
-        try:
-            meeting_events = f_meetings.result()
-        except Exception:
-            log.warning("Meeting activity query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
-
-        if f_team_total is not None:
-            try:
-                team_total_icav = f_team_total.result()
-            except Exception:
-                log.warning("Team total iACV query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
-        if f_act_total is not None:
-            try:
-                act_total_icav = f_act_total.result()
-            except Exception:
-                log.warning("Act total iACV query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
-        if f_exp_total is not None:
-            try:
-                exp_total_icav = f_exp_total.result()
-            except Exception:
-                log.warning("Exp total iACV query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
-
-        if f_all_owners is not None:
-            try:
-                all_owner_opps = f_all_owners.result()
-            except Exception:
-                log.warning("All-owners query failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
-
-    # For ae-motion teams where NB+Strat = total by design, derive team_total from the two
-    # sub-queries rather than the combined OR query — SF aggregate queries with cross-object
-    # OR conditions can return incorrect results (inflated totals observed for EMEA/NAMER).
-    if act_icav_clause and exp_icav_clause and act_total_icav is not None and exp_total_icav is not None:
-        team_total_icav = act_total_icav + exp_total_icav
-
-    if core_exc is not None:
-        stale, tti, ati, eti = _load_cached(cache_key, period_key, icav_min)
-        if stale:
-            log.warning("Salesforce error — serving stale cache for %s/%s", cache_key, period_key)
-            return stale, None, tti, ati, eti, None
-        return None, f"Salesforce query failed: {core_exc}", None, None, None, None
-
-    if not opps:
-        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps
-
-    ses = sf_analysis.build_ses(opps, motion, notes_floor=icav_min, period_key=period_key)
-    sf_analysis.merge_win_rate(ses, win_rate_opps, motion)
-
-    opp_motion_map: dict[str, str] = {}
-    for opp in opps:
-        oid = opp.get("Id") or ""
-        if oid:
-            if sf_analysis._is_activate(opp):
-                opp_motion_map[oid] = "activate"
-            elif sf_analysis._is_expansion(opp):
-                opp_motion_map[oid] = "expansion"
-    for opp in (pipe_opps or []):
-        oid = opp.get("Id") or ""
-        if oid and oid not in opp_motion_map:
-            if sf_analysis._is_activate(opp):
-                opp_motion_map[oid] = "activate"
-            elif sf_analysis._is_expansion(opp):
-                opp_motion_map[oid] = "expansion"
-
-    if email_tasks is not None:
-        try:
-            sf_analysis.merge_email_activity(ses, email_tasks, info["end"], opp_motion_map)
-            log.info("Email activity: %d tasks, %d opp motion entries for %s/%s",
-                     len(email_tasks), len(opp_motion_map), cache_key, period_key)
-        except Exception:
-            log.warning("Email activity merge failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
-
-    if meeting_events is not None:
-        try:
-            sf_analysis.merge_meeting_activity(ses, meeting_events, info["end"], opp_motion_map)
-            log.info("Meeting activity: %d events for %s/%s",
-                     len(meeting_events), cache_key, period_key)
-        except Exception:
-            log.warning("Meeting activity merge failed for %s/%s — skipping", cache_key, period_key, exc_info=True)
-
-    ses = [s for s in ses if s["act_wins"] + s["exp_wins"] > 0]
-    if not ses:
-        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps
-    ranked = sf_analysis.rank_ses(ses)
-    result = _save_cached(ranked, cache_key, period_key, icav_min, motion, team_total_icav, act_total_icav, exp_total_icav)
-    log.info("Refreshed %s/%s (min $%s) SE data from Salesforce (%d opps, %d win-rate opps)",
-             cache_key, period_key, icav_min, len(opps), len(win_rate_opps))
-    return result, None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps
-
-
-# ---------------------------------------------------------------------------
-# Email → SE name matcher
-# ---------------------------------------------------------------------------
-
-def _email_to_se_name(email: str, ses: list) -> str | None:
-    local = email.split("@")[0].lower()
-
-    def norm(s):
-        return re.sub(r"[^a-z0-9]", "", s)
-
-    def names(se):
-        parts = se["name"].lower().split()
-        return (parts[0] if parts else ""), (parts[-1] if len(parts) > 1 else "")
-
-    if "." in local:
-        parts = local.split(".")
-        first_part, last_part = parts[0], parts[-1]
-        for se in ses:
-            fn, ln = names(se)
-            if fn == first_part and norm(ln) == norm(last_part):
-                return se["name"]
-        for se in ses:
-            fn, _ = names(se)
-            if fn == first_part:
-                return se["name"]
-    else:
-        for split in range(1, len(local)):
-            prefix, suffix = local[:split], local[split:]
-            for se in ses:
-                fn, ln = names(se)
-                if norm(ln) == norm(suffix) and fn.startswith(prefix):
-                    return se["name"]
-        for se in ses:
-            fn, _ = names(se)
-            if fn == local:
-                return se["name"]
-
-    return None
-
-
-# ---------------------------------------------------------------------------
-# Platform hook
+# Platform hook — called by app.py /api/me
 # ---------------------------------------------------------------------------
 
 def enrich_me(email: str) -> dict:
-    """Called by /api/me — attach SF profile from session + SE identity from cache."""
     from flask import session
-
     out: dict = {
         "sf_access":       session.get("sf_access", "full"),
         "sf_role_name":    session.get("sf_role_name"),
@@ -778,8 +38,8 @@ def enrich_me(email: str) -> dict:
         "sf_division":     session.get("sf_division"),
         "sf_subteam":      session.get("sf_subteam"),
     }
-
-    # Check cached team data to identify if this user is an SE (for My Stats page)
+    from pathlib import Path
+    OUTPUT_DIR = Path(__file__).parent.parent.parent / "outputs"
     for team_key in TEAMS:
         for p in OUTPUT_DIR.glob(f"sf_se_data_{team_key}_*.json"):
             try:
@@ -787,17 +47,16 @@ def enrich_me(email: str) -> dict:
                 cached = raw.get("ses", raw) if isinstance(raw, dict) else raw
             except Exception:
                 continue
-            se_name = _email_to_se_name(email, cached)
+            se_name = logic.email_to_se_name(email, cached)
             if se_name:
                 out.update({"sf_is_se": True, "sf_se_name": se_name, "sf_team": team_key})
                 return out
-
-    out.update({
-        "sf_is_se":  False,
-        "sf_se_name": None,
-        "sf_team":    session.get("sf_team"),
-    })
+    out.update({"sf_is_se": False, "sf_se_name": None, "sf_team": session.get("sf_team")})
     return out
+
+
+def _get_data(team_key, period_key, icav_min=0, subteam_key=""):
+    return logic.get_data(TEAMS, team_key, period_key, icav_min, subteam_key)
 
 
 # ---------------------------------------------------------------------------
@@ -820,23 +79,22 @@ def api_teams():
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/periods")
 def api_periods():
-    return jsonify(_available_periods())
-
+    return jsonify(logic.available_periods())
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/ses")
 def api_ses():
-    team_key    = request.args.get("team", _DEFAULT_TEAM)
-    period_key  = request.args.get("period", _default_period())
-    icav_min, err = _parse_icav_min(request.args.get("icav_min"))
+    team_key   = request.args.get("team", _DEFAULT_TEAM)
+    period_key = request.args.get("period", logic.default_period())
+    icav_min, err = logic.parse_icav_min(request.args.get("icav_min"))
     if err:
         return jsonify({"error": err}), 400
     subteam_key = request.args.get("subteam", "")
     ses, err, *_ = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
-    team_medians = sf_analysis.compute_team_medians(ses)
-    se_name      = _email_to_se_name(session.get("user_email", ""), ses)
+    team_medians = logic.compute_team_medians(ses)
+    se_name      = logic.email_to_se_name(session.get("user_email", ""), ses)
     if se_name:
         ses = [s for s in ses if s["name"] == se_name]
     team_motion = TEAMS[team_key].get("motion", "dsr") if team_key in TEAMS else "dsr"
@@ -845,178 +103,94 @@ def api_ses():
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/report")
 def api_report():
-    team_key    = request.args.get("team", _DEFAULT_TEAM)
-    period_key  = request.args.get("period", _default_period())
-    icav_min, err = _parse_icav_min(request.args.get("icav_min"))
+    team_key   = request.args.get("team", _DEFAULT_TEAM)
+    period_key = request.args.get("period", logic.default_period())
+    icav_min, err = logic.parse_icav_min(request.args.get("icav_min"))
     if err:
         return jsonify({"error": err}), 400
-    subteam_key                                          = request.args.get("subteam", "")
+    subteam_key = request.args.get("subteam", "")
     ses_list, err, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
-    if _email_to_se_name(session.get("user_email", ""), ses_list):
+    if logic.email_to_se_name(session.get("user_email", ""), ses_list):
         return jsonify({"error": "Access denied"}), 403
 
-    team        = TEAMS[team_key]
-    subteam     = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None) if subteam_key else None
-    team_label  = f"{team['label']} · {subteam['label']}" if subteam else team["label"]
+    team       = TEAMS[team_key]
+    subteam    = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None) if subteam_key else None
+    team_label = f"{team['label']} · {subteam['label']}" if subteam else team["label"]
+    period     = logic.period_info(period_key)
+    total      = len(ses_list)
 
-    period      = _period_info(period_key)
-    total         = len(ses_list)
-    unique_owners = {o["owner"] for s in ses_list for o in s.get("tw_opps_detail", []) if o.get("owner")}
-    ae_dsr_count  = len(unique_owners)
+    unique_owners  = {o["owner"] for s in ses_list for o in s.get("tw_opps_detail", []) if o.get("owner")}
+    ae_dsr_count   = len(unique_owners)
     ae_to_se_ratio = round(ae_dsr_count / total, 1) if total > 0 else 0
-    act_sorted  = sorted(ses_list, key=lambda x: x["act_icav"], reverse=True)
-    exp_sorted  = sorted(ses_list, key=lambda x: x["exp_icav"], reverse=True)
-    deal_sorted = [s for s in sorted(ses_list, key=lambda x: x["largest_deal_value"], reverse=True)
-                   if s["largest_deal_value"] > 0]
+    act_sorted     = sorted(ses_list, key=lambda x: x["act_icav"], reverse=True)
+    exp_sorted     = sorted(ses_list, key=lambda x: x["exp_icav"], reverse=True)
+    deal_sorted    = [s for s in sorted(ses_list, key=lambda x: x["largest_deal_value"], reverse=True) if s["largest_deal_value"] > 0]
 
     cache_key_trend = f"{team_key}_{subteam_key}" if subteam_key else team_key
     is_fy           = "_FY" in period_key
-    comparable      = [p for p in _available_periods()
-                       if (("_FY" in p["key"]) == is_fy) and p["key"] != period_key]
+    comparable      = [p for p in logic.available_periods() if (("_FY" in p["key"]) == is_fy) and p["key"] != period_key]
 
-    def _exp_snapshot(ses: list, p_label: str, p_key: str, is_current: bool) -> dict:
+    def _exp_snapshot(ses, p_label, p_key, is_current):
         return {
-            "period":          p_label,
-            "period_key":      p_key,
-            "is_current":      is_current,
+            "period": p_label, "period_key": p_key, "is_current": is_current,
             "team_exp_icav":   sum(s.get("exp_icav", 0) for s in ses),
             "team_exp_wins":   sum(s.get("exp_wins", 0) for s in ses),
             "team_influenced": sum(s.get("exp_icav", 0) + s.get("non_tw_exp_icav", 0) for s in ses),
-            "ses":             {s["name"]: {
-                "exp_icav":    s.get("exp_icav", 0),
-                "influenced":  s.get("exp_icav", 0) + s.get("non_tw_exp_icav", 0),
-            } for s in ses},
+            "ses": {s["name"]: {"exp_icav": s.get("exp_icav", 0), "influenced": s.get("exp_icav", 0) + s.get("non_tw_exp_icav", 0)} for s in ses},
         }
 
     exp_trend = [_exp_snapshot(ses_list, period["label"], period_key, True)]
     for p in comparable[:3]:
-        prior, *_ = _load_cached(cache_key_trend, p["key"], 0)
+        prior, *_ = logic.load_cached(cache_key_trend, p["key"], 0)
         if prior:
             exp_trend.append(_exp_snapshot(prior, p["label"], p["key"], False))
-
     exp_trend.reverse()
 
     se_icav         = sum(s["total_icav"] for s in ses_list)
     se_act_icav     = sum(s["act_icav"]   for s in ses_list)
     se_exp_icav     = sum(s["exp_icav"]   for s in ses_list)
-    se_icav_pct     = round(se_icav     / team_total_icav * 100) if team_total_icav and team_total_icav > 0 else None
-    se_act_icav_pct = round(se_act_icav / act_total_icav  * 100) if act_total_icav  and act_total_icav  > 0 else None
-    se_exp_icav_pct = round(se_exp_icav / exp_total_icav  * 100) if exp_total_icav  and exp_total_icav  > 0 else None
+    se_icav_pct     = round(se_icav     / team_total_icav * 100) if team_total_icav else None
+    se_act_icav_pct = round(se_act_icav / act_total_icav  * 100) if act_total_icav  else None
+    se_exp_icav_pct = round(se_exp_icav / exp_total_icav  * 100) if exp_total_icav  else None
 
     return jsonify({
-        "ranked":           ses_list,
-        "total":            total,
-        "icav_min":         icav_min,
-        "team_icav":        se_icav,
-        "team_earr":        sum(s.get("total_earr", 0) for s in ses_list),
-        "team_wins":        sum(s["act_wins"] + s["exp_wins"] for s in ses_list),
-        "team_arr":         sum(s.get("exp_arr_total", 0) for s in ses_list),
-        "team_total_icav":  team_total_icav,
-        "act_total_icav":   act_total_icav,
-        "exp_total_icav":   exp_total_icav,
-        "se_icav_pct":      se_icav_pct,
-        "se_act_icav_pct":  se_act_icav_pct,
-        "se_exp_icav_pct":  se_exp_icav_pct,
-        "act_sorted":       act_sorted,
-        "exp_sorted":       exp_sorted,
-        "pipe_sorted":      [],
-        "deal_sorted":      deal_sorted,
-        "max_act":          act_sorted[0]["act_icav"] if act_sorted else 1,
-        "max_exp":          max((s["exp_icav"] for s in exp_sorted), default=1) or 1,
-        "max_fut":          1,
-        "max_act_icav":     max(s["act_icav"] for s in ses_list) or 1,
-        "max_exp_icav":     max(s["exp_icav"] for s in ses_list) or 1,
-        "trends":           sorted(sf_analysis.collect_team_trends(ses_list, team.get("motion", "dsr")), key=lambda x: x[0]),
-        "recommendations":  sf_analysis.generate_recommendations(ses_list, team.get("motion", "dsr")),
-        "ae_engagement":    sf_analysis.compute_ae_engagement(ses_list, all_owner_opps or []),
-        "exp_trend":        exp_trend,
-        "quarter":          period["label"],
-        "team_label":       team_label,
-        "motion":           team.get("motion", "dsr"),
-        "sf_instance_url":  sf.instance_url,
-        "ae_dsr_count":     ae_dsr_count,
-        "ae_to_se_ratio":   ae_to_se_ratio,
+        "ranked": ses_list, "total": total, "icav_min": icav_min,
+        "team_icav": se_icav, "team_earr": sum(s.get("total_earr", 0) for s in ses_list),
+        "team_wins": sum(s["act_wins"] + s["exp_wins"] for s in ses_list),
+        "team_arr":  sum(s.get("exp_arr_total", 0) for s in ses_list),
+        "team_total_icav": team_total_icav, "act_total_icav": act_total_icav, "exp_total_icav": exp_total_icav,
+        "se_icav_pct": se_icav_pct, "se_act_icav_pct": se_act_icav_pct, "se_exp_icav_pct": se_exp_icav_pct,
+        "act_sorted": act_sorted, "exp_sorted": exp_sorted, "pipe_sorted": [], "deal_sorted": deal_sorted,
+        "max_act": act_sorted[0]["act_icav"] if act_sorted else 1,
+        "max_exp": max((s["exp_icav"] for s in exp_sorted), default=1) or 1,
+        "max_fut": 1, "max_act_icav": max(s["act_icav"] for s in ses_list) or 1,
+        "max_exp_icav": max(s["exp_icav"] for s in ses_list) or 1,
+        "trends":          sorted(logic.collect_team_trends(ses_list, team.get("motion", "dsr")), key=lambda x: x[0]),
+        "recommendations": logic.generate_recommendations(ses_list, team.get("motion", "dsr")),
+        "ae_engagement":   logic.compute_ae_engagement(ses_list, all_owner_opps or []),
+        "exp_trend": exp_trend, "quarter": period["label"], "team_label": team_label,
+        "motion": team.get("motion", "dsr"), "sf_instance_url": sf.instance_url,
+        "ae_dsr_count": ae_dsr_count, "ae_to_se_ratio": ae_to_se_ratio,
     })
-
-
-# ---------------------------------------------------------------------------
-# Suggestion box — backed by Google Firestore (twilio-ckbrox project)
-# FIRESTORE_PROJECT and FIRESTORE_CREDENTIALS (service account JSON, single
-# line) are injected via secrets.env at deploy time and backend/apps/
-# se_scorecard_v2/.env for local dev.
-# ---------------------------------------------------------------------------
-
-from suggestions import get_firestore as _get_firestore, masked_email as _masked, display_author as _display_author
-from suggestions import FIRESTORE_COLLECTION as _FIRESTORE_COLLECTION, SUGGESTIONS_MAX as _SUGGESTIONS_MAX
-from chat import run_chat as _run_chat
-
-# ---------------------------------------------------------------------------
-# AI Chatbot — answers questions about the loaded Salesforce data
-# ---------------------------------------------------------------------------
-
-_SF_SCHEMA_HINT = """
-Salesforce Opportunity fields available:
-  Id, Name, CloseDate, StageName, Amount, Type
-  Comms_Segment_Combined_iACV__c  (iACV — primary revenue metric)
-  eARR_post_launch_No_Decimal__c  (eARR)
-  FY_16_Owner_Team__c             (team stamp)
-  Presales_Stage__c               (TW status; '4 - Technical Win Achieved' = TW)
-  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name
-  Owner.Name, Owner.UserRole.Name
-  Account.Name, Account.Owner.Name
-  SE_Notes__c, SE_Notes_History__c, Sales_Engineer_Notes__c
-  RecordType.Name
-Standard date literal: TODAY, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_N_DAYS:n
-Always filter StageName = 'Closed Won' unless asking about pipeline/open deals.
-Limit results to 50 rows unless the question needs more.
-"""
-
-
-def _build_chat_context(ses: list, team_key: str, period_key: str) -> str:
-    team  = TEAMS.get(team_key, {})
-    info  = _period_info(period_key)
-    lines = [
-        f"SE Scorecard data — team: {team.get('label', team_key)}, period: {info['label']}",
-        f"Total SEs: {len(ses)}",
-        "",
-    ]
-    for se in ses:
-        lines.append(f"SE: {se['name']} | title: {se.get('title','')} | email: {se.get('email','')}")
-        lines.append(f"  Rank: {se.get('rank','?')} | Tier: {se.get('tier','?')} | Total iACV: ${se.get('total_icav',0):,}")
-        lines.append(f"  Activate wins: {se.get('act_wins',0)} iACV ${se.get('act_icav',0):,} | Expansion wins: {se.get('exp_wins',0)} iACV ${se.get('exp_icav',0):,}")
-        lines.append(f"  Win rate: {se.get('win_rate',0)}% ({se.get('closed_won',0)}W/{se.get('closed_lost',0)}L)")
-        lines.append(f"  Largest deal: {se.get('largest_deal','')} (${se.get('largest_deal_value',0):,}) acct: {se.get('largest_deal_acct','')}")
-        for opp in (se.get("tw_opps_detail") or [])[:10]:
-            notes_flag = "[has_notes]" if opp.get("has_notes") else "[no_notes]"
-            history_flag = "[has_history]" if opp.get("has_history") else "[no_history]"
-            lines.append(f"    deal: {opp.get('name','')} | product: {opp.get('product','')} | iACV: ${opp.get('icav',0):,} | close: {opp.get('close_date','')} | motion: {opp.get('motion','')} | {notes_flag} {history_flag} | note_entries: {opp.get('note_entries',0)} | notes_len: {opp.get('notes_len',0)}")
-        for acct in (se.get("exp_account_detail") or [])[:5]:
-            lines.append(f"    exp_acct: {acct.get('acct_name','')} | ARR: ${acct.get('arr',0):,} | MRR delta: ${acct.get('mrr_delta',0):,}/mo | MRR%: {acct.get('mrr_pct',0)}%")
-        roast = se.get("roast", "")
-        if roast:
-            lines.append(f"  Summary: {roast}")
-        lines.append("")
-    return "\n".join(lines)
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/chat", methods=["POST"])
 def api_chat():
-    """AI chatbot with Salesforce tool access."""
-    body        = request.get_json(silent=True) or {}
-    message     = (body.get("message") or "").strip()
+    body       = request.get_json(silent=True) or {}
+    message    = (body.get("message") or "").strip()
     if not message:
         return jsonify({"error": "message is required"}), 400
     if len(message) > 2000:
         return jsonify({"error": "message too long (max 2000 chars)"}), 400
 
-    team_key    = body.get("team", _DEFAULT_TEAM)
-    period_key  = body.get("period", _default_period())
-    icav_min, err = _parse_icav_min(body.get("icav_min"))
+    team_key   = body.get("team", _DEFAULT_TEAM)
+    period_key = body.get("period", logic.default_period())
+    icav_min, err = logic.parse_icav_min(body.get("icav_min"))
     if err:
         return jsonify({"error": err}), 400
-    subteam_key = body.get("subteam", "")
+    subteam_key = body.get("subteam", "") or ""
     if subteam_key == "none":
         subteam_key = ""
 
@@ -1026,10 +200,9 @@ def api_chat():
     if not ses:
         return jsonify({"answer": "No SE data is available for the selected team and period."}), 200
 
-    context     = _build_chat_context(ses, team_key, period_key)
+    context     = logic.build_chat_context(ses, team_key, period_key, TEAMS)
     team_info   = TEAMS.get(team_key, {})
-    period_info = _period_info(period_key)
-
+    period_info = logic.period_info(period_key)
     system_prompt = (
         "You are an AI assistant embedded in the Twilio SE Scorecard dashboard. "
         "You have access to pre-loaded Salesforce opportunity data for a team of Solutions Engineers, "
@@ -1037,35 +210,33 @@ def api_chat():
         f"Current context: team={team_info.get('label', team_key)}, period={period_info['label']} "
         f"(CloseDate {period_info['start']} to {period_info['end']}), "
         f"team SOQL filter: {team_info.get('soql_filter','')}\n\n"
-        f"{_SF_SCHEMA_HINT}\n"
+        f"{logic.SF_SCHEMA_HINT}\n"
         "Answer questions clearly and concisely. Format numbers with $ and K/M suffixes. "
         "When using run_soql, apply the team's SOQL filter so results stay scoped to this team."
     )
-
     return jsonify(_run_chat(system_prompt, context, message))
 
 
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/rankings")
 def api_rankings():
-    team_key    = request.args.get("team", _DEFAULT_TEAM)
-    period_key  = request.args.get("period", _default_period())
-    icav_min, err = _parse_icav_min(request.args.get("icav_min"))
+    team_key   = request.args.get("team", _DEFAULT_TEAM)
+    period_key = request.args.get("period", logic.default_period())
+    icav_min, err = logic.parse_icav_min(request.args.get("icav_min"))
     if err:
         return jsonify({"error": err}), 400
     subteam_key       = request.args.get("subteam", "")
     ses_list, err, *_ = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
-    if _email_to_se_name(session.get("user_email", ""), ses_list):
+    if logic.email_to_se_name(session.get("user_email", ""), ses_list):
         return jsonify({"error": "Access denied"}), 403
 
     team       = TEAMS[team_key]
     subteam    = next((s for s in team.get("subteams", []) if s["key"] == subteam_key), None) if subteam_key else None
     team_label = f"{team['label']} · {subteam['label']}" if subteam else team["label"]
-
-    period = _period_info(period_key)
-    total  = len(ses_list)
-    TIER_CFG = {
+    period     = logic.period_info(period_key)
+    total      = len(ses_list)
+    TIER_CFG   = {
         "Elite":   {"color": "#FFB800", "bg": "#1a1200", "label": "🐐 GOAT TIER"},
         "Strong":  {"color": "#3B82F6", "bg": "#0a1628", "label": "🔥 ON FIRE"},
         "Steady":  {"color": "#10B981", "bg": "#071a12", "label": "😤 GRINDING"},
@@ -1073,7 +244,6 @@ def api_rankings():
     }
     max_a = max((s["act_icav"] for s in ses_list), default=0) or 1
     max_e = max((s["exp_icav"] for s in ses_list), default=0) or 1
-
     return jsonify({
         "ranked": [{**s,
             "_cfg":   TIER_CFG.get(s.get("tier", "Steady"), TIER_CFG["Steady"]),
@@ -1085,9 +255,7 @@ def api_rankings():
             "total":  s["total_icav"],
             "future": 0,
         } for s in ses_list],
-        "total":       total,
-        "team_total":  sum(s["total_icav"] for s in ses_list),
-        "quarter":     period["label"],
-        "team_label":  team_label,
-        "motion":      team.get("motion", "dsr"),
+        "total": total, "team_total": sum(s["total_icav"] for s in ses_list),
+        "quarter": period["label"], "team_label": team_label,
+        "motion": team.get("motion", "dsr"),
     })
