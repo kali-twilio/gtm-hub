@@ -6,7 +6,7 @@
 
   interface Criterion { label: string; detail: string; }
   interface Subteam { key: string; label: string; }
-  interface Team { key: string; label: string; description: string; criteria: Criterion[]; subteams?: Subteam[]; }
+  interface Team { key: string; label: string; description: string; motion: string; criteria: Criterion[]; subteams?: Subteam[]; }
   interface Period { key: string; label: string; }
 
   let teams: Team[] = $state([]);
@@ -139,26 +139,61 @@
   </div>
   {/if}
 
-  <!-- Membership criteria (collapsible) -->
+  <!-- Methodology (collapsible) -->
   {#if teams.length > 0}
   {@const criteria = teams.find(t => t.key === $sfTeam)?.criteria ?? []}
+  {@const teamMotion = teams.find(t => t.key === $sfTeam)?.motion ?? 'ae'}
   {#if criteria.length > 0}
   <div class="w-full hub-container mb-6">
     <button
       onclick={() => criteriaExpanded = !criteriaExpanded}
       style="width:100%;display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:transparent;border:1px solid rgba(var(--red-rgb),0.15);border-radius:{criteriaExpanded ? '6px 6px 0 0' : '6px'};cursor:pointer;color:var(--text-muted);font-size:12px;font-weight:600;letter-spacing:0.05em"
     >
-      <span>📋 Who counts as a team member?</span>
+      <span>ℹ How these numbers are calculated</span>
       <span style="font-size:10px;transition:transform 0.2s;transform:{criteriaExpanded ? 'rotate(180deg)' : 'rotate(0)'}">▼</span>
     </button>
     {#if criteriaExpanded}
     <div style="border:1px solid rgba(var(--red-rgb),0.15);border-top:none;border-radius:0 0 6px 6px;overflow:hidden">
-      {#each criteria as c, i}
-      <div style="padding:8px 14px;{i > 0 ? 'border-top:1px solid rgba(var(--red-rgb),0.08)' : ''}">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--red);margin-bottom:2px">{c.label}</div>
-        <div style="font-size:12px;color:var(--text-muted);font-weight:500;line-height:1.4">{c.detail}</div>
+
+      <!-- SEs counted -->
+      <div style="padding:10px 14px">
+        <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.14em;color:var(--red);margin-bottom:6px">Who counts as an SE</div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          {#each criteria as c}
+          <div>
+            <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--text)">{c.label} — </span><span style="font-size:12px;color:var(--text-muted);line-height:1.5">{c.detail}</span>
+          </div>
+          {/each}
+        </div>
       </div>
-      {/each}
+
+      <!-- iACV -->
+      <div style="padding:10px 14px;border-top:1px solid rgba(var(--red-rgb),0.08)">
+        <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.14em;color:var(--red);margin-bottom:6px">iACV</div>
+        {#if teamMotion === 'dsr'}
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.5">
+          <strong style="color:var(--text)">SE iACV</strong> — <code style="font-size:11px">SUM(Comms_Segment_Combined_iACV__c)</code> on Closed Won opps where the opp is DSR-tagged <em>and</em> the SE is tagged as Technical Lead.<br>
+          <strong style="color:var(--text)">Team total iACV</strong> — same field on all DSR opps regardless of SE tag; SE iACV ÷ team total = the SE coverage % shown.<br>
+          <strong style="color:var(--text)">Activate / Expansion split</strong> — Expansion = opp where AE's current role or FY_16 stamp contains "Expansion"; Activate = everything else.
+        </div>
+        {:else}
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.5">
+          <strong style="color:var(--text)">SE iACV</strong> — <code style="font-size:11px">SUM(Comms_Segment_Combined_iACV__c)</code> on Closed Won opps where <code style="font-size:11px">Technical_Lead__r.UserRole.Name LIKE 'SE - {$sfTeam === 'emea' ? 'EMEA' : 'NAMER'}%'</code>.<br>
+          <strong style="color:var(--text)">NB / Strat split</strong> — NB = AE role contains " NB"; Strat = AE role or FY_16 stamp contains "Strat". NB + Strat = team total exactly.<br>
+          <strong style="color:var(--text)">Team total iACV</strong> — scoped to NB + Strat opps only so the split always sums to 100%.
+        </div>
+        {/if}
+      </div>
+
+      <!-- ARR -->
+      <div style="padding:10px 14px;border-top:1px solid rgba(var(--red-rgb),0.08)">
+        <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.14em;color:var(--red);margin-bottom:6px">ARR</div>
+        <div style="font-size:12px;color:var(--text-muted);line-height:1.5">
+          <strong style="color:var(--text)">eARR (expected ARR)</strong> — <code style="font-size:11px">SUM(Expected_ARR__c)</code> on the same SE-tagged Closed Won opps.<br>
+          <strong style="color:var(--text)">Acct ARR</strong> — <code style="font-size:11px">SUM(Account.ARR__c)</code> pulled from accounts linked to those opps; represents the install base each SE is selling into.
+        </div>
+      </div>
+
     </div>
     {/if}
   </div>
@@ -241,26 +276,6 @@
   </div>
   {/if}
 
-  <!-- Methodology note -->
-  {#if !restricted}
-  <div class="w-full hub-container" style="margin-bottom:24px">
-    <details style="border:1px solid rgba(var(--red-rgb),0.12);border-radius:6px;overflow:hidden">
-      <summary style="padding:10px 14px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.14em;color:var(--text-muted);cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px">
-        <span style="color:var(--red)">ℹ</span> How these numbers are calculated
-      </summary>
-      <div style="padding:12px 14px 14px;border-top:1px solid rgba(var(--red-rgb),0.08);display:flex;flex-direction:column;gap:10px">
-        <div>
-          <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.16em;color:var(--red);margin-bottom:4px">NB / Strat iACV — total and split</div>
-          <div style="font-size:12px;color:var(--text-muted);line-height:1.5">Uses the <strong style="color:var(--text)">FY_16 stamp</strong> (frozen at the time the opp was assigned) to classify deals as New Business or Strategic. The team total is scoped to FY_16 NB+Strat opps only, so <strong style="color:var(--text)">NB + Strat always adds up to the shown total</strong>. This matches our internal forecast methodology. <span>What we lose vs. using current AE role: AEs who transferred into a region after deal close are excluded — so the shown total is slightly lower than total regional iACV in Salesforce.</span></div>
-        </div>
-        <div>
-          <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.16em;color:var(--red);margin-bottom:4px">DSR Activate / Expansion</div>
-          <div style="font-size:12px;color:var(--text-muted);line-height:1.5">Expansion = opp where the AE's current role <em>or</em> FY_16 stamp contains "Expansion". Activate = everything else. Both fields are checked to handle cases where FY_16 was not stamped correctly at close.</div>
-        </div>
-      </div>
-    </details>
-  </div>
-  {/if}
 
 </div>
 
