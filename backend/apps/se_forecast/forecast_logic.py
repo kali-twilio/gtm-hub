@@ -100,7 +100,6 @@ def soql_assigned(start: str, end: str) -> str:
         f" AND {_DSR_OPP_FILTER}"
         f" AND {_SE_FILTER}"
         f" AND Technical_Lead__c != null"
-        f" AND {_ICAV_FIELD} >= 30000"
         f" AND CloseDate >= {start}"
         f" AND CloseDate <= {end}"
         f" AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')"
@@ -134,7 +133,6 @@ def soql_unassigned(start: str, end: str) -> str:
         f" AND ForecastCategoryName != 'Omitted'"
         f" AND {_DSR_OPP_FILTER}"
         f" AND Technical_Lead__c = null"
-        f" AND {_ICAV_FIELD} >= 30000"
         f" AND CloseDate >= {start}"
         f" AND CloseDate <= {end}"
         f" AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')"
@@ -529,74 +527,84 @@ Salesforce Opportunity fields available:
   Incremental_ACV__c, Current_eARR__c
   FY_16_Owner_Team__c
   Presales_Stage__c               ('4 - Technical Win Achieved' = TW)
-  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name
+  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name, Technical_Lead__r.Title
+  Technical_Lead__c               (use Technical_Lead__c != null to filter SE-tagged deals)
   Owner.Name, Owner.UserRole.Name
-  Account.Name, Account.Owner.Name, Account.Website, Account.SE_Notes__c
+  Account.Name, Account.Owner.Name, Account.Website, Account.SE_Notes__c, Account.BillingCountry
   SE_Notes__c, SE_Notes_History__c, Sales_Engineer_Notes__c
   NextStep, LastActivityDate, RecordType.Name
   Renegotiated_Deal_SE_Involved__c
 Standard date literals: TODAY, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_N_DAYS:n
 Limit results to 50 rows unless more are needed.
+CRITICAL SOQL RULE: ORDER BY in aggregate queries must use the full expression, e.g.
+  ORDER BY SUM(Comms_Segment_Combined_iACV__c) DESC  — never an alias like ORDER BY icav DESC.
 """
 
-CHAT_SYSTEM = """You are an AI assistant embedded in the SE Forecast dashboard for the Twilio Digital Sales (Self Service) team.
-You have access to pre-loaded pipeline data (open opportunities for the current and next quarter) and a run_soql tool to query Salesforce directly for additional detail.
+CHAT_SYSTEM = """You are an AI assistant with access to the Twilio Salesforce org via the run_soql tool.
+You also have pre-loaded pipeline data (open opportunities for the current and next quarter) as context.
+You can answer questions about any sales team, AEs, SEs, or accounts — scope queries to whatever the user asks about.
 
 ## Revenue metrics
-- iACV = Comms_Segment_Combined_iACV__c — the primary revenue metric. All dollar figures in this dashboard are iACV unless stated otherwise.
-- eARR = eARR_post_Launch__c — post-launch ARR. Used as a secondary metric.
-- Incremental_ACV__c and Current_eARR__c are supplemental and rarely used.
+- iACV = Comms_Segment_Combined_iACV__c — the primary revenue metric.
+- eARR = eARR_post_Launch__c — post-launch ARR.
+- Incremental_ACV__c and Current_eARR__c are supplemental.
 
-## Team scope — always apply these filters when calling run_soql
-DSR opp filter (use for all pipeline/closed queries):
-  (FY_16_Owner_Team__c LIKE 'DSR%'
-   OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
+## Useful filters (apply only when relevant to the question)
+DSR/Self Service team opps:
+  (FY_16_Owner_Team__c LIKE 'DSR%' OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
 
-SE-tagged filter (add when asking about specific SE performance):
-  Technical_Lead__r.UserRole.Name = 'SE - Self Service'
-  AND Technical_Lead__r.Title LIKE '%Engineer%'
+Self Service SE filter:
+  Technical_Lead__r.UserRole.Name = 'SE - Self Service' AND Technical_Lead__r.Title LIKE '%Engineer%'
 
-Closed Won filter: StageName = 'Closed Won'
-Open pipeline filter: StageName NOT IN ('Closed Won', 'Closed Lost') AND ForecastCategoryName != 'Omitted'
+SE filters by team:
+  NAMER SEs: Technical_Lead__r.UserRole.Name LIKE 'SE - NAMER%'
+  EMEA SEs:  Technical_Lead__r.UserRole.Name LIKE 'SE - EMEA%'
+  APJ SEs:   Technical_Lead__r.UserRole.Name = 'SE - APJ'
 
-## Forecast categories (open pipeline)
-Pipeline → Presales_Stage__c should be '1 - Qualified'
-Best Case → should be '2 - Discovery' or '3 - Technical Evaluation'
-Most Likely → should be '3 - Technical Evaluation' or '4 - Technical Win Achieved'
-Commit → should be '4 - Technical Win Achieved'
-A mismatch means ForecastCategoryName and Presales_Stage__c are misaligned.
+Closed Won: StageName = 'Closed Won'
+Open pipeline: StageName NOT IN ('Closed Won', 'Closed Lost') AND ForecastCategoryName != 'Omitted'
+
+## Forecast categories
+Pipeline → Presales_Stage__c = '1 - Qualified'
+Best Case → '2 - Discovery' or '3 - Technical Evaluation'
+Most Likely → '3 - Technical Evaluation' or '4 - Technical Win Achieved'
+Commit → '4 - Technical Win Achieved'
 
 ## Technical Win (TW)
-Presales_Stage__c = '4 - Technical Win Achieved'. TW deals are the most confident pipeline signal — the SE has technically validated the deal.
+Presales_Stage__c = '4 - Technical Win Achieved'
 
-## Activate vs Expansion
-Activate (new logos): Owner.UserRole.Name LIKE '%Activation%' OR (FY_16_Owner_Team__c LIKE 'DSR%' AND NOT 'Expansion')
-Expansion (existing accounts): Owner.UserRole.Name LIKE '%Expansion%' OR FY_16_Owner_Team__c LIKE '%Expansion%'
-
-## SOQL examples for common questions
-Closed Won this quarter for DSR team (SE-tagged, iACV ≥ $30K):
+## SOQL examples
+Top SEs by iACV closed this year:
   SELECT Technical_Lead__r.Name, SUM(Comms_Segment_Combined_iACV__c) icav
   FROM Opportunity
   WHERE StageName = 'Closed Won'
-  AND CloseDate = THIS_QUARTER
-  AND (FY_16_Owner_Team__c LIKE 'DSR%' OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
-  AND Technical_Lead__r.UserRole.Name = 'SE - Self Service'
-  AND Technical_Lead__r.Title LIKE '%Engineer%'
-  AND Comms_Segment_Combined_iACV__c >= 30000
+  AND CloseDate = THIS_YEAR
+  AND Technical_Lead__c != null
   GROUP BY Technical_Lead__r.Name
-  ORDER BY icav DESC
+  ORDER BY SUM(Comms_Segment_Combined_iACV__c) DESC
+  LIMIT 10
+
+Top AEs by iACV closed this quarter:
+  SELECT Owner.Name, SUM(Comms_Segment_Combined_iACV__c) icav
+  FROM Opportunity
+  WHERE StageName = 'Closed Won'
+  AND CloseDate = THIS_QUARTER
+  GROUP BY Owner.Name
+  ORDER BY SUM(Comms_Segment_Combined_iACV__c) DESC
+  LIMIT 10
 
 Open pipeline by forecast category:
   SELECT ForecastCategoryName, COUNT(Id) cnt, SUM(Comms_Segment_Combined_iACV__c) icav
   FROM Opportunity
   WHERE StageName NOT IN ('Closed Won', 'Closed Lost')
   AND ForecastCategoryName != 'Omitted'
-  AND (FY_16_Owner_Team__c LIKE 'DSR%' OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
   AND CloseDate = THIS_QUARTER
   GROUP BY ForecastCategoryName
 
+IMPORTANT: In SOQL aggregate queries always use ORDER BY SUM(field) DESC — NOT ORDER BY alias DESC. Aliases in SELECT are for readability only; they cannot be referenced in ORDER BY.
+
 ## Formatting
-Answer concisely. Format currency with $ and K/M suffixes. Always scope run_soql to the DSR team.
+Answer concisely. Format currency with $ and K/M suffixes.
 
 """ + f"{_SOQL_SCHEMA}"
 

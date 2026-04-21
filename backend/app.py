@@ -504,6 +504,7 @@ def api_chat():
     _DEFAULT_SYSTEM = (
         NO_WRITE +
         "You are an AI assistant with access to the Twilio Salesforce org via the run_soql tool. "
+        "You can answer questions about any sales team, AEs, SEs, or accounts — do not restrict queries to any specific team unless the user asks. "
         f"{_SOQL_SCHEMA}\n"
         "Answer clearly and concisely. Format currency with $ and K/M suffixes."
     )

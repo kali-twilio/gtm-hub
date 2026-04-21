@@ -23,14 +23,38 @@ Salesforce Opportunity fields available:
   Incremental_ACV__c, Current_eARR__c
   FY_16_Owner_Team__c
   Presales_Stage__c               ('4 - Technical Win Achieved' = TW)
-  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name
+  Technical_Lead__r.Name, Technical_Lead__r.Email, Technical_Lead__r.UserRole.Name, Technical_Lead__r.Title
+  Technical_Lead__c               (lookup ID — use Technical_Lead__c != null to filter SE-tagged deals)
   Owner.Name, Owner.UserRole.Name
-  Account.Name, Account.Owner.Name, Account.Website, Account.SE_Notes__c
+  Account.Name, Account.Owner.Name, Account.Website, Account.SE_Notes__c, Account.BillingCountry
   SE_Notes__c, SE_Notes_History__c, Sales_Engineer_Notes__c
   NextStep, LastActivityDate, RecordType.Name
   Renegotiated_Deal_SE_Involved__c
 Standard date literals: TODAY, THIS_QUARTER, LAST_QUARTER, THIS_YEAR, LAST_N_DAYS:n
 Limit results to 50 rows unless more are needed.
+
+DSR team scope filter (apply to all DSR pipeline/closed queries):
+  (FY_16_Owner_Team__c LIKE 'DSR%' OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
+
+SE-tagged filter (Self Service / DSR SEs):
+  Technical_Lead__r.UserRole.Name = 'SE - Self Service' AND Technical_Lead__r.Title LIKE '%Engineer%'
+
+Example — top 5 SEs by iACV closed this year:
+  SELECT Technical_Lead__r.Name, SUM(Comms_Segment_Combined_iACV__c) icav
+  FROM Opportunity
+  WHERE StageName = 'Closed Won'
+  AND CloseDate = THIS_YEAR
+  AND Technical_Lead__c != null
+  AND (FY_16_Owner_Team__c LIKE 'DSR%' OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
+  AND Technical_Lead__r.UserRole.Name = 'SE - Self Service'
+  AND Technical_Lead__r.Title LIKE '%Engineer%'
+  GROUP BY Technical_Lead__r.Name
+  ORDER BY SUM(Comms_Segment_Combined_iACV__c) DESC
+  LIMIT 5
+
+CRITICAL SOQL RULE: In aggregate queries, ORDER BY must use the full aggregate expression
+(e.g. ORDER BY SUM(Comms_Segment_Combined_iACV__c) DESC), never a SELECT alias.
+Salesforce rejects aliases in ORDER BY — this is the most common query failure.
 """
 
 SOQL_TOOL = [

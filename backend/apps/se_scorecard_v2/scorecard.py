@@ -289,9 +289,6 @@ FIELD_CONFIG = {
     # Expansion = team contains 'Expansion'
     "team_field": "FY_16_Owner_Team__c",
 
-    # Minimum iACV to count as an Activate win (matches dashboard filter)
-    "activate_min_icav": 30_000,
-
     # Q1 date range (used as a label only — filtering is done in SOQL)
     "quarter_label": "Q1 2026",
 }
@@ -1825,7 +1822,7 @@ _ICAV_FIELD = FIELD_CONFIG["icav_field"]
 _EARR_FIELD = FIELD_CONFIG["earr_field"]
 _TEAM_FIELD = FIELD_CONFIG["team_field"]
 
-_ICAV_PRESETS = {0, 10_000, 30_000, 50_000, 100_000}
+_ICAV_PRESETS = {0, 10_000, 50_000, 100_000}
 
 _QUARTER_ENDS   = {1: "03-31", 2: "06-30", 3: "09-30", 4: "12-31"}
 _QUARTER_STARTS = {1: "01-01", 2: "04-01", 3: "07-01", 4: "10-01"}
@@ -2479,18 +2476,22 @@ Expansion status: Growing (avg MRR% ≥+5%, more growing than contracting), Cont
 **Notes quality** = fraction of TW opps with Comms_Segment_Combined_iACV__c ≥ notes floor that have BOTH Sales_Engineer_Notes__c AND SE_Notes_History__c filled.
 
 ## SOQL example — DSR team Closed Won by SE this quarter
-  SELECT Technical_Lead__r.Name se,
+  SELECT Technical_Lead__r.Name,
          COUNT(Id) wins,
          SUM(Comms_Segment_Combined_iACV__c) icav
   FROM Opportunity
   WHERE StageName = 'Closed Won'
   AND Presales_Stage__c = '4 - Technical Win Achieved'
   AND CloseDate = THIS_QUARTER
+  AND Technical_Lead__c != null
   AND (FY_16_Owner_Team__c LIKE 'DSR%' OR (Owner.UserRole.Name LIKE '%DSR%' AND (NOT Owner.UserRole.Name LIKE '%Twilio.org%')))
   AND Technical_Lead__r.UserRole.Name = 'SE - Self Service'
   AND Technical_Lead__r.Title LIKE '%Engineer%'
   GROUP BY Technical_Lead__r.Name
-  ORDER BY icav DESC
+  ORDER BY SUM(Comms_Segment_Combined_iACV__c) DESC
+
+IMPORTANT: In SOQL aggregate queries always ORDER BY the full aggregate expression — e.g. ORDER BY SUM(Comms_Segment_Combined_iACV__c) DESC — never by a SELECT alias (aliases are ignored by Salesforce in ORDER BY).
+Always include Technical_Lead__c != null when filtering for SE-tagged deals.
 """
 
 

@@ -351,7 +351,6 @@ const actStatCols = $derived(data ? [
 
   const ICAV_PRESETS = [
     { label: 'All', value: 0 },
-    { label: '$30K+', value: 30_000 },
     { label: '$50K+', value: 50_000 },
     { label: '$100K+', value: 100_000 },
   ];
