@@ -2116,20 +2116,20 @@ def is_fresh(team_key: str, period_key: str, icav_min: int, ttl: int) -> bool:
     return p.exists() and (time.time() - p.stat().st_mtime) < ttl
 
 
-def load_cached(team_key: str, period_key: str, icav_min: int = 0) -> tuple[list | None, int | None, int | None, int | None, list | None]:
+def load_cached(team_key: str, period_key: str, icav_min: int = 0) -> tuple[list | None, int | None, int | None, int | None, list | None, int | None, int | None]:
     p = cache_path(team_key, period_key, icav_min)
     if not p.exists():
-        return None, None, None, None, None
+        return None, None, None, None, None, None, None
     raw = json.loads(p.read_text(encoding="utf-8"))
     if isinstance(raw, list):
         p.unlink(missing_ok=True)
-        return None, None, None, None, None
-    return raw.get("ses"), raw.get("team_total_icav"), raw.get("act_total_icav"), raw.get("exp_total_icav"), raw.get("ps_assists")
+        return None, None, None, None, None, None, None
+    return raw.get("ses"), raw.get("team_total_icav"), raw.get("act_total_icav"), raw.get("exp_total_icav"), raw.get("ps_assists"), raw.get("team_total_wins"), raw.get("team_total_earr")
 
 
 def save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0, motion: str = "dsr",
                 team_total_icav: int | None = None, act_total_icav: int | None = None, exp_total_icav: int | None = None,
-                ps_assists: list | None = None) -> list:
+                ps_assists: list | None = None, team_total_wins: int | None = None, team_total_earr: int | None = None) -> list:
     total   = len(ranked)
     payload = []
     for i, se in enumerate(ranked, 1):
@@ -2149,6 +2149,10 @@ def save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0,
             result["exp_total_icav"] = exp_total_icav
         if ps_assists is not None:
             result["ps_assists"] = ps_assists
+        if team_total_wins is not None:
+            result["team_total_wins"] = team_total_wins
+        if team_total_earr is not None:
+            result["team_total_earr"] = team_total_earr
         p   = cache_path(team_key, period_key, icav_min)
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(result), encoding="utf-8")
@@ -2167,6 +2171,28 @@ def _build_team_total_soql(team_filter: str, start: str, end: str) -> str:
         f"WHERE StageName = 'Closed Won' AND ({team_filter}) "
         f"AND CloseDate >= {s} AND CloseDate <= {e}"
     )
+
+
+def _build_team_total_earr_soql(team_filter: str, start: str, end: str) -> str:
+    s, e = _safe_soql_date(start), _safe_soql_date(end)
+    return (
+        f"SELECT SUM({_EARR_FIELD}) total_earr FROM Opportunity "
+        f"WHERE StageName = 'Closed Won' AND ({team_filter}) "
+        f"AND CloseDate >= {s} AND CloseDate <= {e}"
+    )
+
+
+def get_team_total_earr(team_total_filter: str, start: str, end: str) -> int | None:
+    if not sf.configured:
+        return None
+    try:
+        rows = sf.query(_build_team_total_earr_soql(team_total_filter, start, end), timeout=60)
+        if rows:
+            val = rows[0].get("total_earr") or rows[0].get("expr0")
+            return int(float(val)) if val is not None else None
+    except Exception:
+        log.warning("team total eARR query failed for filter: %s", team_total_filter, exc_info=True)
+    return None
 
 
 def get_team_total_icav(team_total_filter: str, start: str, end: str) -> int | None:
@@ -2200,7 +2226,7 @@ def motion_total_filter(team_total_filter: str, motion: str, which: str,
 # Main data fetch
 # ---------------------------------------------------------------------------
 
-def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, subteam_key: str = "") -> tuple[list | None, str | None, int | None, int | None, int | None, list | None, list | None]:
+def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, subteam_key: str = "") -> tuple[list | None, str | None, int | None, int | None, int | None, list | None, list | None, int | None, int | None]:
     team = teams.get(team_key)
     if not team:
         return None, f"Unknown team '{team_key}'", None, None, None, None
@@ -2222,18 +2248,18 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
         soql_filter = team["historical_soql_filter"]
 
     if is_fresh(cache_key, period_key, icav_min, info["ttl"]):
-        ses, tti, ati, eti, ps_assists = load_cached(cache_key, period_key, icav_min)
-        return ses, None, tti, ati, eti, None, ps_assists
+        ses, tti, ati, eti, ps_assists, ttw, tte = load_cached(cache_key, period_key, icav_min)
+        return ses, None, tti, ati, eti, None, ps_assists, ttw, tte
 
     if not sf.configured:
-        stale, tti, ati, eti, ps_assists = load_cached(cache_key, period_key, icav_min)
+        stale, tti, ati, eti, ps_assists, ttw, tte = load_cached(cache_key, period_key, icav_min)
         if stale:
-            return stale, None, tti, ati, eti, None, ps_assists
-        return None, "Salesforce is not configured.", None, None, None, None, None
+            return stale, None, tti, ati, eti, None, ps_assists, ttw, tte
+        return None, "Salesforce is not configured.", None, None, None, None, None, None, None
 
     core_exc: Exception | None = None
     opps = win_rate_opps = pipe_opps = email_tasks = meeting_events = all_owner_opps = ps_records = None
-    team_total_icav = act_total_icav = exp_total_icav = None
+    team_total_icav = act_total_icav = exp_total_icav = team_total_earr = None
     team_total_filter = team.get("team_total_filter")
     team_icav_filter  = team.get("team_icav_filter") or team_total_filter
     act_icav_clause   = team.get("act_icav_clause")
@@ -2254,8 +2280,9 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
             f_act_total  = pool.submit(get_team_total_icav, act_filter_used, info["start"], info["end"])
             f_exp_total  = pool.submit(get_team_total_icav, exp_filter_used, info["start"], info["end"])
             f_all_owners = pool.submit(sf.query, build_all_owners_soql(team_total_filter, info["start"], info["end"]))
+            f_team_earr  = pool.submit(get_team_total_earr, team_total_filter, info["start"], info["end"])
         else:
-            f_team_total = f_act_total = f_exp_total = f_all_owners = None
+            f_team_total = f_act_total = f_exp_total = f_all_owners = f_team_earr = None
 
         try:
             opps          = f_opps.result()
@@ -2292,6 +2319,9 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
         if f_all_owners:
             try: all_owner_opps = f_all_owners.result()
             except Exception: log.warning("All-owners query failed %s/%s", cache_key, period_key, exc_info=True)
+        if f_team_earr:
+            try: team_total_earr = f_team_earr.result()
+            except Exception: log.warning("Team total eARR failed %s/%s", cache_key, period_key, exc_info=True)
 
         try:
             ps_records = f_ps.result()
@@ -2302,14 +2332,16 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
     if act_icav_clause and exp_icav_clause and act_total_icav is not None and exp_total_icav is not None:
         team_total_icav = act_total_icav + exp_total_icav
 
+    team_total_wins = len(all_owner_opps) if all_owner_opps is not None else None
+
     if core_exc is not None:
-        stale, tti, ati, eti, ps_assists = load_cached(cache_key, period_key, icav_min)
+        stale, tti, ati, eti, ps_assists, ttw, tte = load_cached(cache_key, period_key, icav_min)
         if stale:
-            return stale, None, tti, ati, eti, None, ps_assists
-        return None, f"Salesforce query failed: {core_exc}", None, None, None, None, None
+            return stale, None, tti, ati, eti, None, ps_assists, ttw, tte
+        return None, f"Salesforce query failed: {core_exc}", None, None, None, None, None, None, None
 
     if not opps:
-        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, []
+        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, [], team_total_wins, team_total_earr
 
     ses = build_ses(opps, motion, notes_floor=icav_min, period_key=period_key)
     merge_win_rate(ses, win_rate_opps, motion)
@@ -2337,13 +2369,13 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
 
     ses = [s for s in ses if s["act_wins"] + s["exp_wins"] > 0]
     if not ses:
-        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, []
+        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, [], team_total_wins, team_total_earr
 
     ranked = rank_ses(ses)
     ps_assists = compute_ps_assists(ps_records or [])
-    result = save_cached(ranked, cache_key, period_key, icav_min, motion, team_total_icav, act_total_icav, exp_total_icav, ps_assists)
+    result = save_cached(ranked, cache_key, period_key, icav_min, motion, team_total_icav, act_total_icav, exp_total_icav, ps_assists, team_total_wins, team_total_earr)
     log.info("Refreshed %s/%s (min $%s): %d opps, %d PS assists", cache_key, period_key, icav_min, len(opps), len(ps_assists))
-    return result, None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, ps_assists
+    return result, None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, ps_assists, team_total_wins, team_total_earr
 
 
 # ---------------------------------------------------------------------------

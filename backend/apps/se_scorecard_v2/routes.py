@@ -123,7 +123,7 @@ def api_report():
     if err:
         return jsonify({"error": err}), 400
     subteam_key = request.args.get("subteam", "")
-    ses_list, err, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, ps_assists = _get_data(team_key, period_key, icav_min, subteam_key)
+    ses_list, err, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, ps_assists, team_total_wins, team_total_earr = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
     if _resolve_se_name(ses_list):
@@ -168,11 +168,15 @@ def api_report():
     se_icav_pct     = round(se_icav     / team_total_icav * 100) if team_total_icav else None
     se_act_icav_pct = round(se_act_icav / act_total_icav  * 100) if act_total_icav  else None
     se_exp_icav_pct = round(se_exp_icav / exp_total_icav  * 100) if exp_total_icav  else None
+    se_earr         = sum(s.get("total_earr", 0) for s in ses_list)
+    se_earr_pct     = round(se_earr / team_total_earr * 100) if team_total_earr else None
 
     return jsonify({
         "ranked": ses_list, "total": total, "icav_min": icav_min,
-        "team_icav": se_icav, "team_earr": sum(s.get("total_earr", 0) for s in ses_list),
+        "team_icav": se_icav, "team_earr": se_earr,
         "team_wins": sum(s["act_wins"] + s["exp_wins"] for s in ses_list),
+        "team_total_wins": team_total_wins,
+        "team_total_earr": team_total_earr, "se_earr_pct": se_earr_pct,
         "team_arr":  sum(s.get("exp_arr_total", 0) for s in ses_list),
         "team_total_icav": team_total_icav, "act_total_icav": act_total_icav, "exp_total_icav": exp_total_icav,
         "se_icav_pct": se_icav_pct, "se_act_icav_pct": se_act_icav_pct, "se_exp_icav_pct": se_exp_icav_pct,
