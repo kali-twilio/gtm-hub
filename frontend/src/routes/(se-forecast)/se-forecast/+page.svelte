@@ -20,6 +20,7 @@
 
   interface Deal {
     id: string; name: string; account: string; account_notes: string; account_website: string;
+    account_country: string;
     se_name: string; ae_name: string; ae_role: string;
     stage: string; presales: string; forecast_cat: string;
     close_date: string; icav: number; earr: number;
@@ -31,7 +32,7 @@
   }
   interface SEGroup { se_name: string; total_icav: number; total_earr: number; deals: Deal[]; }
   interface UnassignedDeal {
-    id: string; name: string; account: string; ae_name: string;
+    id: string; name: string; account: string; account_country: string; ae_name: string;
     stage: string; presales: string; forecast_cat: string;
     close_date: string; icav: number; earr: number;
     next_step: string; last_activity: string; se_involved: string;
@@ -146,6 +147,7 @@
     const pred = makeFilter(selectedQuarter, selectedMonth);
     const fromUnassigned: Deal[] = unassigned.map(u => ({
       id: u.id, name: u.name, account: u.account, account_notes: '', account_website: '',
+      account_country: '',
       se_name: '', ae_name: u.ae_name, ae_role: '',
       stage: u.stage, presales: u.presales, forecast_cat: u.forecast_cat,
       close_date: u.close_date, icav: u.icav, earr: u.earr,
@@ -519,6 +521,7 @@
                   <div class="opp-acct-row">
                     <span class="opp-acct">{deal.account || deal.name}</span>
                     {#if deal.is_expansion}<span class="type-exp">Exp</span>{:else}<span class="type-act">Act</span>{/if}
+                    {#if deal.account_country}<span class="card-country">{deal.account_country}</span>{/if}
                   </div>
                   <div class="opp-name">{deal.name}</div>
                 </td>
@@ -620,6 +623,7 @@
                   <div class="card-meta">
                     {#if deal.forecast_cat}<span class="cat-pill" style="color:{CAT_COLOR[deal.forecast_cat]??'#6b7280'};background:{CAT_COLOR[deal.forecast_cat]??'#6b7280'}18;border:1px solid {CAT_COLOR[deal.forecast_cat]??'#6b7280'}30">{deal.forecast_cat}</span>{/if}
                     <span class="card-close">{fmtDate(deal.close_date)}</span>
+                    {#if deal.account_country}<span class="card-country">{deal.account_country}</span>{/if}
                     {#if deal.ps_names?.length}<span class="badge-ps" title="PS: {deal.ps_names.join(', ')}">PS</span>{/if}
                   </div>
                   <div class="card-people">{deal.se_name || '—'} · {deal.ae_name || '—'}</div>
@@ -648,6 +652,7 @@
                   <div class="card-meta">
                     {#if deal.forecast_cat}<span class="cat-pill" style="color:{CAT_COLOR[deal.forecast_cat]??'#6b7280'};background:{CAT_COLOR[deal.forecast_cat]??'#6b7280'}18;border:1px solid {CAT_COLOR[deal.forecast_cat]??'#6b7280'}30">{deal.forecast_cat}</span>{/if}
                     <span class="card-close">{fmtDate(deal.close_date)}</span>
+                    {#if deal.account_country}<span class="card-country">{deal.account_country}</span>{/if}
                     {#if deal.ps_names?.length}<span class="badge-ps" title="PS: {deal.ps_names.join(', ')}">PS</span>{/if}
                   </div>
                   <div class="card-people">{deal.se_name || '—'} · {deal.ae_name || '—'}</div>
@@ -694,6 +699,7 @@
                         {/if}
                         {#if deal.is_expansion}<span class="type-exp">Exp</span>{:else}<span class="type-act">Act</span>{/if}
                         <span class="card-close">{fmtDate(deal.close_date)}</span>
+                        {#if deal.account_country}<span class="card-country">{deal.account_country}</span>{/if}
                         {#if deal.mismatch}<span class="badge-mis">⚠</span>{/if}
                         {#if deal.ps_names?.length}<span class="badge-ps" title="PS: {deal.ps_names.join(', ')}">PS</span>{/if}
                       </div>
@@ -733,7 +739,10 @@
               {#each filteredUnassigned as d (d.id)}
                 <tr class="dr">
                   <td class="col-acct">
-                    <div class="opp-acct">{d.account || d.name}</div>
+                    <div class="opp-acct-row">
+                      <span class="opp-acct">{d.account || d.name}</span>
+                      {#if d.account_country}<span class="card-country">{d.account_country}</span>{/if}
+                    </div>
                     <div class="opp-name">{d.name}</div>
                   </td>
                   <td class="small">{d.ae_name || '—'}</td>
@@ -964,6 +973,7 @@
   .card-opp { font-size:11px; color:rgba(13,18,43,0.45); margin-bottom:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .card-meta { display:flex; flex-wrap:wrap; gap:4px; align-items:center; margin-bottom:5px; }
   .card-close { font-size:10px; color:rgba(13,18,43,0.4); }
+  .card-country { font-size:10px; color:rgba(13,18,43,0.5); background:rgba(13,18,43,0.06); border-radius:3px; padding:1px 5px; white-space:nowrap; }
   .card-people { font-size:11px; color:rgba(13,18,43,0.5); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 
   .cat-pill { display:inline-block; padding:2px 7px; border-radius:20px; font-size:10px; font-weight:700; white-space:nowrap; }

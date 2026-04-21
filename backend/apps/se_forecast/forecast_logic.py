@@ -91,7 +91,7 @@ def soql_assigned(start: str, end: str) -> str:
         f" NextStep, LastActivityDate,"
         f" Technical_Lead__r.Name, Technical_Lead__r.UserRole.Name,"
         f" Owner.Name, Owner.UserRole.Name,"
-        f" AccountId, Account.Name, Account.Website, Account.SE_Notes__c,"
+        f" AccountId, Account.Name, Account.Website, Account.SE_Notes__c, Account.BillingCountry,"
         f" Sales_Engineer_Notes__c, SE_Notes_History__c,"
         f" FY_16_Owner_Team__c"
         f" FROM Opportunity"
@@ -125,7 +125,7 @@ def soql_unassigned(start: str, end: str) -> str:
         f" Presales_Stage__c, {_ICAV_FIELD},"
         f" eARR_post_Launch__c,"
         f" Owner.Name, Owner.UserRole.Name,"
-        f" Account.Name,"
+        f" Account.Name, Account.BillingCountry,"
         f" NextStep, LastActivityDate,"
         f" Renegotiated_Deal_SE_Involved__c,"
         f" FY_16_Owner_Team__c"
@@ -216,6 +216,7 @@ def fmt_opp(opp: dict) -> dict:
         "account_id":      (opp.get("AccountId") or "").strip(),
         "account_website": (acct.get("Website") or "").strip(),
         "account_notes":   (acct.get("SE_Notes__c") or "").strip(),
+        "account_country": (acct.get("BillingCountry") or "").strip(),
         "se_name":         (tl.get("Name") or "").strip(),
         "ae_name":         (owner.get("Name") or "").strip(),
         "ae_role":         ((owner.get("UserRole") or {}).get("Name") or "").strip(),
@@ -243,8 +244,9 @@ def fmt_unassigned(opp: dict) -> dict:
     return {
         "id":           opp.get("Id") or "",
         "name":         (opp.get("Name") or "").strip(),
-        "account":      (acct.get("Name") or "").strip(),
-        "ae_name":      (owner.get("Name") or "").strip(),
+        "account":         (acct.get("Name") or "").strip(),
+        "account_country": (acct.get("BillingCountry") or "").strip(),
+        "ae_name":         (owner.get("Name") or "").strip(),
         "stage":        (opp.get("StageName") or "").strip(),
         "presales":     (opp.get("Presales_Stage__c") or "").strip(),
         "forecast_cat": (opp.get("ForecastCategoryName") or "").strip(),

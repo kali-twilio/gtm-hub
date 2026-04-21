@@ -48,6 +48,10 @@ def enrich_me(email: str) -> dict:
             except Exception:
                 continue
             se_name = logic.email_to_se_name(email, cached)
+            if not se_name:
+                display = out.get("sf_display_name") or session.get("sf_display_name", "")
+                if display:
+                    se_name = next((s["name"] for s in cached if s["name"] == display), None)
             if se_name:
                 out.update({"sf_is_se": True, "sf_se_name": se_name, "sf_team": team_key})
                 return out
@@ -57,6 +61,16 @@ def enrich_me(email: str) -> dict:
 
 def _get_data(team_key, period_key, icav_min=0, subteam_key=""):
     return logic.get_data(TEAMS, team_key, period_key, icav_min, subteam_key)
+
+
+def _resolve_se_name(ses: list) -> str | None:
+    """Return the SE name for the current session user, trying email then SF display name."""
+    name = logic.email_to_se_name(session.get("user_email", ""), ses)
+    if not name and session.get("sf_access") == "se_restricted":
+        display = session.get("sf_display_name", "")
+        if display:
+            name = next((s["name"] for s in ses if s["name"] == display), None)
+    return name
 
 
 # ---------------------------------------------------------------------------
@@ -94,7 +108,7 @@ def api_ses():
     if err:
         return jsonify({"error": err}), 503
     team_medians = logic.compute_team_medians(ses)
-    se_name      = logic.email_to_se_name(session.get("user_email", ""), ses)
+    se_name = _resolve_se_name(ses)
     if se_name:
         ses = [s for s in ses if s["name"] == se_name]
     team_motion = TEAMS[team_key].get("motion", "dsr") if team_key in TEAMS else "dsr"
@@ -112,7 +126,7 @@ def api_report():
     ses_list, err, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, ps_assists = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
-    if logic.email_to_se_name(session.get("user_email", ""), ses_list):
+    if _resolve_se_name(ses_list):
         return jsonify({"error": "Access denied"}), 403
 
     team       = TEAMS[team_key]
@@ -230,7 +244,7 @@ def api_rankings():
     ses_list, err, *_ = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
-    if logic.email_to_se_name(session.get("user_email", ""), ses_list):
+    if _resolve_se_name(ses_list):
         return jsonify({"error": "Access denied"}), 403
 
     team       = TEAMS[team_key]
