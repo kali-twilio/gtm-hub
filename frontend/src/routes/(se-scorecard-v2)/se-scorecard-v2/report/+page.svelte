@@ -17,7 +17,7 @@
   let titleFilter   = $state('');
   let productFilter = $state('');
   let aeEngageSort  = $state<'deals' | 'icav'>('deals');
-  let filtersVisible = $state(true);
+  let filtersVisible = $state(false);
 
   // Returns a copy of an SE with iACV/wins recalculated from only fully-documented
   // TW opps (both Sales_Engineer_Notes__c and SE_Notes_History__c filled).
@@ -315,6 +315,7 @@ const actStatCols = $derived(data ? [
 
   let activeSection = $state('rankings');
   let navHovered = $state(false);
+  let filterBarEl = $state<HTMLElement | null>(null);
 
   const navSections = $derived(data ? [
     { id: 'rankings',  label: 'Standings' },
@@ -323,6 +324,7 @@ const actStatCols = $derived(data ? [
     { id: 'deals',     label: 'Largest Deals',   show: dealSorted.length > 0 },
     { id: 'notes',      label: 'Notes Quality',   show: !notesFilter },
     { id: 'ae_engage',  label: (data.motion === 'dsr' ? 'DSR' : 'AE') + ' Engagement', show: !!(data.ae_engagement?.length) },
+    { id: 'ps_assists', label: 'PS Assists',                                            show: !!(data.ps_assists?.length) },
     { id: 'trends',     label: 'Trends & Flags' },
     { id: 'recs',      label: 'Recommendations', show: !!(data.recommendations?.length) },
     { id: 'profiles',  label: 'SE Profiles' },
@@ -332,9 +334,10 @@ const actStatCols = $derived(data ? [
     if (!data || typeof window === 'undefined') return;
     const ids = navSections.map((s: any) => s.id);
     function onScroll() {
+      const threshold = filterBarEl ? filterBarEl.getBoundingClientRect().bottom + 16 : 100;
       for (let i = ids.length - 1; i >= 0; i--) {
         const el = document.getElementById(ids[i]);
-        if (el && el.getBoundingClientRect().top <= 100) {
+        if (el && el.getBoundingClientRect().top <= threshold) {
           activeSection = ids[i];
           return;
         }
@@ -406,7 +409,7 @@ const actStatCols = $derived(data ? [
   {#each navSections as sec}
   {@const isActive = activeSection === sec.id}
   <div
-    onclick={() => { const el = document.getElementById(sec.id); if (el) window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - 72, behavior: 'smooth' }); }}
+    onclick={() => { const el = document.getElementById(sec.id); if (el) { activeSection = sec.id; const offset = filterBarEl ? filterBarEl.getBoundingClientRect().bottom : 72; window.scrollTo({ top: el.getBoundingClientRect().top + window.scrollY - offset - 8, behavior: 'smooth' }); } }}
     style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 0;position:relative"
   >
     <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:{isActive?'var(--red)':'var(--text-muted)'};max-width:{navHovered||isActive?'140px':'0'};overflow:hidden;white-space:nowrap;transition:max-width 0.2s ease,opacity 0.15s;opacity:{navHovered||isActive?1:0}">{sec.label}</span>
@@ -435,7 +438,7 @@ const actStatCols = $derived(data ? [
   </div>
 
   <!-- Controls row — sticky -->
-  <div style="position:sticky;top:68px;z-index:90;margin:0 -24px;padding:10px 24px;background:var(--bg);border-bottom:1px solid rgba(var(--red-rgb),0.1);backdrop-filter:blur(8px);margin-bottom:0">
+  <div bind:this={filterBarEl} style="position:sticky;top:68px;z-index:90;margin:0 -24px;padding:10px 24px;background:var(--bg);border-bottom:1px solid rgba(var(--red-rgb),0.1);backdrop-filter:blur(8px);margin-bottom:0">
   <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:{filtersVisible ? '10px' : '0'}">
     <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:var(--text-muted)">Filters{!filtersVisible && (titleFilter || productFilter || notesFilter || showActivity || icavMin > 0) ? ' •' : ''}</span>
     <button onclick={() => filtersVisible = !filtersVisible} class="p5-ctrl" style="padding:3px 10px;font-size:10px">{filtersVisible ? '▲ Hide' : '▼ Show'}</button>
@@ -1190,6 +1193,55 @@ const actStatCols = $derived(data ? [
             <td style="padding:10px 16px;font-size:12px;color:var(--text-muted)">{ae.se_names.join(', ')}{ae.se_count > 3 ? ` +${ae.se_count - 3}` : ''}</td>
           </tr>
           {/each}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {/if}
+
+  <!-- Product Specialist Assists -->
+  {#if data.ps_assists?.length}
+  <div id="ps_assists" class="p5-panel" style="margin-bottom:20px">
+    <div class="p5-panel-header">
+      <span class="tbl-title-wrap">
+        <h2 class="p5-panel-header-title">Product Specialist Assists</h2>
+        <span class="tbl-title-tip">Aggregated from Demo_Engineering_Request__c records linked to Closed Won opps for this team and period. Shows which Product Specialists assisted on deals and the iACV they helped close.</span>
+      </span>
+    </div>
+    <div class="tbl-scroll">
+      <table style="width:100%;font-size:13px">
+        <thead style="background:rgba(var(--red-rgb),0.06)">
+          <tr>{#each ['#','Product Specialist','Total iACV','Top SEs','Opportunities'] as h}<th style="padding:10px 16px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);font-style:{$theme==='p5'?'italic':'normal'};white-space:nowrap">{h}</th>{/each}</tr>
+        </thead>
+        <tbody>
+          {#each [...data.ps_assists].sort((a: any, b: any) => b.total_icav - a.total_icav) as ps, i}
+          <tr style="border-bottom:1px solid rgba(var(--red-rgb),0.05)">
+            <td style="padding:10px 16px;color:var(--text-muted);font-weight:700;font-style:{$theme==='p5'?'italic':'normal'}">{i + 1}</td>
+            <td style="padding:10px 16px;font-weight:700;color:var(--text)">{ps.name}</td>
+            <td style="padding:10px 16px;font-weight:700;color:var(--text)">{fmt(ps.total_icav)}</td>
+            <td style="padding:10px 16px;font-size:12px;color:var(--text-muted)">{ps.se_names.join(', ')}{ps.se_count > 3 ? ` +${ps.se_count - 3}` : ''}</td>
+            <td style="padding:10px 16px;font-size:12px">
+              <div style="display:flex;flex-direction:column;gap:3px">
+                {#each ps.opps as opp}
+                {@const sfUrl = opp.id && data.sf_instance_url ? `${data.sf_instance_url}/${opp.id}` : null}
+                <div style="display:flex;align-items:center;gap:6px">
+                  {#if sfUrl}
+                  <a href={sfUrl} target="_blank" rel="noopener noreferrer" style="color:var(--text);text-decoration:none;border-bottom:1px solid rgba(var(--red-rgb),0.25)" onmouseenter={e => (e.currentTarget as HTMLElement).style.borderBottomColor='var(--red)'} onmouseleave={e => (e.currentTarget as HTMLElement).style.borderBottomColor='rgba(var(--red-rgb),0.25)'}>{opp.name}</a>
+                  {:else}<span style="color:var(--text-muted)">{opp.name}</span>{/if}
+                  <span style="color:var(--text-faint);font-size:11px">{fmt(opp.icav)}</span>
+                </div>
+                {/each}
+              </div>
+            </td>
+          </tr>
+          {/each}
+          <tr style="border-top:2px solid rgba(var(--red-rgb),0.2);background:rgba(var(--red-rgb),0.03)">
+            <td style="padding:10px 16px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:var(--red)">TOT</td>
+            <td style="padding:10px 16px;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:var(--red)">Team Total</td>
+            <td style="padding:10px 16px;font-weight:900;color:var(--red)">{fmt(data.ps_assists.reduce((s: number, p: any) => s + p.total_icav, 0))}</td>
+            <td style="padding:10px 16px"></td>
+            <td style="padding:10px 16px;font-size:12px;color:var(--text-faint)">{data.ps_assists.reduce((s: number, p: any) => s + p.deals, 0)} deals across {data.ps_assists.length} PS</td>
+          </tr>
         </tbody>
       </table>
     </div>

@@ -27,6 +27,7 @@
     next_step: string; last_activity: string;
     se_notes: string; se_history: string;
     is_tw: boolean; is_expansion: boolean; mismatch: string | null;
+    ps_names: string[];
   }
   interface SEGroup { se_name: string; total_icav: number; total_earr: number; deals: Deal[]; }
   interface UnassignedDeal {
@@ -573,7 +574,7 @@
                     </div>
                   {/if}
                 </td>
-                <td class="small">{#if deal.se_name}{deal.se_name}{:else}<span class="badge-unassigned">Unassigned</span>{/if}</td>
+                <td class="small">{#if deal.se_name}{deal.se_name}{:else}<span class="badge-unassigned">Unassigned</span>{/if}{#if deal.ps_names?.length}&nbsp;<span class="badge-ps" title="PS: {deal.ps_names.join(', ')}">PS</span>{/if}</td>
                 <td class="small">{deal.ae_name || '—'}</td>
                 <td>
                   {#if deal.presales}<span class="stage-pill" class:tw={deal.is_tw}>{deal.presales.replace(/^\d+ - /,'')}</span>
@@ -619,6 +620,7 @@
                   <div class="card-meta">
                     {#if deal.forecast_cat}<span class="cat-pill" style="color:{CAT_COLOR[deal.forecast_cat]??'#6b7280'};background:{CAT_COLOR[deal.forecast_cat]??'#6b7280'}18;border:1px solid {CAT_COLOR[deal.forecast_cat]??'#6b7280'}30">{deal.forecast_cat}</span>{/if}
                     <span class="card-close">{fmtDate(deal.close_date)}</span>
+                    {#if deal.ps_names?.length}<span class="badge-ps" title="PS: {deal.ps_names.join(', ')}">PS</span>{/if}
                   </div>
                   <div class="card-people">{deal.se_name || '—'} · {deal.ae_name || '—'}</div>
                 </div>
@@ -646,6 +648,7 @@
                   <div class="card-meta">
                     {#if deal.forecast_cat}<span class="cat-pill" style="color:{CAT_COLOR[deal.forecast_cat]??'#6b7280'};background:{CAT_COLOR[deal.forecast_cat]??'#6b7280'}18;border:1px solid {CAT_COLOR[deal.forecast_cat]??'#6b7280'}30">{deal.forecast_cat}</span>{/if}
                     <span class="card-close">{fmtDate(deal.close_date)}</span>
+                    {#if deal.ps_names?.length}<span class="badge-ps" title="PS: {deal.ps_names.join(', ')}">PS</span>{/if}
                   </div>
                   <div class="card-people">{deal.se_name || '—'} · {deal.ae_name || '—'}</div>
                 </div>
@@ -692,6 +695,7 @@
                         {#if deal.is_expansion}<span class="type-exp">Exp</span>{:else}<span class="type-act">Act</span>{/if}
                         <span class="card-close">{fmtDate(deal.close_date)}</span>
                         {#if deal.mismatch}<span class="badge-mis">⚠</span>{/if}
+                        {#if deal.ps_names?.length}<span class="badge-ps" title="PS: {deal.ps_names.join(', ')}">PS</span>{/if}
                       </div>
                       <div class="card-people">{deal.se_name || '—'} · {deal.ae_name || '—'}</div>
                     </div>
@@ -966,6 +970,7 @@
   .type-act { display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700; background:#eff6ff; color:#1d4ed8; }
   .type-exp { display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700; background:#fdf4ff; color:#7e22ce; }
   .badge-mis { display:inline-block; padding:1px 6px; border-radius:20px; font-size:10px; font-weight:700; background:#fef2f2; color:#dc2626; border:1px solid #fecaca; white-space:nowrap; }
+  .badge-ps  { display:inline-block; padding:1px 6px; border-radius:20px; font-size:10px; font-weight:700; background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; white-space:nowrap; cursor:default; }
   .badge-ok { display:inline-block; padding:1px 6px; border-radius:20px; font-size:10px; font-weight:700; background:#f0fdf4; color:#15803d; border:1px solid #bbf7d0; }
   .badge-unassigned { display:inline-block; padding:1px 6px; border-radius:20px; font-size:10px; font-weight:700; background:#f3f4f6; color:#6b7280; border:1px solid #e5e7eb; }
   .rank { font-size:12px; font-weight:700; color:rgba(13,18,43,0.3); text-align:center; }

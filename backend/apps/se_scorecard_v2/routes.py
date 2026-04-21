@@ -109,7 +109,7 @@ def api_report():
     if err:
         return jsonify({"error": err}), 400
     subteam_key = request.args.get("subteam", "")
-    ses_list, err, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps = _get_data(team_key, period_key, icav_min, subteam_key)
+    ses_list, err, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, ps_assists = _get_data(team_key, period_key, icav_min, subteam_key)
     if err:
         return jsonify({"error": err}), 503
     if logic.email_to_se_name(session.get("user_email", ""), ses_list):
@@ -170,6 +170,7 @@ def api_report():
         "trends":          sorted(logic.collect_team_trends(ses_list, team.get("motion", "dsr")), key=lambda x: x[0]),
         "recommendations": logic.generate_recommendations(ses_list, team.get("motion", "dsr")),
         "ae_engagement":   logic.compute_ae_engagement(ses_list, all_owner_opps or []),
+        "ps_assists":      ps_assists or [],
         "exp_trend": exp_trend, "quarter": period["label"], "team_label": team_label,
         "motion": team.get("motion", "dsr"), "sf_instance_url": sf.instance_url,
         "ae_dsr_count": ae_dsr_count, "ae_to_se_ratio": ae_to_se_ratio,

@@ -109,6 +109,16 @@ def soql_assigned(start: str, end: str) -> str:
     )
 
 
+def soql_ps_engagement(opp_ids: list[str]) -> str:
+    id_list = ", ".join(f"'{oid}'" for oid in opp_ids)
+    return (
+        f"SELECT Opportunity__c, Assigned_To__r.Name"
+        f" FROM Demo_Engineering_Request__c"
+        f" WHERE Opportunity__c IN ({id_list})"
+        f" AND Assigned_To__c != null"
+    )
+
+
 def soql_unassigned(start: str, end: str) -> str:
     return (
         f"SELECT Id, Name, CloseDate, StageName, ForecastCategoryName,"
@@ -361,6 +371,24 @@ def fetch_pipeline(period_key: str, start: str, end: str) -> tuple[dict | None, 
 
     formatted  = [fmt_opp(o) for o in (assigned_opps or [])]
     unassigned = [fmt_unassigned(o) for o in (unassigned_opps or [])]
+
+    opp_ids = [d["id"] for d in formatted if d["id"]]
+    ps_by_opp: dict[str, list[str]] = {}
+    if opp_ids:
+        try:
+            der_records = sf.query(soql_ps_engagement(opp_ids), timeout=30) or []
+            for rec in der_records:
+                oid     = rec.get("Opportunity__c") or ""
+                ps_name = ((rec.get("Assigned_To__r") or {}).get("Name") or "").strip()
+                if oid and ps_name:
+                    ps_by_opp.setdefault(oid, [])
+                    if ps_name not in ps_by_opp[oid]:
+                        ps_by_opp[oid].append(ps_name)
+        except Exception as e:
+            log.warning("PS engagement query failed (non-fatal): %s", e)
+
+    for d in formatted:
+        d["ps_names"] = ps_by_opp.get(d["id"], [])
 
     no_tw_act, no_tw_exp, tw_open = [], [], []
     for d in formatted:

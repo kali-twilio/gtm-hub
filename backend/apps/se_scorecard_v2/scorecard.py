@@ -1982,6 +1982,100 @@ def build_email_soql(start: str, end: str, se_owner_filter: str) -> str:
     )
 
 
+def _opp_filter_for_child(soql_filter: str) -> str:
+    """Rewrite an Opportunity soql_filter for use in a child-object WHERE clause.
+
+    When querying FROM Demo_Engineering_Request__c, all Opportunity field
+    references must be prefixed with Opportunity__r. so Salesforce can
+    traverse the parent relationship.
+    """
+    # Order matters: replace longer/more-specific patterns first so we don't
+    # double-prefix anything.
+    replacements = [
+        ("Technical_Lead__r.",   "Opportunity__r.Technical_Lead__r."),
+        ("FY_16_Owner_Team__c",  "Opportunity__r.FY_16_Owner_Team__c"),
+        ("Owner.UserRole.Name",  "Opportunity__r.Owner.UserRole.Name"),
+        ("Owner.Name",           "Opportunity__r.Owner.Name"),
+    ]
+    result = soql_filter
+    for old, new in replacements:
+        result = result.replace(old, new)
+    return result
+
+
+def build_ps_soql(soql_filter: str, start: str, end: str) -> str:
+    opp_filter = _opp_filter_for_child(soql_filter)
+    return (
+        f"SELECT Id, Name, Assigned_To__r.Name, Assigned_To__r.Email, "
+        f"Product_Specialist_Support_Type__c, "
+        f"Opportunity__r.Id, Opportunity__r.Name, Opportunity__r.CloseDate, "
+        f"Opportunity__r.{_ICAV_FIELD}, Opportunity__r.Owner.Name, "
+        f"Opportunity__r.Technical_Lead__r.Name, "
+        f"Opportunity__r.Account.Name "
+        f"FROM Demo_Engineering_Request__c "
+        f"WHERE Opportunity__c != null "
+        f"AND Opportunity__r.StageName = 'Closed Won' "
+        f"AND Opportunity__r.CloseDate >= {start} "
+        f"AND Opportunity__r.CloseDate <= {end} "
+        f"AND {opp_filter} "
+        f"AND Assigned_To__c != null"
+    )
+
+
+def compute_ps_assists(ps_records: list) -> list:
+    """Aggregate Demo_Engineering_Request__c records into per-PS summary rows."""
+    by_ps: dict[str, dict] = {}
+    for rec in ps_records:
+        ps_rel  = rec.get("Assigned_To__r") or {}
+        ps_name = (ps_rel.get("Name") or "").strip()
+        if not ps_name:
+            continue
+        opp_rel   = rec.get("Opportunity__r") or {}
+        opp_id    = opp_rel.get("Id") or ""
+        opp_name  = opp_rel.get("Name") or ""
+        opp_icav  = opp_rel.get(_ICAV_FIELD) or 0
+        try:
+            opp_icav = int(float(opp_icav))
+        except (TypeError, ValueError):
+            opp_icav = 0
+        opp_owner = ((opp_rel.get("Owner") or {}).get("Name") or "")
+        se_name   = ((opp_rel.get("Technical_Lead__r") or {}).get("Name") or "")
+        acct_name = ((opp_rel.get("Account") or {}).get("Name") or "")
+
+        if ps_name not in by_ps:
+            by_ps[ps_name] = {"name": ps_name, "deals": 0, "total_icav": 0,
+                              "opp_ids": set(), "se_names": set(), "opps": []}
+        entry = by_ps[ps_name]
+        if opp_id and opp_id not in entry["opp_ids"]:
+            entry["opp_ids"].add(opp_id)
+            entry["deals"] += 1
+            entry["total_icav"] += opp_icav
+            entry["opps"].append({
+                "id":       opp_id,
+                "name":     opp_name,
+                "icav":     opp_icav,
+                "owner":    opp_owner,
+                "se":       se_name,
+                "account":  acct_name,
+            })
+        if se_name:
+            entry["se_names"].add(se_name)
+
+    result = []
+    for ps in by_ps.values():
+        se_list = sorted(ps["se_names"])
+        result.append({
+            "name":        ps["name"],
+            "deals":       ps["deals"],
+            "total_icav":  ps["total_icav"],
+            "avg_icav":    round(ps["total_icav"] / ps["deals"]) if ps["deals"] else 0,
+            "se_count":    len(ps["se_names"]),
+            "se_names":    se_list[:3],
+            "opps":        sorted(ps["opps"], key=lambda x: x["icav"], reverse=True),
+        })
+    return sorted(result, key=lambda x: x["deals"], reverse=True)
+
+
 def build_meeting_soql(start: str, end: str, se_owner_filter: str) -> str:
     return (
         f"SELECT Id, WhatId, Owner.Name, ActivityDate, RecurrenceActivityId, "
@@ -2103,7 +2197,7 @@ def motion_total_filter(team_total_filter: str, motion: str, which: str,
 # Main data fetch
 # ---------------------------------------------------------------------------
 
-def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, subteam_key: str = "") -> tuple[list | None, str | None, int | None, int | None, int | None, list | None]:
+def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, subteam_key: str = "") -> tuple[list | None, str | None, int | None, int | None, int | None, list | None, list | None]:
     team = teams.get(team_key)
     if not team:
         return None, f"Unknown team '{team_key}'", None, None, None, None
@@ -2126,16 +2220,16 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
 
     if is_fresh(cache_key, period_key, icav_min, info["ttl"]):
         ses, tti, ati, eti = load_cached(cache_key, period_key, icav_min)
-        return ses, None, tti, ati, eti, None
+        return ses, None, tti, ati, eti, None, None
 
     if not sf.configured:
         stale, tti, ati, eti = load_cached(cache_key, period_key, icav_min)
         if stale:
-            return stale, None, tti, ati, eti, None
-        return None, "Salesforce is not configured.", None, None, None, None
+            return stale, None, tti, ati, eti, None, None
+        return None, "Salesforce is not configured.", None, None, None, None, None
 
     core_exc: Exception | None = None
-    opps = win_rate_opps = pipe_opps = email_tasks = meeting_events = all_owner_opps = None
+    opps = win_rate_opps = pipe_opps = email_tasks = meeting_events = all_owner_opps = ps_records = None
     team_total_icav = act_total_icav = exp_total_icav = None
     team_total_filter = team.get("team_total_filter")
     team_icav_filter  = team.get("team_icav_filter") or team_total_filter
@@ -2145,12 +2239,13 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
     act_filter_used   = team.get("act_icav_filter") or motion_total_filter(team_icav_filter, motion, "act", act_icav_clause, exp_icav_clause)
     exp_filter_used   = team.get("exp_icav_filter") or motion_total_filter(team_icav_filter, motion, "exp", act_icav_clause, exp_icav_clause)
 
-    with ThreadPoolExecutor(max_workers=8) as pool:
+    with ThreadPoolExecutor(max_workers=9) as pool:
         f_opps     = pool.submit(sf.query, build_soql(soql_filter, info["start"], info["end"], icav_min))
         f_win_rate = pool.submit(sf.query, build_win_rate_soql(soql_filter, info["start"], info["end"]))
         f_pipeline = pool.submit(sf.query, build_pipeline_soql(soql_filter, info["end"]))
         f_email    = pool.submit(sf.query, build_email_soql(info["start"], info["end"], email_owner_filter))
         f_meetings = pool.submit(sf.query, build_meeting_soql(info["start"], info["end"], email_owner_filter))
+        f_ps       = pool.submit(sf.query, build_ps_soql(soql_filter, info["start"], info["end"]))
         if team_total_filter and not subteam_key:
             f_team_total = pool.submit(get_team_total_icav, team_icav_filter, info["start"], info["end"])
             f_act_total  = pool.submit(get_team_total_icav, act_filter_used, info["start"], info["end"])
@@ -2195,17 +2290,23 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
             try: all_owner_opps = f_all_owners.result()
             except Exception: log.warning("All-owners query failed %s/%s", cache_key, period_key, exc_info=True)
 
+        try:
+            ps_records = f_ps.result()
+        except Exception:
+            log.warning("PS assists query failed for %s/%s", cache_key, period_key, exc_info=True)
+            ps_records = []
+
     if act_icav_clause and exp_icav_clause and act_total_icav is not None and exp_total_icav is not None:
         team_total_icav = act_total_icav + exp_total_icav
 
     if core_exc is not None:
         stale, tti, ati, eti = load_cached(cache_key, period_key, icav_min)
         if stale:
-            return stale, None, tti, ati, eti, None
-        return None, f"Salesforce query failed: {core_exc}", None, None, None, None
+            return stale, None, tti, ati, eti, None, None
+        return None, f"Salesforce query failed: {core_exc}", None, None, None, None, None
 
     if not opps:
-        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps
+        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, []
 
     ses = build_ses(opps, motion, notes_floor=icav_min, period_key=period_key)
     merge_win_rate(ses, win_rate_opps, motion)
@@ -2233,12 +2334,13 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
 
     ses = [s for s in ses if s["act_wins"] + s["exp_wins"] > 0]
     if not ses:
-        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps
+        return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, []
 
     ranked = rank_ses(ses)
     result = save_cached(ranked, cache_key, period_key, icav_min, motion, team_total_icav, act_total_icav, exp_total_icav)
-    log.info("Refreshed %s/%s (min $%s): %d opps", cache_key, period_key, icav_min, len(opps))
-    return result, None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps
+    ps_assists = compute_ps_assists(ps_records or [])
+    log.info("Refreshed %s/%s (min $%s): %d opps, %d PS assists", cache_key, period_key, icav_min, len(opps), len(ps_assists))
+    return result, None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, ps_assists
 
 
 # ---------------------------------------------------------------------------
