@@ -2116,19 +2116,20 @@ def is_fresh(team_key: str, period_key: str, icav_min: int, ttl: int) -> bool:
     return p.exists() and (time.time() - p.stat().st_mtime) < ttl
 
 
-def load_cached(team_key: str, period_key: str, icav_min: int = 0) -> tuple[list | None, int | None, int | None, int | None]:
+def load_cached(team_key: str, period_key: str, icav_min: int = 0) -> tuple[list | None, int | None, int | None, int | None, list | None]:
     p = cache_path(team_key, period_key, icav_min)
     if not p.exists():
-        return None, None, None, None
+        return None, None, None, None, None
     raw = json.loads(p.read_text(encoding="utf-8"))
     if isinstance(raw, list):
         p.unlink(missing_ok=True)
-        return None, None, None, None
-    return raw.get("ses"), raw.get("team_total_icav"), raw.get("act_total_icav"), raw.get("exp_total_icav")
+        return None, None, None, None, None
+    return raw.get("ses"), raw.get("team_total_icav"), raw.get("act_total_icav"), raw.get("exp_total_icav"), raw.get("ps_assists")
 
 
 def save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0, motion: str = "dsr",
-                team_total_icav: int | None = None, act_total_icav: int | None = None, exp_total_icav: int | None = None) -> list:
+                team_total_icav: int | None = None, act_total_icav: int | None = None, exp_total_icav: int | None = None,
+                ps_assists: list | None = None) -> list:
     total   = len(ranked)
     payload = []
     for i, se in enumerate(ranked, 1):
@@ -2146,6 +2147,8 @@ def save_cached(ranked: list, team_key: str, period_key: str, icav_min: int = 0,
             result["act_total_icav"] = act_total_icav
         if exp_total_icav is not None:
             result["exp_total_icav"] = exp_total_icav
+        if ps_assists is not None:
+            result["ps_assists"] = ps_assists
         p   = cache_path(team_key, period_key, icav_min)
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(result), encoding="utf-8")
@@ -2219,13 +2222,13 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
         soql_filter = team["historical_soql_filter"]
 
     if is_fresh(cache_key, period_key, icav_min, info["ttl"]):
-        ses, tti, ati, eti = load_cached(cache_key, period_key, icav_min)
-        return ses, None, tti, ati, eti, None, None
+        ses, tti, ati, eti, ps_assists = load_cached(cache_key, period_key, icav_min)
+        return ses, None, tti, ati, eti, None, ps_assists
 
     if not sf.configured:
-        stale, tti, ati, eti = load_cached(cache_key, period_key, icav_min)
+        stale, tti, ati, eti, ps_assists = load_cached(cache_key, period_key, icav_min)
         if stale:
-            return stale, None, tti, ati, eti, None, None
+            return stale, None, tti, ati, eti, None, ps_assists
         return None, "Salesforce is not configured.", None, None, None, None, None
 
     core_exc: Exception | None = None
@@ -2300,9 +2303,9 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
         team_total_icav = act_total_icav + exp_total_icav
 
     if core_exc is not None:
-        stale, tti, ati, eti = load_cached(cache_key, period_key, icav_min)
+        stale, tti, ati, eti, ps_assists = load_cached(cache_key, period_key, icav_min)
         if stale:
-            return stale, None, tti, ati, eti, None, None
+            return stale, None, tti, ati, eti, None, ps_assists
         return None, f"Salesforce query failed: {core_exc}", None, None, None, None, None
 
     if not opps:
@@ -2337,8 +2340,8 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
         return [], None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, []
 
     ranked = rank_ses(ses)
-    result = save_cached(ranked, cache_key, period_key, icav_min, motion, team_total_icav, act_total_icav, exp_total_icav)
     ps_assists = compute_ps_assists(ps_records or [])
+    result = save_cached(ranked, cache_key, period_key, icav_min, motion, team_total_icav, act_total_icav, exp_total_icav, ps_assists)
     log.info("Refreshed %s/%s (min $%s): %d opps, %d PS assists", cache_key, period_key, icav_min, len(opps), len(ps_assists))
     return result, None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, ps_assists
 
