@@ -142,25 +142,75 @@ def api_report():
     exp_sorted     = sorted(ses_list, key=lambda x: x["exp_icav"], reverse=True)
     deal_sorted    = [s for s in sorted(ses_list, key=lambda x: x["largest_deal_value"], reverse=True) if s["largest_deal_value"] > 0]
 
-    cache_key_trend = f"{team_key}_{subteam_key}" if subteam_key else team_key
-    is_fy           = "_FY" in period_key
-    comparable      = [p for p in logic.available_periods() if (("_FY" in p["key"]) == is_fy) and p["key"] != period_key]
+    # Build granular intra-period trend from tw_opps_detail close dates.
+    # Quarter → monthly buckets (Jan, Feb, Mar); FY → quarterly buckets (Q1–Q4).
+    _MONTH_ABBR = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+    _Q_MONTHS   = {1: (1,2,3), 2: (4,5,6), 3: (7,8,9), 4: (10,11,12)}
 
-    def _exp_snapshot(ses, p_label, p_key, is_current):
-        return {
-            "period": p_label, "period_key": p_key, "is_current": is_current,
-            "team_exp_icav":   sum(s.get("exp_icav", 0) for s in ses),
-            "team_exp_wins":   sum(s.get("exp_wins", 0) for s in ses),
-            "team_influenced": sum(s.get("exp_icav", 0) + s.get("non_tw_exp_icav", 0) for s in ses),
-            "ses": {s["name"]: {"exp_icav": s.get("exp_icav", 0), "influenced": s.get("exp_icav", 0) + s.get("non_tw_exp_icav", 0)} for s in ses},
-        }
+    def _icav_by_motions(opps, key_fn):
+        from collections import defaultdict
+        act, exp, total = defaultdict(int), defaultdict(int), defaultdict(int)
+        for o in opps:
+            cd = o.get("close_date", "")
+            if not cd:
+                continue
+            k = key_fn(cd)
+            if k is None:
+                continue
+            icav = int(o.get("icav", 0) or 0)
+            motion = (o.get("motion") or "").lower()
+            # motion codes: "act"/"nb" = activate/new-biz; "exp"/"strat" = expansion/strategic
+            if motion in ("exp", "strat"):
+                exp[k] += icav
+            else:
+                act[k] += icav
+            total[k] += icav
+        return act, exp, total
 
-    exp_trend = [_exp_snapshot(ses_list, period["label"], period_key, True)]
-    for p in comparable[:3]:
-        prior, *_ = logic.load_cached(cache_key_trend, p["key"], 0)
-        if prior:
-            exp_trend.append(_exp_snapshot(prior, p["label"], p["key"], False))
-    exp_trend.reverse()
+    all_opps = [o for s in ses_list for o in s.get("tw_opps_detail", [])]
+
+    if "_Q" in period_key:
+        yr_s, q_s = period_key.split("_Q")
+        yr, q = int(yr_s), int(q_s)
+        months = _Q_MONTHS[q]
+        def _key(cd):
+            try:
+                m = int(cd[5:7])
+                return m if m in months else None
+            except Exception:
+                return None
+        act_b, exp_b, tot_b = _icav_by_motions(all_opps, _key)
+        exp_trend = [
+            {
+                "period": _MONTH_ABBR[m - 1],
+                "period_key": f"{yr}-{m:02d}",
+                "is_current": m == months[-1],
+                "team_act_icav":   act_b.get(m, 0),
+                "team_exp_icav":   exp_b.get(m, 0),
+                "team_total_icav": tot_b.get(m, 0),
+            }
+            for m in months
+        ]
+    else:
+        yr = int(period_key.split("_")[0])
+        def _key(cd):
+            try:
+                m = int(cd[5:7])
+                return (m - 1) // 3 + 1
+            except Exception:
+                return None
+        act_b, exp_b, tot_b = _icav_by_motions(all_opps, _key)
+        exp_trend = [
+            {
+                "period": f"Q{q}",
+                "period_key": f"{yr}_Q{q}",
+                "is_current": q == 4,
+                "team_act_icav":   act_b.get(q, 0),
+                "team_exp_icav":   exp_b.get(q, 0),
+                "team_total_icav": tot_b.get(q, 0),
+            }
+            for q in range(1, 5)
+        ]
 
     se_icav         = sum(s["total_icav"] for s in ses_list)
     se_act_icav     = sum(s["act_icav"]   for s in ses_list)

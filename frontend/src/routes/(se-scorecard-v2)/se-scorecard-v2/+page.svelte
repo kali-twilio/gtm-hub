@@ -11,7 +11,8 @@
 
   let teams: Team[] = $state([]);
   let periods: Period[] = $state([]);
-  let summary: { total: number; team_icav: number; team_earr: number; team_wins: number; team_arr: number; team_label: string; quarter: string; se_icav_pct: number | null; team_total_icav: number | null; team_total_wins: number | null; team_total_earr: number | null; se_earr_pct: number | null; ae_dsr_count: number | null; ae_to_se_ratio: number | null; motion: string | null } | null = $state(null);
+  interface TrendPoint { period: string; period_key: string; is_current: boolean; team_act_icav: number; team_exp_icav: number; team_total_icav: number; }
+  let summary: { total: number; team_icav: number; team_earr: number; team_wins: number; team_arr: number; team_label: string; quarter: string; se_icav_pct: number | null; team_total_icav: number | null; team_total_wins: number | null; team_total_earr: number | null; se_earr_pct: number | null; ae_dsr_count: number | null; ae_to_se_ratio: number | null; motion: string | null; exp_trend: TrendPoint[] } | null = $state(null);
   let loading = $state(false);
   let showLoading = $state(false);
   let error = $state('');
@@ -28,7 +29,7 @@
     const r = await fetch(`/api/se-scorecard-v2/data/report?team=${teamKey}&period=${periodKey}${sub}`);
     if (r.ok) {
       const d = await r.json();
-      summary = { total: d.total, team_icav: d.team_icav, team_earr: d.team_earr ?? 0, team_wins: d.team_wins, team_arr: d.team_arr ?? 0, team_label: d.team_label, quarter: d.quarter, se_icav_pct: d.se_icav_pct ?? null, team_total_icav: d.team_total_icav ?? null, team_total_wins: d.team_total_wins ?? null, team_total_earr: d.team_total_earr ?? null, se_earr_pct: d.se_earr_pct ?? null, ae_dsr_count: d.ae_dsr_count ?? null, ae_to_se_ratio: d.ae_to_se_ratio ?? null, motion: d.motion ?? null };
+      summary = { total: d.total, team_icav: d.team_icav, team_earr: d.team_earr ?? 0, team_wins: d.team_wins, team_arr: d.team_arr ?? 0, team_label: d.team_label, quarter: d.quarter, se_icav_pct: d.se_icav_pct ?? null, team_total_icav: d.team_total_icav ?? null, team_total_wins: d.team_total_wins ?? null, team_total_earr: d.team_total_earr ?? null, se_earr_pct: d.se_earr_pct ?? null, ae_dsr_count: d.ae_dsr_count ?? null, ae_to_se_ratio: d.ae_to_se_ratio ?? null, motion: d.motion ?? null, exp_trend: d.exp_trend ?? [] };
     } else {
       const d = await r.json().catch(() => ({}));
       error = d.error || 'Failed to load data.';
@@ -244,6 +245,74 @@
     </div>
     {/each}
   </div>
+
+  <!-- iACV Trend Chart -->
+  {#if summary.exp_trend && summary.exp_trend.length >= 2}
+  {@const trend = summary.exp_trend}
+  {@const W = 600}
+  {@const H = 140}
+  {@const PAD_L = 52}
+  {@const PAD_R = 16}
+  {@const PAD_T = 16}
+  {@const PAD_B = 36}
+  {@const cW = W - PAD_L - PAD_R}
+  {@const cH = H - PAD_T - PAD_B}
+  {@const maxV = Math.max(...trend.map(p => p.team_total_icav)) || 1}
+  {@const xOf = (i: number) => trend.length === 1 ? PAD_L + cW / 2 : PAD_L + (i / (trend.length - 1)) * cW}
+  {@const yOf = (v: number) => PAD_T + cH - (v / maxV) * cH}
+  {@const pts = (key: 'team_total_icav' | 'team_act_icav' | 'team_exp_icav') => trend.map((p, i) => `${xOf(i)},${yOf(p[key])}`).join(' ')}
+  {@const fmtM = (v: number) => v >= 1_000_000 ? `$${(v/1_000_000).toFixed(1)}M` : v >= 1_000 ? `$${Math.round(v/1_000)}K` : `$${v}`}
+  {@const actLabel = summary.motion === 'ae' ? 'New Business' : 'Activate'}
+  {@const expLabel = summary.motion === 'ae' ? 'Strategic' : 'Expansion'}
+  <div class="w-full hub-container mb-6">
+    <div class="p5-panel" style="padding:16px 18px">
+      <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:0.18em;color:var(--red);margin-bottom:12px">Team iACV Trend</div>
+      <svg viewBox="0 0 {W} {H}" style="width:100%;display:block;overflow:visible" aria-hidden="true">
+        <!-- Y gridlines + labels -->
+        {#each [0, 0.5, 1] as frac}
+        {@const yg = PAD_T + cH - frac * cH}
+        <line x1={PAD_L} y1={yg} x2={W - PAD_R} y2={yg} stroke="rgba(var(--red-rgb),0.08)" stroke-width="1"/>
+        <text x={PAD_L - 6} y={yg + 4} text-anchor="end" font-size="9" fill="var(--text-muted)" font-family="inherit">{fmtM(frac * maxV)}</text>
+        {/each}
+        <!-- Area fills -->
+        <polygon points="{trend.map((p,i) => `${xOf(i)},${yOf(p.team_act_icav)}`).join(' ')} {xOf(trend.length-1)},{PAD_T+cH} {xOf(0)},{PAD_T+cH}" fill="rgba(var(--red-rgb),0.10)"/>
+        <polygon points="{trend.map((p,i) => `${xOf(i)},${yOf(p.team_exp_icav)}`).join(' ')} {xOf(trend.length-1)},{PAD_T+cH} {xOf(0)},{PAD_T+cH}" fill="rgba(100,160,255,0.10)"/>
+        <!-- Lines -->
+        <polyline points={pts('team_total_icav')} fill="none" stroke="var(--red)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        <polyline points={pts('team_act_icav')} fill="none" stroke="rgba(var(--red-rgb),0.55)" stroke-width="1.5" stroke-dasharray="4 3" stroke-linejoin="round" stroke-linecap="round"/>
+        <polyline points={pts('team_exp_icav')} fill="none" stroke="rgba(100,160,255,0.75)" stroke-width="1.5" stroke-dasharray="4 3" stroke-linejoin="round" stroke-linecap="round"/>
+        <!-- Data points + labels -->
+        {#each trend as p, i}
+        {@const x = xOf(i)}
+        {@const yT = yOf(p.team_total_icav)}
+        <circle cx={x} cy={yT} r={p.is_current ? 4.5 : 3} fill={p.is_current ? 'var(--red)' : 'var(--bg)'} stroke="var(--red)" stroke-width="2"/>
+        {#if p.is_current}
+        <text x={x} y={yT - 9} text-anchor="middle" font-size="9" font-weight="700" fill="var(--red)" font-family="inherit">{fmtM(p.team_total_icav)}</text>
+        {:else if i === 0 || i === trend.length - 2}
+        <text x={x} y={yT - 8} text-anchor="middle" font-size="9" fill="var(--text-muted)" font-family="inherit">{fmtM(p.team_total_icav)}</text>
+        {/if}
+        <!-- X axis label -->
+        <text x={x} y={H - 4} text-anchor="middle" font-size="9" fill={p.is_current ? 'var(--text)' : 'var(--text-muted)'} font-weight={p.is_current ? '700' : '400'} font-family="inherit">{p.period}</text>
+        {/each}
+      </svg>
+      <!-- Legend -->
+      <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap">
+        <div style="display:flex;align-items:center;gap:5px">
+          <svg width="18" height="4"><line x1="0" y1="2" x2="18" y2="2" stroke="var(--red)" stroke-width="2.5"/></svg>
+          <span style="font-size:10px;color:var(--text-muted);font-weight:600">Total</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px">
+          <svg width="18" height="4"><line x1="0" y1="2" x2="18" y2="2" stroke="rgba(var(--red-rgb),0.55)" stroke-width="1.5" stroke-dasharray="4 3"/></svg>
+          <span style="font-size:10px;color:var(--text-muted);font-weight:600">{actLabel}</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:5px">
+          <svg width="18" height="4"><line x1="0" y1="2" x2="18" y2="2" stroke="rgba(100,160,255,0.75)" stroke-width="1.5" stroke-dasharray="4 3"/></svg>
+          <span style="font-size:10px;color:var(--text-muted);font-weight:600">{expLabel}</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  {/if}
 
   <!-- Nav — single column on mobile, 3-column on desktop -->
   <div class="w-full hub-container nav-grid" style="margin-bottom:24px">
