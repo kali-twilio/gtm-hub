@@ -538,6 +538,7 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
             "name":         opp.get("Name") or "",
             "product":      _opp_product(opp.get("Name") or ""),
             "owner":        ((opp.get("Owner") or {}).get("Name") or ""),
+            "acct":         ((opp.get("Account") or {}).get("Name") or ""),
             "close_date":   opp.get("CloseDate") or "",
             "icav":         _icav(opp),
             "earr":         _earr(opp),
@@ -740,6 +741,8 @@ def build_ses(opps: list, motion: str = "dsr", notes_floor: int = 0, period_key:
         se["win_rate"]         = 0
         se["closed_won"]       = 0
         se["closed_lost"]      = 0
+        # Gong calls — populated by merge_gong_calls()
+        se["gong_calls"]       = None
 
         ses.append(se)
 
@@ -887,6 +890,101 @@ def merge_email_activity(ses: list, email_tasks: list, period_end: str,
 def merge_meeting_activity(ses: list, meeting_events: list, period_end: str,
                            opp_motion_map: dict = None) -> None:
     _merge_activity(ses, meeting_events, period_end, prefix="meeting", is_meeting=True)
+
+
+def _prefetch_gong_stats(period_start: str, period_end: str) -> None:
+    """Fetch all Gong aggregate stats for the period and store in _gong_stats_cache.
+    Runs in a background thread so the result is ready when merge_gong_calls is called."""
+    key = (period_start, period_end)
+    if key in _gong_stats_cache:
+        return
+    try:
+        from gong import gong as _gong
+        if not _gong.configured:
+            return
+        all_stats: list = []
+        cursor: str | None = None
+        while True:
+            body: dict = {
+                "requestedFields": {"callsAttended": True},
+                "filter": {"fromDate": period_start, "toDate": period_end},
+            }
+            if cursor:
+                body["cursor"] = cursor
+            data = _gong.post("/v2/stats/activity/aggregate", payload=body)
+            all_stats.extend(data.get("usersAggregateActivityStats") or [])
+            cursor = (data.get("records") or {}).get("cursor")
+            if not cursor:
+                break
+        _gong_stats_cache[key] = all_stats
+    except Exception:
+        log.warning("Gong prefetch failed", exc_info=True)
+
+
+def merge_gong_calls(ses: list, period_start: str, period_end: str) -> None:
+    """
+    Fetches total call counts per SE via POST /v2/stats/activity/aggregate and
+    merges into SE records as gong_calls. Silently no-ops if Gong is not configured.
+    """
+    key = (period_start, period_end)
+    all_stats = _gong_stats_cache.get(key)
+    if all_stats is None:
+        # Stats not prefetched yet — fetch synchronously
+        _prefetch_gong_stats(period_start, period_end)
+        all_stats = _gong_stats_cache.get(key) or []
+
+    if not all_stats:
+        return
+
+    try:
+        _GONG_EMAIL_OVERRIDES = {
+            "dberg@twilio.com": "dustin.berg@sendgrid.com",
+        }
+        email_map:    dict[str, dict] = {}
+        username_map: dict[str, dict] = {}
+        for se in ses:
+            if se.get("email"):
+                email_map[se["email"].lower()] = se
+                username_map[se["email"].lower().split("@")[0]] = se
+        if not email_map:
+            return
+        for stat in all_stats:
+            gong_email     = (stat.get("userEmailAddress") or "").lower()
+            calls          = int((stat.get("userAggregateActivityStats") or {}).get("callsAttended") or 0)
+            resolved_email = _GONG_EMAIL_OVERRIDES.get(gong_email, gong_email)
+            se = (email_map.get(resolved_email)
+                  or username_map.get(resolved_email.split("@")[0]))
+            if not se:
+                continue
+            if se["gong_calls"] is None:
+                se["gong_calls"] = 0
+            se["gong_calls"] += calls
+    except Exception:
+        log.warning("Gong call merge failed", exc_info=True)
+
+
+def get_gong_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, subteam_key: str = "") -> dict:
+    """
+    Fetch Gong call counts and merge into the SE list.
+    Uses the in-memory cache (populated by get_data) to avoid re-querying Salesforce.
+    Returns {"ses": [{name, gong_calls}, ...]} or {"error": "..."}.
+    """
+    cache_key = f"{team_key}_{subteam_key}" if subteam_key else team_key
+    mem = _mem_cache.get((cache_key, period_key, icav_min))
+    if mem:
+        import copy
+        ses_list = copy.deepcopy(mem[0])
+    else:
+        ses_list, err, *_ = get_data(teams, team_key, period_key, icav_min, subteam_key)
+        if err:
+            return {"error": err}
+    if not ses_list:
+        return {"ses": []}
+
+    info = period_info(period_key)
+    merge_gong_calls(ses_list, info["start"], info["end"])
+
+    return {"ses": [{"name": s["name"], "gong_calls": s.get("gong_calls")} for s in ses_list]}
 
 
 # ---------------------------------------------------------------------------
@@ -1818,6 +1916,14 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 
 _LOCAL_DEV = os.environ.get("LOCAL_DEV") == "1"
 
+# Short-lived in-memory SE cache used in local dev (disk cache is skipped when LOCAL_DEV=1)
+_mem_cache: dict = {}  # key → (ranked_list, timestamp)
+
+# Pre-fetched Gong aggregate stats keyed by (period_start, period_end)
+# Populated in a background thread when get_data runs so gong data is ready by
+# the time the /data/gong endpoint is called.
+_gong_stats_cache: dict = {}  # (start, end) → list of usersAggregateActivityStats
+
 _ICAV_FIELD = FIELD_CONFIG["icav_field"]
 _EARR_FIELD = FIELD_CONFIG["earr_field"]
 _TEAM_FIELD = FIELD_CONFIG["team_field"]
@@ -2265,7 +2371,8 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
     act_filter_used   = team.get("act_icav_filter") or motion_total_filter(team_icav_filter, motion, "act", act_icav_clause, exp_icav_clause)
     exp_filter_used   = team.get("exp_icav_filter") or motion_total_filter(team_icav_filter, motion, "exp", act_icav_clause, exp_icav_clause)
 
-    with ThreadPoolExecutor(max_workers=9) as pool:
+    with ThreadPoolExecutor(max_workers=10) as pool:
+        pool.submit(_prefetch_gong_stats, info["start"], info["end"])
         f_opps     = pool.submit(sf.query, build_soql(soql_filter, info["start"], info["end"], icav_min))
         f_win_rate = pool.submit(sf.query, build_win_rate_soql(soql_filter, info["start"], info["end"]))
         f_pipeline = pool.submit(sf.query, build_pipeline_soql(soql_filter, info["end"]))
@@ -2371,6 +2478,7 @@ def get_data(teams: dict, team_key: str, period_key: str, icav_min: int = 0, sub
     ranked = rank_ses(ses)
     ps_assists = compute_ps_assists(ps_records or [])
     result = save_cached(ranked, cache_key, period_key, icav_min, motion, team_total_icav, act_total_icav, exp_total_icav, ps_assists, team_total_wins, team_total_earr)
+    _mem_cache[(cache_key, period_key, icav_min)] = (result, time.time())
     log.info("Refreshed %s/%s (min $%s): %d opps, %d PS assists", cache_key, period_key, icav_min, len(opps), len(ps_assists))
     return result, None, team_total_icav, act_total_icav, exp_total_icav, all_owner_opps, ps_assists, team_total_wins, team_total_earr
 

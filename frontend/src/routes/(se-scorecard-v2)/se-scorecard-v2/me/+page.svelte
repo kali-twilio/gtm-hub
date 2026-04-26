@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { user, theme, sfTeam, sfPeriod, sfSubteam } from '$lib/stores';
-  import { getSFSEs, getSFPeriods, fmt, fmtMrr } from '$lib/api';
+  import { getSFSEs, getSFGong, getSFPeriods, fmt, fmtMrr } from '$lib/api';
   import { page } from '$app/stores';
   import { tc, fc } from '$lib/colors';
 
@@ -14,9 +14,12 @@
   let sfInstanceUrl = $state('');
   let loading = $state(false);
   let showLoading = $state(false);
+  let gongCalls = $state<number | null>(null);
+  let gongLoading = $state(false);
 
   async function loadData(periodKey: string) {
     loading = true;
+    gongCalls = null;
     const t = setTimeout(() => { if (loading) showLoading = true; }, 400);
     const data = await getSFSEs($sfTeam, periodKey, 0, $sfSubteam);
     clearTimeout(t);
@@ -37,6 +40,15 @@
       // Keep selected populated so the "not found" error shows when SE has no data this period
       if (target) selected = target;
     }
+    // Fetch Gong data separately after SF loads
+    const seName = se?.name ?? selected;
+    if (seName) {
+      gongLoading = true;
+      const g = await getSFGong($sfTeam, periodKey, 0, $sfSubteam);
+      gongLoading = false;
+      const row = g?.ses?.find((s: any) => s.name === seName);
+      gongCalls = row?.gong_calls ?? null;
+    }
   }
 
   function onPeriodChange(key: string) {
@@ -47,6 +59,15 @@
   function onSelect(e: Event) {
     selected = (e.target as HTMLSelectElement).value;
     se = ses.find(s => s.name === selected) ?? null;
+    gongCalls = null;
+    if (selected) {
+      gongLoading = true;
+      getSFGong($sfTeam, $sfPeriod, 0, $sfSubteam).then(g => {
+        gongLoading = false;
+        const row = g?.ses?.find((s: any) => s.name === selected);
+        gongCalls = row?.gong_calls ?? null;
+      });
+    }
   }
 
   const isOwnProfile = () => ($user?.sf_is_se || $user?.sf_access === 'se_restricted') ?? false;
@@ -225,17 +246,31 @@
       {/if}
     </div>
 
-    {#if se.largest_deal_value > 0}
-    <div style="background:rgba(var(--red-rgb),0.04);border:1px solid rgba(var(--red-rgb),0.15);border-left:4px solid var(--red);padding:14px 16px;margin-bottom:20px;{$theme==='twilio'?'border-radius:8px':''}">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text-muted)">{$theme==='p5'?'◆ ':''}Largest Deal</div>
-        {#if se.largest_deal_motion}<span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:700;border-radius:4px;background:{se.largest_deal_motion==='Activate'||se.largest_deal_motion==='New Business'?'rgba(var(--act-rgb),0.1)':'rgba(var(--exp-rgb),0.1)'};color:{se.largest_deal_motion==='Activate'||se.largest_deal_motion==='New Business'?'var(--act-color)':'var(--exp-color)'}">{se.largest_deal_motion}</span>{/if}
+    {#if gongCalls !== null || gongLoading || se.largest_deal_value > 0}
+    <div style="display:grid;grid-template-columns:{(gongCalls !== null || gongLoading) && se.largest_deal_value > 0 ? '1fr 2fr' : '1fr'};gap:8px;margin-bottom:20px">
+      {#if gongCalls !== null || gongLoading}
+      <div style="background:rgba(var(--red-rgb),0.04);border:1px solid rgba(var(--red-rgb),0.15);border-left:4px solid var(--red);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
+        <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;color:var(--text-muted);margin-bottom:6px">Gong Calls</div>
+        {#if gongLoading}
+        <div style="font-size:26px;font-weight:900;color:var(--text-faint);line-height:1;animation:pulse 1.2s ease-in-out infinite">…</div>
+        {:else}
+        <div style="font-size:26px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text);line-height:1">{gongCalls}</div>
+        {/if}
       </div>
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
-        <div style="font-size:14px;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{se.largest_deal}</div>
-        <div style="font-size:16px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{$theme==='p5'?'var(--yellow)':'#B45309'};white-space:nowrap">{fmt(se.largest_deal_value)}</div>
+      {/if}
+      {#if se.largest_deal_value > 0}
+      <div style="background:rgba(var(--red-rgb),0.04);border:1px solid rgba(var(--red-rgb),0.15);border-left:4px solid var(--red);padding:14px 16px;{$theme==='twilio'?'border-radius:8px':''}">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+          <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.2em;font-style:{$theme==='p5'?'italic':'normal'};color:var(--text-muted)">{$theme==='p5'?'◆ ':''}Largest Deal</div>
+          {#if se.largest_deal_motion}<span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:700;border-radius:4px;background:{se.largest_deal_motion==='Activate'||se.largest_deal_motion==='New Business'?'rgba(var(--act-rgb),0.1)':'rgba(var(--exp-rgb),0.1)'};color:{se.largest_deal_motion==='Activate'||se.largest_deal_motion==='New Business'?'var(--act-color)':'var(--exp-color)'}">{se.largest_deal_motion}</span>{/if}
+        </div>
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+          <div style="font-size:14px;color:var(--text);font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{se.largest_deal}</div>
+          <div style="font-size:16px;font-weight:900;font-style:{$theme==='p5'?'italic':'normal'};color:{$theme==='p5'?'var(--yellow)':'#B45309'};white-space:nowrap">{fmt(se.largest_deal_value)}</div>
+        </div>
+        {#if se.largest_deal_dsr}<div style="font-size:11px;color:var(--text-muted);margin-top:4px">AE: {se.largest_deal_dsr}</div>{/if}
       </div>
-      {#if se.largest_deal_dsr}<div style="font-size:11px;color:var(--text-muted);margin-top:4px">AE: {se.largest_deal_dsr}</div>{/if}
+      {/if}
     </div>
     {/if}
 
@@ -440,5 +475,9 @@
   0%   { filter: brightness(1)   }
   50%  { filter: brightness(1.3) }
   100% { filter: brightness(1)   }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.3; }
+  50%       { opacity: 0.7; }
 }
 </style>

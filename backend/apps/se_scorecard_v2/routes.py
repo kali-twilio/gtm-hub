@@ -245,6 +245,20 @@ def api_report():
     })
 
 
+@se_scorecard_v2_bp.route("/api/se-scorecard-v2/data/gong")
+def api_gong():
+    team_key   = request.args.get("team", _DEFAULT_TEAM)
+    period_key = request.args.get("period", logic.default_period())
+    icav_min, err = logic.parse_icav_min(request.args.get("icav_min"))
+    if err:
+        return jsonify({"error": err}), 400
+    subteam_key = request.args.get("subteam", "")
+    result = logic.get_gong_data(TEAMS, team_key, period_key, icav_min, subteam_key)
+    if "error" in result:
+        return jsonify(result), 503
+    return jsonify(result)
+
+
 @se_scorecard_v2_bp.route("/api/se-scorecard-v2/chat", methods=["POST"])
 def api_chat():
     body       = request.get_json(silent=True) or {}

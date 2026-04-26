@@ -65,6 +65,12 @@ export async function getSFRankings(team: string, period: string, icavMin = 0, s
   return r.json();
 }
 
+export async function getSFGong(team: string, period: string, icavMin = 0, subteam = ''): Promise<{ ses: { name: string; gong_calls: number | null }[] } | null> {
+  const r = await fetch(`/api/se-scorecard-v2/data/gong?team=${team}&period=${period}&icav_min=${icavMin}${subteamParam(subteam)}`);
+  if (!r.ok) return null;
+  return r.json();
+}
+
 // ---------------------------------------------------------------------------
 // Suggestion box
 // ---------------------------------------------------------------------------

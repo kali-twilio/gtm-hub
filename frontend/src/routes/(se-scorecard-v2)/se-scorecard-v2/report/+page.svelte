@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { getSFReport, fmt, fmtMrr } from '$lib/api';
+  import { getSFReport, getSFGong, fmt, fmtMrr } from '$lib/api';
   import { theme, sfTeam, sfPeriod, sfSubteam, user } from '$lib/stores';
   import { tc, fc } from '$lib/colors';
 
   let data: any = $state(null);
+  let gongData: Record<string, { gong_calls: number | null }> = $state({});
+  let gongLoading = $state(false);
   let view = $state<'tw' | 'all'>('tw');
   let icavMin = $state(0);
   const notesFloorLabel = $derived(icavMin === 0 ? 'All deals' : `$${icavMin >= 1000 ? icavMin/1000 + 'K' : icavMin}+`);
@@ -109,6 +111,10 @@
   const filteredRanked = $derived(data ? (() => {
     let base = titleFilter ? data.ranked.filter((s: any) => titleMatchesFilter(s.title || '', titleFilter)) : data.ranked;
     if (productFilter) base = base.filter((s: any) => primaryProduct(s) === productFilter);
+    base = base.map((s: any) => {
+      const g = gongData[s.name];
+      return g ? { ...s, gong_calls: g.gong_calls } : s;
+    });
     if (!notesFilter) return base;
     const mapped = base.map(_notesFiltered);
     const sorted = [...mapped].sort((a: any, b: any) => b.total_icav - a.total_icav);
@@ -138,6 +144,7 @@
   const hasWinRateCol = $derived(filteredRanked.some((s: any) => s.win_rate > 0));
   const hasEmailCol   = $derived(showActivity && filteredRanked.some((s: any) => emailTotal(s) > 0));
   const hasMeetingCol = $derived(showActivity && filteredRanked.some((s: any) => meetingTotal(s) > 0));
+  const hasGongCol    = $derived(filteredRanked.some((s: any) => s.gong_calls !== null && s.gong_calls !== undefined));
 
   const colDefs = $derived(data ? [
     {h:'#',              show:true,          tip:`Rank by composite score: 85% iACV · 8% MRR% · 5% ARR · 2% notes. Each metric percentile-ranked 0–100 within the team.`},
@@ -149,6 +156,7 @@
     {h:'SE Notes',       show:hasNotesCol,   tip:'Opps with both Sales_Engineer_Notes__c and SE_Notes_History__c filled ÷ total TW Closed Won opps above the iACV floor. Avg entries = history entry count per opp.'},
     {h:'Emails',         show:hasEmailCol,   tip:`Salesforce Tasks (TaskSubtype = Email) sent to Opportunities during the period. Classified by opp owner role into ${motionLabels.act.toLowerCase()} vs ${motionLabels.exp.toLowerCase()}, and in-Q (closing this period) vs pipeline (future opps).`},
     {h:'Meetings',       show:hasMeetingCol, tip:`Salesforce Events linked to Opportunities during the period. Recurring series deduplicated — same series on the same opp counts once. In-Q vs pipeline split matches email logic.`},
+    {h:'Gong Calls',     show:hasGongCol || gongLoading, tip:`Total Gong calls recorded for this SE during the period. Matched by email address to Gong user records.`},
   ].filter(c => c.show) : []);
   const actSes      = $derived(actSorted.filter((s: any) => actKey(s) > 0));
   const expSes      = $derived(expSorted.filter((s: any) => s.exp_wins > 0));
@@ -202,8 +210,8 @@
       win_rate:   m(actSes.filter((s: any) => s.win_rate > 0).map((s: any) => s.win_rate)),
       email_inq:  m(actSes.map((s: any) => s.email_act_inq ?? 0)),
       email_outq: m(actSes.map((s: any) => s.email_act_outq ?? 0)),
-      meet_inq:   m(actSes.map((s: any) => s.meeting_act_inq ?? 0)),
-      meet_outq:  m(actSes.map((s: any) => s.meeting_act_outq ?? 0)),
+      meet_inq:  m(actSes.map((s: any) => s.meeting_act_inq ?? 0)),
+      meet_outq: m(actSes.map((s: any) => s.meeting_act_outq ?? 0)),
     };
   })() : null);
   const expTotals   = $derived({
@@ -236,6 +244,8 @@
     {label:'Account ARR',            val:fmt(expTotals.arr_total),             color:null, sub:null,                                                                                                                                        show:stratOnly && expTotals.arr_total>0},
     {label:'Qtr MRR Δ',              val:fmtMrrDelta(expTotals.mrr_delta_total), color:expTotals.mrr_delta_total>0?($theme==='twilio'?'#178742':'#10B981'):expTotals.mrr_delta_total<0?($theme==='twilio'?'#DC2626':'#EF4444'):'var(--text-muted)', sub:null, show:stratOnly && expTotals.arr_total>0},
     {label:'SEs Analysed',           val:String(data.total),                   color:null, sub:(data.ae_dsr_count != null && data.ae_to_se_ratio != null) ? `${data.ae_dsr_count} ${data.motion === 'dsr' ? 'DSRs' : 'AEs'} · ${data.ae_to_se_ratio}:1` : null,  show:true},
+    {label:'Gong Calls',             val:String(filteredRanked.reduce((n: number, s: any) => n + (s.gong_calls ?? 0), 0)), color:null, sub:null, show:hasGongCol && !gongLoading},
+    {label:'Gong Calls',             val:'…',   color:'var(--text-muted)', sub:'loading', show:gongLoading},
   ].filter((s: any) => s.show && s.val != null) : []);
 
 const actStatCols = $derived(data ? [
@@ -284,6 +294,7 @@ const actStatCols = $derived(data ? [
       const m = Math.floor(vals.length / 2);
       return vals.length % 2 ? vals[m] : Math.round((vals[m - 1] + vals[m]) / 2);
     })(),
+    gong_calls: med(filteredRanked.filter((s: any) => s.gong_calls !== null && s.gong_calls !== undefined).map((s: any) => s.gong_calls ?? 0)),
   } : null);
 
   function computeExpStatus(se: any): string {
@@ -374,7 +385,19 @@ const actStatCols = $derived(data ? [
     icavLoading = false;
   }
 
-  onMount(async () => { data = await getSFReport($sfTeam, $sfPeriod, icavMin, $sfSubteam); });
+  onMount(async () => {
+    data = await getSFReport($sfTeam, $sfPeriod, icavMin, $sfSubteam);
+    if (data) {
+      gongLoading = true;
+      const g = await getSFGong($sfTeam, $sfPeriod, icavMin, $sfSubteam);
+      gongLoading = false;
+      if (g?.ses) {
+        const map: Record<string, { gong_calls: number | null }> = {};
+        for (const s of g.ses) map[s.name] = { gong_calls: s.gong_calls };
+        gongData = map;
+      }
+    }
+  });
 </script>
 
 {#if $user?.sf_access === 'se_restricted'}
@@ -566,7 +589,7 @@ const actStatCols = $derived(data ? [
               onmouseenter={() => tip ? colTipIdx = idx : null}
               onmouseleave={() => colTipIdx = -1}
             >
-              <span style="{tip ? 'border-bottom:1px dashed rgba(var(--red-rgb),0.4);cursor:help;padding-bottom:1px' : ''}">{h}</span>
+              <span style="{tip ? 'border-bottom:1px dashed rgba(var(--red-rgb),0.4);cursor:help;padding-bottom:1px' : ''}">{h}{#if h === 'Gong Calls' && gongLoading}&nbsp;<span style="opacity:0.45;animation:pulse 1.2s ease-in-out infinite">…</span>{/if}</span>
               {#if colTipIdx === idx && tip}
               <div style="position:absolute;top:calc(100% + 4px);{idx > 5 ? 'right:0' : 'left:0'};z-index:400;width:280px;background:{$theme==='twilio'?'#fff':'#0f1117'};border:1px solid rgba(var(--red-rgb),0.2);border-radius:6px;padding:10px 12px;box-shadow:0 6px 24px rgba(0,0,0,0.2);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted);line-height:1.5;white-space:normal;pointer-events:none">
                 {tip}
@@ -644,6 +667,13 @@ const actStatCols = $derived(data ? [
             </td>
             {/if}
 
+            {#if hasGongCol || gongLoading}
+            {@const gc = se.gong_calls}
+            <td style="padding:10px 16px;font-weight:700;color:{gc !== null && gc !== undefined ? (gc > 0 ? 'var(--text)' : 'var(--text-muted)') : 'var(--text-faint)'}">
+              {gc !== null && gc !== undefined ? gc : gongLoading ? '…' : '—'}
+            </td>
+            {/if}
+
           </tr>
           {/each}
           {#if medians}
@@ -663,6 +693,7 @@ const actStatCols = $derived(data ? [
             {#if hasNotesCol}<td style="padding:10px 16px;font-size:12px;color:var(--text-muted)">{medians.note_hv_avg_entries > 0 ? medians.note_hv_avg_entries+' avg entries' : '—'}</td>{/if}
             {#if hasEmailCol}<td style="padding:10px 16px;font-weight:700;color:var(--text-muted)">{medians.emails > 0 ? medians.emails : '—'}</td>{/if}
             {#if hasMeetingCol}<td style="padding:10px 16px;font-weight:700;color:var(--text-muted)">{medians.meetings > 0 ? medians.meetings : '—'}</td>{/if}
+            {#if hasGongCol}<td style="padding:10px 16px;font-weight:700;color:var(--text-muted)">{(medians.gong_calls ?? 0) > 0 ? medians.gong_calls : '—'}</td>{/if}
           </tr>
           {/if}
         </tbody>
@@ -702,7 +733,7 @@ const actStatCols = $derived(data ? [
               onmouseenter={() => tip ? actColTipIdx = idx : null}
               onmouseleave={() => actColTipIdx = -1}
             >
-              <span style="{tip ? 'border-bottom:1px dashed rgba(var(--red-rgb),0.4);cursor:help;padding-bottom:1px' : ''}">{h}</span>
+              <span style="{tip ? 'border-bottom:1px dashed rgba(var(--red-rgb),0.4);cursor:help;padding-bottom:1px' : ''}">{h}{#if h === 'Gong Calls' && gongLoading}&nbsp;<span style="opacity:0.45;animation:pulse 1.2s ease-in-out infinite">…</span>{/if}</span>
               {#if actColTipIdx === idx && tip}
               <div style="position:absolute;top:calc(100% + 4px);{idx > 5 ? 'right:0' : 'left:0'};z-index:400;width:280px;background:{$theme==='twilio'?'#fff':'#0f1117'};border:1px solid rgba(var(--red-rgb),0.2);border-radius:6px;padding:10px 12px;box-shadow:0 6px 24px rgba(0,0,0,0.2);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted);line-height:1.5;white-space:normal;pointer-events:none">
                 {tip}
@@ -791,7 +822,7 @@ const actStatCols = $derived(data ? [
                 onmouseenter={() => tip ? expColTipIdx = idx : null}
                 onmouseleave={() => expColTipIdx = -1}
               >
-                <span style="{tip ? 'border-bottom:1px dashed rgba(var(--red-rgb),0.4);cursor:help;padding-bottom:1px' : ''}">{h}</span>
+                <span style="{tip ? 'border-bottom:1px dashed rgba(var(--red-rgb),0.4);cursor:help;padding-bottom:1px' : ''}">{h}{#if h === 'Gong Calls' && gongLoading}&nbsp;<span style="opacity:0.45;animation:pulse 1.2s ease-in-out infinite">…</span>{/if}</span>
                 {#if expColTipIdx === idx && tip}
                 <div style="position:absolute;top:calc(100% + 4px);{idx > 5 ? 'right:0' : 'left:0'};z-index:400;width:280px;background:{$theme==='twilio'?'#fff':'#0f1117'};border:1px solid rgba(var(--red-rgb),0.2);border-radius:6px;padding:10px 12px;box-shadow:0 6px 24px rgba(0,0,0,0.2);font-size:11px;font-weight:400;text-transform:none;letter-spacing:0;color:var(--text-muted);line-height:1.5;white-space:normal;pointer-events:none">
                   {tip}
@@ -914,6 +945,7 @@ const actStatCols = $derived(data ? [
             {h:'In-Q Meets',  tip:`Meetings on ${motionLabels.exp} opps closing this quarter.`, show:showActivity && expTotals.meet_inq>0},
             {h:'Pipe Meets',  tip:`Meetings on pipeline ${motionLabels.exp} opps.`, show:showActivity && expTotals.meet_outq>0},
             {h:'Status',      tip:`Growing — net MRR increase. Expanding — new iACV, flat MRR. Mixed — new iACV but MRR declining. Contracting — MRR dropping, no new wins. Retaining — no growth signal.`, show:true},
+            {h:'Gong Calls',  tip:`Total Gong calls recorded for this SE during the period. Matched by email address to Gong user records.`, show:hasGongCol},
           ] : [
             {h:'#',           tip:'', show:true},
             {h:'SE',          tip:'', show:true},
@@ -978,6 +1010,7 @@ const actStatCols = $derived(data ? [
               <td style="padding:10px 16px">
                 <span style="display:inline-block;padding:2px 8px;font-size:10px;font-weight:700;background:{expStColor}18;color:{expStColor};border:1px solid {expStColor}40;{$theme==='p5'?'clip-path:polygon(0 0,100% 0,calc(100% - 6px) 100%,0 100%)':'border-radius:4px'}">{expSt}</span>
               </td>
+              {#if hasGongCol}{@const gc=se.gong_calls}<td style="padding:10px 16px;font-weight:700;color:{gc!==null&&gc!==undefined?(gc>0?'var(--text)':'var(--text-muted)'):'var(--text-faint)'}">{gc!==null&&gc!==undefined?gc:'—'}</td>{/if}
             </tr>
             {/each}
             <!-- strat totals row -->
@@ -996,6 +1029,7 @@ const actStatCols = $derived(data ? [
               {#if showActivity && expTotals.meet_inq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.meet_inq}</td>{/if}
               {#if showActivity && expTotals.meet_outq > 0}<td style="padding:10px 16px;font-weight:700;color:var(--exp-color)">{expTotals.meet_outq}</td>{/if}
               <td style="padding:10px 16px"></td>
+              {#if hasGongCol}<td style="padding:10px 16px"></td>{/if}
             </tr>
           {:else}
             {#each actSes as se, i}
@@ -1418,5 +1452,9 @@ const actStatCols = $derived(data ? [
 .tbl-title-wrap:hover .tbl-title-tip {
   visibility: visible;
   opacity: 1;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 0.45; }
+  50%       { opacity: 0.9; }
 }
 </style>

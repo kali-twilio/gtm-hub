@@ -244,7 +244,7 @@
         <div style="position:relative;z-index:1;padding:22px 26px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:14px">
             <div>
-              <div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.15em;color:{c.color};margin-bottom:6px">{['🥇','🥈','🥉'][i-1] ?? ''} {c.label}</div>
+              {#if ['🥇','🥈','🥉'][i-1]}<div style="font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.15em;color:{c.color};margin-bottom:6px">{['🥇','🥈','🥉'][i-1]}</div>{/if}
               <div style="font-size:clamp(1.1rem,3vw,1.4rem);font-weight:900;color:{$theme==='twilio'?'var(--text)':'#fff'};letter-spacing:-.02em">{se.name}</div>
               {#if teamHasExp}
               <div style="margin-top:7px">
@@ -261,7 +261,6 @@
               <div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.08em;margin-top:2px">total iACV</div>
             </div>
           </div>
-          <div style="font-size:12px;color:color-mix(in srgb,{c.color} 70%,{$theme==='twilio'?'#374151':'#aaa'});font-style:italic;margin-bottom:14px;padding:8px 12px;border-radius:8px;border-left:2px solid {c.color}50;background:{c.bg}">{se._roast}</div>
           <div style="display:grid;grid-template-columns:{teamHasAct && teamHasExp ? '1fr 1fr' : '1fr'};gap:8px;margin-bottom:10px">
             {#if teamHasAct}
             <div style="background:{$theme==='twilio'?'#F8FAFF':'rgba(255,255,255,0.04)'};border:1px solid {$theme==='twilio'?'rgba(0,110,255,0.15)':'rgba(255,255,255,0.06)'};border-radius:10px;padding:11px 13px">
