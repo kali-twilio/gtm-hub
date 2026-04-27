@@ -336,8 +336,7 @@ const actStatCols = $derived(data ? [
     { id: 'notes',      label: 'Notes Quality',   show: !notesFilter },
     { id: 'ae_engage',  label: (data.motion === 'dsr' ? 'DSR' : 'AE') + ' Engagement', show: !!(data.ae_engagement?.length) },
     { id: 'ps_assists', label: 'PS Assists',                                            show: !!(data.ps_assists?.length) },
-    { id: 'trends',     label: 'Trends & Flags' },
-    { id: 'recs',      label: 'Recommendations', show: !!(data.recommendations?.length) },
+    { id: 'analysis',  label: 'Analysis' },
     { id: 'profiles',  label: 'SE Profiles' },
   ].filter((s: any) => s.show !== false) : []);
 
@@ -1281,45 +1280,30 @@ const actStatCols = $derived(data ? [
   </div>
   {/if}
 
-  <!-- Trends -->
-  <div id="trends" class="p5-panel" style="margin-bottom:20px">
-    <div class="p5-panel-header"><h2 class="p5-panel-header-title">Trends &amp; Flags</h2></div>
-    <div style="padding:16px;display:flex;flex-direction:column;gap:8px">
-      {#each data.trends as [cat, msg]}
-      {@const color = fc(cat, $theme)}
-      <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 14px;border-left:4px solid {color};background:rgba(var(--red-rgb),0.03);{$theme==='twilio'?'border-radius:0 6px 6px 0':''}">
-        <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;font-style:{$theme==='p5'?'italic':'normal'};color:{color};width:80px;flex-shrink:0">{cat}</span>
-        <span style="font-size:13px;font-weight:500;color:var(--text-muted)">{msg}</span>
-      </div>
-      {/each}
-    </div>
-  </div>
-
-  <!-- Recommendations -->
-  {#if data.recommendations?.length}
-  <div id="recs" class="p5-panel" style="margin-bottom:20px">
-    <div class="p5-panel-header">
-      <h2 class="p5-panel-header-title">Recommendations</h2>
-    </div>
-    <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">Data-driven actions to increase iACV and revenue — derived from deal sizing, expansion MRR signals, notes quality, and AE/DSR partner breadth</div>
+  <!-- Analysis -->
+  {#if data.analysis?.length}
+  <div id="analysis" class="p5-panel" style="margin-bottom:20px">
+    <div class="p5-panel-header"><h2 class="p5-panel-header-title">Analysis</h2></div>
+    <div style="padding:6px 16px 8px;font-size:11px;color:var(--text-muted);border-bottom:1px solid rgba(var(--red-rgb),0.08)">Indicators of success and challenges — iACV closed won, revenue movement and MRR, SE notes, Gong calls, total revenue touched, largest deals, and AE/DSR engagement</div>
     <div style="padding:16px;display:flex;flex-direction:column;gap:10px">
-      {#each data.recommendations as rec}
-      {@const recColor =
-        rec.cat === 'REVENUE'    ? ($theme==='twilio' ? '#006EFF' : '#3B82F6') :
-        rec.cat === 'EXPANSION'  ? ($theme==='twilio' ? '#178742' : '#10B981') :
-        rec.cat === 'PIPELINE'   ? ($theme==='twilio' ? '#7C3AED' : '#A78BFA') :
-        rec.cat === 'EFFICIENCY' ? ($theme==='twilio' ? '#B45309' : '#FFB800') :
-        rec.cat === 'HYGIENE'    ? ($theme==='twilio' ? '#0891B2' : '#22D3EE') :
-        rec.cat === 'COACHING'   ? ($theme==='twilio' ? '#DC2626' : '#EF4444') :
-        rec.cat === 'RISK'       ? ($theme==='twilio' ? '#DC2626' : '#EF4444') :
+      {#each data.analysis as item}
+      {@const itemColor =
+        item.cat === 'REVENUE'    ? ($theme==='twilio' ? '#006EFF' : '#3B82F6') :
+        item.cat === 'EXPANSION'  ? ($theme==='twilio' ? '#178742' : '#10B981') :
+        item.cat === 'PIPELINE'   ? ($theme==='twilio' ? '#7C3AED' : '#A78BFA') :
+        item.cat === 'EFFICIENCY' ? ($theme==='twilio' ? '#B45309' : '#FFB800') :
+        item.cat === 'HYGIENE'    ? ($theme==='twilio' ? '#0891B2' : '#22D3EE') :
+        item.cat === 'COACHING'   ? ($theme==='twilio' ? '#DC2626' : '#EF4444') :
+        item.cat === 'RISK'       ? ($theme==='twilio' ? '#DC2626' : '#EF4444') :
+        item.cat === 'STRENGTH'   ? ($theme==='twilio' ? '#178742' : '#10B981') :
         'var(--text-muted)'}
-      <div style="display:flex;gap:0;border-left:4px solid {recColor};background:rgba(var(--red-rgb),0.02);{$theme==='twilio'?'border-radius:0 8px 8px 0':''}">
+      <div style="display:flex;gap:0;border-left:4px solid {itemColor};background:rgba(var(--red-rgb),0.02);{$theme==='twilio'?'border-radius:0 8px 8px 0':''}">
         <div style="padding:12px 16px;flex:1">
           <div style="display:flex;align-items:center;gap:10px;margin-bottom:5px">
-            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:{recColor};flex-shrink:0">{rec.cat}</span>
-            <span style="font-size:13px;font-weight:700;color:var(--text)">{rec.title}</span>
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:{itemColor};flex-shrink:0">{item.cat}</span>
+            <span style="font-size:13px;font-weight:700;color:var(--text)">{item.title}</span>
           </div>
-          <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin:0">{rec.body}</p>
+          <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin:0">{item.body}</p>
         </div>
       </div>
       {/each}
@@ -1378,11 +1362,21 @@ const actStatCols = $derived(data ? [
 
         {#if se.flags?.length}
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
-          {#each se.flags as [cat, msg]}
-          {@const color = fc(cat, $theme)}
+          {#each se.flags as item}
+          {@const color =
+            item.cat === 'REVENUE'    ? ($theme==='twilio' ? '#006EFF' : '#3B82F6') :
+            item.cat === 'EXPANSION'  ? ($theme==='twilio' ? '#178742' : '#10B981') :
+            item.cat === 'PIPELINE'   ? ($theme==='twilio' ? '#7C3AED' : '#A78BFA') :
+            item.cat === 'EFFICIENCY' ? ($theme==='twilio' ? '#B45309' : '#FFB800') :
+            item.cat === 'HYGIENE'    ? ($theme==='twilio' ? '#0891B2' : '#22D3EE') :
+            item.cat === 'COACHING'   ? ($theme==='twilio' ? '#DC2626' : '#EF4444') :
+            item.cat === 'RISK'       ? ($theme==='twilio' ? '#DC2626' : '#EF4444') :
+            item.cat === 'STRENGTH'   ? ($theme==='twilio' ? '#178742' : '#10B981') :
+            fc(item.cat, $theme)}
           <div style="border-left:3px solid {color};background:rgba(var(--red-rgb),0.03);padding:6px 8px;min-height:44px;{$theme==='twilio'?'border-radius:0 4px 4px 0':''}">
-            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:{color};margin-bottom:2px">{cat}</div>
-            <div style="font-size:10px;color:var(--text-muted);line-height:1.3">{msg}</div>
+            <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.12em;color:{color};margin-bottom:2px">{item.cat}</div>
+            <div style="font-size:10px;font-weight:600;color:var(--text);margin-bottom:1px;line-height:1.3">{item.title}</div>
+            <div style="font-size:10px;color:var(--text-muted);line-height:1.3">{item.body}</div>
           </div>
           {/each}
         </div>

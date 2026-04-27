@@ -277,15 +277,28 @@
     {#if se.flags?.length}
     <div>
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-        <div class="p5-badge" style="font-size:10px">{$theme==='p5'?'Intel Report':'Trends & Flags'}</div>
+        <div class="p5-badge" style="font-size:10px">Analysis</div>
         <div style="flex:1;height:1px;background:rgba(var(--red-rgb),0.15)"></div>
       </div>
-      <div style="display:flex;flex-direction:column;gap:6px">
-        {#each se.flags as [cat, msg]}
-        {@const color = fc(cat, $theme)}
-        <div style="display:flex;gap:12px;align-items:flex-start;padding:10px 14px;border-left:4px solid {color};background:rgba(var(--red-rgb),0.03);{$theme==='twilio'?'border-radius:0 6px 6px 0':''}">
-          <span style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;font-style:{$theme==='p5'?'italic':'normal'};color:{color};width:72px;flex-shrink:0">{cat}</span>
-          <span style="font-size:13px;font-weight:500;color:var(--text-muted)">{msg}</span>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        {#each se.flags as item}
+        {@const itemColor =
+          item.cat === 'REVENUE'    ? ($theme==='twilio' ? '#006EFF' : '#3B82F6') :
+          item.cat === 'EXPANSION'  ? ($theme==='twilio' ? '#178742' : '#10B981') :
+          item.cat === 'PIPELINE'   ? ($theme==='twilio' ? '#7C3AED' : '#A78BFA') :
+          item.cat === 'EFFICIENCY' ? ($theme==='twilio' ? '#B45309' : '#FFB800') :
+          item.cat === 'HYGIENE'    ? ($theme==='twilio' ? '#0891B2' : '#22D3EE') :
+          item.cat === 'COACHING'   ? ($theme==='twilio' ? '#DC2626' : '#EF4444') :
+          item.cat === 'RISK'       ? ($theme==='twilio' ? '#DC2626' : '#EF4444') :
+          item.cat === 'STRENGTH'   ? ($theme==='twilio' ? '#178742' : '#10B981') :
+          item.cat === 'NOTES'      ? ($theme==='twilio' ? '#0891B2' : '#22D3EE') :
+          fc(item.cat, $theme)}
+        <div style="border-left:4px solid {itemColor};background:rgba(var(--red-rgb),0.02);padding:10px 14px;{$theme==='twilio'?'border-radius:0 6px 6px 0':''}">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+            <span style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:0.15em;color:{itemColor};flex-shrink:0">{item.cat}</span>
+            <span style="font-size:12px;font-weight:700;color:var(--text)">{item.title}</span>
+          </div>
+          <p style="font-size:12px;color:var(--text-muted);line-height:1.6;margin:0">{item.body}</p>
         </div>
         {/each}
       </div>
